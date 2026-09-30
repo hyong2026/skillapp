@@ -2,7 +2,9 @@
 /**
  * map-table.js — 把 IO 契约映射到飞书多维表格中的某张表格，并生成 Template
  *
- *   node bin/map-table.js <io-schema.json> --ref <name> --url <多维表格链接> [--dry-run]
+ *   node bin/map-table.js --ref <ref> --url <表格链接> [契约路径] [--dry-run]
+ *
+ * 契约路径默认由 --ref 推导为 tmp/<ref>.io-schema.json，可不传——这样就不会指错文件。
  *
  * 只做机械的事：列对齐、列顺序、写 Template。
  * 类型怎么选、这一列要不要，都在上游（analyze-skill-io）决定好了——这里不替人做判断。
@@ -21,11 +23,12 @@ const REQUIRED_MARK = '* '; // 必填项在列名行首加星号
 const PRIMARY_NAME = '任务名称';
 const DEFAULT_PRIMARY = '文本'; // 新建表格时多维表格给主字段的默认名
 
-const USAGE = `用法: node bin/map-table.js <io-schema.json> --ref <name> --url <链接> [选项]
+const USAGE = `用法: node bin/map-table.js --ref <ref> --url <链接> [契约路径] [选项]
 
-选项:
-  --ref <name>         已装载的 Skill 名（skills/<name>），Template 也以此命名
-  --url <链接>         目标多维表格链接，需带 table 与 view 参数
+参数:
+  --ref <ref>          已装载的 Skill 名（skills/<ref>）；Template 也以此命名
+  [契约路径]           省略则用 tmp/<ref>.io-schema.json；路径以仓库根为基准
+  --url <链接>         目标表格链接，需带 table 与 view 参数
   --base <token>       ┐ 也可以直接给 token，替代 --url
   --table <table_id>   │
   --view <view_id>     ┘
@@ -261,12 +264,21 @@ function buildTemplate({ io, ref, hash, target, primaryId, reused, prior }) {
 
 function main() {
   const args = parseArgv(process.argv.slice(2));
-  if (args.help || !args.schema || !args.ref) {
+  if (args.help || !args.ref) {
     console.log(USAGE);
     process.exit(args.help ? 0 : 1);
   }
 
-  const io = JSON.parse(fs.readFileSync(args.schema, 'utf8'));
+  // 契约路径默认由 --ref 推导。让正确的做法成为唯一做法——指错文件的机会就没了。
+  const schemaPath = path.resolve(ROOT, args.schema || path.join('tmp', `${args.ref}.io-schema.json`));
+  if (!fs.existsSync(schemaPath)) {
+    throw new Error(`找不到 IO 契约: ${path.relative(ROOT, schemaPath)}\n`
+      + `  先跑 analyze-skill-io，或用位置参数指定契约路径`);
+  }
+  const io = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  if (!Array.isArray(io.inputs) || !Array.isArray(io.outputs)) {
+    throw new Error(`契约格式不对（缺 inputs / outputs 数组）: ${path.relative(ROOT, schemaPath)}`);
+  }
   checkCmd(io.cmd, io);
 
   const target = resolveTarget(args);

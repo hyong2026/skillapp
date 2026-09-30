@@ -33,7 +33,7 @@ node bin/load-skill.js /path/to/skill --ref <ref>        # 复制（脚本）
 #   ↓ 评审：报告不过目，不进入下一步
 
 # 2. 映射：对齐列、设列顺序、写 Template，并自动自检
-node bin/map-table.js tmp/<ref>.io-schema.json --ref <ref> --url '<表格链接>'
+node bin/map-table.js --ref <ref> --url '<表格链接>'       # 契约默认读 tmp/<ref>.io-schema.json
 
 # 3. 执行
 node bin/run-template.js templates/<ref>.json --pending
@@ -74,16 +74,16 @@ skillapp/
 ├── .agents/skills/            项目级 Skill：SkillApp 自己的操作手册
 │   ├── skillapp/              操作入口：装载 / 映射 / 执行 各跑哪条命令
 │   └── analyze-skill-io/      读 Skill → IO 契约 + 风险清单
-├── skills/<ref>/              装载进来的 Skill —— 内容不进 git
-├── templates/                 Template（内含 Mapping）—— 内容不进 git
+├── skills/<ref>/              装载进来的 Skill —— 内容不进 Git
+├── templates/                 Template（内含 Mapping）—— 内容不进 Git
 │   └── <ref>.json             一个 Skill 一张表（见「已知边界」）
-├── runs/<run_id>/             Run 与 RunItem —— 内容不进 git
-└── tmp/io-schema.json         中间产物 —— 内容不进 git
+├── runs/<run_id>/             Run 与 RunItem —— 内容不进 Git
+└── tmp/<ref>.io-*             中间产物 —— 内容不进 Git
 ```
 
 **两个 `skills` 不是一回事**，别混：
 
-| 路径 | 是什么 | 进 git |
+| 路径 | 是什么 | 进 Git |
 |---|---|---|
 | `.agents/skills/` | SkillApp 自己的操作手册，给 Agent 用（项目级 Skill） | ✅ |
 | `skills/` | 被装载进来、准备执行的 Skill | ❌ 内容 |
@@ -143,7 +143,7 @@ skillapp/
 - **`runs/` 只增不减**，产物、日志都在里面，目前没有清理策略。
 - **`--pending` 每次扫描全部历史。** 行数上万后需建索引。
 - **一个 Skill 只能映射到一张表。** `templates/<ref>.json` 只按 Skill 名命名，所以把同一个 Skill 映射到第二张表会**直接覆盖**第一份，连 `template_id` 都会沿用它。要支持多表，需把表格标识写进文件名（`<ref>.<table_id>.json`）——现在不做。
-- **Template 不可恢复。** 它不进 git，克隆后无法还原；需要多人共享同一份 Template 时应把它放回 git。
+- **Template 不可恢复。** 它不进 Git，克隆后无法还原；需要多人共享同一份 Template 时应把它放回 Git。
 - **只支持 JSON stdout 的 Skill。** 执行器直接 `JSON.parse` 标准输出；输出散文或非 JSON 的 Skill 需要先补一层解析。
 - **Skill 必须有可执行入口。** 执行器需要 spawn 一个命令行进程；纯方法论型 Skill（只有 `SKILL.md`，没有脚本）无法执行——那需要另一套执行模型。
 

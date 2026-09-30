@@ -1,5 +1,5 @@
 # 本仓库只保留引擎：bin/ + lib/ + .agents/。
-# 内容层（装载的 Skill、Template、运行记录、中间产物）不进 git；
+# 内容层（装载的 Skill、Template、运行记录、中间产物）不进 Git；
 # 但每个目录留一个 README.md 说明用途，这样克隆后仍能看见结构、知道缺什么。
 
 runs/*

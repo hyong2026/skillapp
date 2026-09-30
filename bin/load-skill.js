@@ -3,7 +3,7 @@
  * load-skill.js — 装载 Skill：把外部 Skill 复制进 SkillApp 并固定版本
  *
  * 装载后 skills/<ref>/ 是运行时的唯一真相；上游改动必须重新装载才生效。
- * node_modules 属于 Skill 的运行契约（"无需额外安装"），默认一并复制，但不进 git。
+ * node_modules 属于 Skill 的运行契约（"无需额外安装"），默认一并复制，但不进 Git。
  */
 
 const fs = require('fs');

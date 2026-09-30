@@ -16,7 +16,7 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 IO �
 | **输入** | Skill 根目录路径（含 `SKILL.md`）；该 Skill 已装载（`node bin/load-skill.js`） |
 | **输出** | `tmp/<ref>.io-schema.json`（契约草案）+ `tmp/<ref>.io-report.md`（分析报告，给人评审）|
 
-文件名带 Skill 名，因为 SkillApp 可以同时装载多个 Skill——`tmp/` 是单槽目录，不区分就会互相覆盖。整个 `tmp/` 已被 git 忽略。
+文件名带 Skill 名，因为 SkillApp 可以同时装载多个 Skill——`tmp/` 是单槽目录，不区分就会互相覆盖。整个 `tmp/` 已被 Git 忽略。
 
 ## 原则：以实现为准
 
@@ -140,7 +140,7 @@ Out: 切片数       ← 输出
 确认后交给第 2 步：
 
 ```bash
-node bin/map-table.js tmp/<ref>.io-schema.json --ref <ref> --url '<表格链接>'
+node bin/map-table.js --ref <ref> --url '<表格链接>'
 ```
 
 它只消费这份契约、不重新判断。契约是一次性的，落库后即可丢弃——下次要改映射，重跑本 Skill 即可。

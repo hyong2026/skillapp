@@ -37,8 +37,10 @@ description: SkillApp 的操作入口：装载 Skill、把它的 IO 映射到飞
 跑之前确认分析报告里的**风险清单**已经过评审。
 
 ```bash
-node bin/map-table.js tmp/<ref>.io-schema.json --ref <ref> --url '<表格链接>'
+node bin/map-table.js --ref <ref> --url '<表格链接>'
 ```
+
+契约默认读 `tmp/<ref>.io-schema.json`（由 `--ref` 推导），不用手写路径。
 
 ## 3 执行
 
