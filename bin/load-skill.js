@@ -10,7 +10,8 @@ const fs = require('fs');
 const path = require('path');
 const { skillHash } = require('../lib/skill-hash');
 
-const SKILLS_DIR = path.join(__dirname, '..', 'skills');
+const SKILLS_DIR = path.resolve(__dirname, '..', 'skills');
+const REF_RE = /^[A-Za-z0-9._-]+$/;
 
 const USAGE = `用法: node bin/load-skill.js <源目录> --ref <name> [选项]
 
@@ -31,38 +32,70 @@ function parseArgv(argv) {
   return out;
 }
 
+function isWithin(parent, child) {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
 function main() {
   const { source, ref, withDeps, help } = parseArgv(process.argv.slice(2));
   if (help || !source || !ref) {
     console.log(USAGE);
     process.exit(help ? 0 : 1);
   }
-
-  const src = path.resolve(source);
-  if (!fs.existsSync(path.join(src, 'SKILL.md'))) {
-    throw new Error(`不是合法的 Skill 目录（缺 SKILL.md）: ${src}`);
+  if (!REF_RE.test(ref) || ref === '.' || ref === '..') {
+    throw new Error(`不合法的 ref: ${ref}\n  只能使用字母、数字、点、下划线和连字符`);
   }
 
-  // 重新装载 = 覆盖，因此旧副本先整体删除
-  const dest = path.join(SKILLS_DIR, ref);
-  fs.rmSync(dest, { recursive: true, force: true });
-  fs.mkdirSync(dest, { recursive: true });
-
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (entry.name === '.DS_Store' || entry.name === '.git') continue;
-    if (entry.name === 'node_modules' && !withDeps) continue;
-    fs.cpSync(path.join(src, entry.name), path.join(dest, entry.name), { recursive: true });
+  const srcPath = path.resolve(source);
+  if (!fs.existsSync(path.join(srcPath, 'SKILL.md'))) {
+    throw new Error(`不是合法的 Skill 目录（缺 SKILL.md）: ${srcPath}`);
   }
 
-  const hash = skillHash(dest);
-  const files = fs.readdirSync(dest).length;
+  fs.mkdirSync(SKILLS_DIR, { recursive: true });
+  const skillsDir = fs.realpathSync(SKILLS_DIR);
+  const src = fs.realpathSync(srcPath);
+  const dest = path.resolve(skillsDir, ref);
+  if (path.dirname(dest) !== skillsDir) throw new Error(`不合法的 ref: ${ref}`);
+  if (src === dest) throw new Error(`源目录和目标目录不能相同: ${src}`);
+  if (isWithin(src, dest) || isWithin(dest, src)) {
+    throw new Error(`源目录和目标目录不能互相包含:\n  源: ${src}\n  目标: ${dest}`);
+  }
 
-  // source.json 记溯源，本身不参与指纹（否则自引用）
-  fs.writeFileSync(path.join(dest, 'source.json'), JSON.stringify({
-    source: src,
-    hash,
-    loaded_at: new Date().toISOString(),
-  }, null, 2) + '\n');
+  const tmp = fs.mkdtempSync(path.join(skillsDir, `.${ref}.tmp-`));
+  const backup = path.join(skillsDir, `.${ref}.bak-${process.pid}-${Date.now()}`);
+  let movedOld = false;
+  let hash;
+  let files;
+
+  try {
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      if (entry.name === '.DS_Store' || entry.name === '.git') continue;
+      if (entry.name === 'node_modules' && !withDeps) continue;
+      fs.cpSync(path.join(src, entry.name), path.join(tmp, entry.name), { recursive: true });
+    }
+
+    hash = skillHash(tmp);
+    files = fs.readdirSync(tmp).length;
+
+    // source.json 记溯源，本身不参与指纹（否则自引用）
+    fs.writeFileSync(path.join(tmp, 'source.json'), JSON.stringify({
+      source: src,
+      hash,
+      loaded_at: new Date().toISOString(),
+    }, null, 2) + '\n');
+
+    if (fs.existsSync(dest)) {
+      fs.renameSync(dest, backup);
+      movedOld = true;
+    }
+    fs.renameSync(tmp, dest);
+    if (movedOld) fs.rmSync(backup, { recursive: true, force: true });
+  } catch (err) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    if (movedOld && !fs.existsSync(dest) && fs.existsSync(backup)) fs.renameSync(backup, dest);
+    throw err;
+  }
 
   console.log(`已装载 ${ref}`);
   console.log(`  来源 : ${src}`);

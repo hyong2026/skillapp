@@ -126,6 +126,12 @@ function primaryField(target) {
 
 // ─── 列对齐 ───────────────────────────────────────────────────────────────
 
+/** 建字段之后写入是异步传播的，重试前等一下。同步脚本里用 sleep，不引定时器。 */
+const sleep = (seconds) => spawnSync('sleep', [String(seconds)]);
+
+const CREATE_ATTEMPTS = 10; // 建列后回读的重试次数
+const CREATE_WAIT_S = 3;    // 每次重试前等待秒数（最坏 CREATE_ATTEMPTS × CREATE_WAIT_S）
+
 /**
  * 逐列决定「复用 / 新建」。
  * 复用优先按上一版 Template 里的 field_id——这样用户手工改过列名也不会被覆盖。
@@ -167,12 +173,21 @@ function alignColumns(target, io, prior, dryRun) {
     }));
     lark(['base', '+field-create', ...tableFlags(target, '--json', JSON.stringify(payload))]);
 
-    const after = new Map(readFields(target).map((f) => [f.name, f]));
-    for (const w of missing) {
-      const f = after.get(w.name);
-      if (!f) throw new Error(`新建后仍找不到列「${w.name}」`);
-      reused.push({ ...w, field_id: f.id });
+    // 回读一次可能还看不到刚建的列：字段创建是异步传播的（第一次映射就在这儿断过）。
+    // 顺利时第 1 次就读到，不付出等待；慢的时候退避重试，而不是一次读不到就放弃。
+    let after = new Map();
+    let unresolved = missing;
+    for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt++) {
+      after = new Map(readFields(target).map((f) => [f.name, f]));
+      unresolved = missing.filter((w) => !after.has(w.name));
+      if (!unresolved.length) break;
+      if (attempt < CREATE_ATTEMPTS - 1) sleep(CREATE_WAIT_S);
     }
+    if (unresolved.length) {
+      throw new Error(`新建后仍找不到列（飞书字段传播延迟）: ${unresolved.map((w) => w.name).join('、')}\n`
+        + '  列已经建好了，重跑本命令即可——它按列名复用，是幂等的');
+    }
+    for (const w of missing) reused.push({ ...w, field_id: after.get(w.name).id });
   }
 
   return { wanted, reused, missing };
@@ -199,7 +214,7 @@ function setColumnOrder(target, wanted, reused, primary, dryRun) {
       return ordered;
     } catch (err) {
       if (attempt === 2) throw err;
-      spawnSync('sleep', ['2']); // 刚建字段时的传播延迟
+      sleep(2); // 刚建字段时的传播延迟
     }
   }
 }

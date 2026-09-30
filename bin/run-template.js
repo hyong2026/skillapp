@@ -17,12 +17,13 @@ const { skillHash } = require('../lib/skill-hash');
 
 const RUNS_DIR = path.join(ROOT, 'runs');
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
+const RECORD_PAGE_SIZE = 200; // JSON 模式 record-list 的上限
 
 const USAGE = `用法: node bin/run-template.js <template.json> [选项]
 
 选项:
   --all               处理表内所有行（默认）
-  --pending           只处理最近一次运行与当前输入对不上的行
+  --pending           只处理工作版本或输入变化的行
   --record-id <id>    只处理指定行，可重复传
   --dry-run           只核对，不执行、不回写、不产生 Run 记录
   -h, --help          显示本帮助`;
@@ -57,16 +58,23 @@ function updateRow(tpl, recordId, patch) {
 }
 
 /** 记录列表 → [{ record_id, cells }]，cells 是 field_id → 值 */
-function readRows(tpl) {
-  const d = lark(['base', '+record-list', ...tableFlags(tpl, '--format', 'json')]).data;
-  const zip = (values) => Object.fromEntries(d.field_id_list.map((fid, i) => [fid, values[i]]));
-  return d.record_id_list.map((record_id, i) => ({ record_id, cells: zip(d.data[i]) }));
-}
+function readRows(tpl, fieldIds) {
+  const rows = [];
+  const projection = fieldIds.flatMap((fieldId) => ['--field-id', fieldId]);
 
-function readRow(tpl, recordId) {
-  const d = lark(['base', '+record-get', ...tableFlags(tpl,
-    '--record-id', recordId, '--format', 'json')]).data;
-  return Object.fromEntries(d.field_id_list.map((fid, i) => [fid, d.data[0][i]]));
+  for (let offset = 0; ;) {
+    const d = lark(['base', '+record-list', ...tableFlags(tpl,
+      '--format', 'json', '--limit', String(RECORD_PAGE_SIZE), '--offset', String(offset), ...projection,
+    )]).data;
+    const zip = (values) => Object.fromEntries(d.field_id_list.map((fid, i) => [fid, values[i]]));
+    for (let i = 0; i < d.record_id_list.length; i++) {
+      rows.push({ record_id: d.record_id_list[i], cells: zip(d.data[i]) });
+    }
+    if (d.record_id_list.length < RECORD_PAGE_SIZE) break;
+    offset += d.record_id_list.length;
+  }
+
+  return rows;
 }
 
 const download = (tpl, recordId, att, dest) => lark(['base', '+record-download-attachment', ...tableFlags(tpl,
@@ -182,11 +190,25 @@ function fingerprint(cells) {
 const fingerprintOf = (inputs, cells) =>
   fingerprint(Object.fromEntries(inputs.map((i) => [i.field_id, cells[i.field_id]])));
 
+const withoutLiveName = ({ field_name, ...field }) => field;
+
+/** Skill、命令、目标与生效映射共同组成一次“工作版本”。任一变化都应让 --pending 重跑。 */
+function workHashOf(tpl, inputs, outputs) {
+  return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify({
+    skill_hash: tpl.skill.hash,
+    target: tpl.target,
+    cmd: tpl.mapping.cmd,
+    inputs: inputs.map(withoutLiveName),
+    outputs: outputs.map(withoutLiveName),
+  })).digest('hex').slice(0, 16);
+}
+
 /**
- * 本 Template 的历史：record_id → 历次运行，按时间先后排列。
+ * 本 Template 的历史：record_id → 最近一次运行结果。
  *
  * 必须按 template_id 过滤——同一张表上可能挂着别的 Template，
  * 混进来会让「最近一次」变成别人的那次，导致本 Template 永远被判为待运行。
+ * 按 run_id 从旧到新覆盖，因此内存里只需要保留每个 record 的最后状态。
  */
 function loadHistory(templateId) {
   const history = new Map();
@@ -198,7 +220,7 @@ function loadHistory(templateId) {
     const run = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (run.template_id !== templateId) continue;
     for (const { record_id, status, input_hash } of run.items) {
-      history.set(record_id, [...(history.get(record_id) || []), { status, input_hash }]);
+      history.set(record_id, { status, input_hash, work_hash: run.work_hash });
     }
   }
   return history;
@@ -209,9 +231,10 @@ function loadHistory(templateId) {
  * 若改用「历史上任意一次成功」，把输入改回旧值会被误判为已完成，
  * 而表里的输出其实是另一组输入产生的。
  */
-function upToDate(history, recordId, inputHash) {
-  const last = (history.get(recordId) || []).at(-1);
-  return Boolean(last && last.status === 'succeeded' && last.input_hash === inputHash);
+function upToDate(history, recordId, inputHash, workHash) {
+  const last = history.get(recordId);
+  return Boolean(last && last.status === 'succeeded'
+    && last.input_hash === inputHash && last.work_hash === workHash);
 }
 
 // ─── 运行前核对 ───────────────────────────────────────────────────────────
@@ -352,13 +375,13 @@ function writeBack(ctx, item, stdout) {
   }
 }
 
-function runRow(ctx, recordId) {
+function runRow(ctx, row) {
   const { tpl, skillDir, workdir, dryRun } = ctx;
+  const { record_id: recordId, cells } = row;
   const item = { record_id: recordId, status: 'pending', stage: 'validate', ms: null, error: null, input_hash: null };
   const fail = (error) => ({ ...item, status: 'failed', error });
 
-  // 1) 读该行，先算指纹（失败行也要有，便于诊断）
-  const cells = readRow(tpl, recordId);
+  // 1) 先算指纹（失败行也要有，便于诊断）
   item.input_hash = fingerprintOf(ctx.inputs, cells);
 
   // 2) 校验输入并组装命令
@@ -407,8 +430,9 @@ function main() {
 
   const tpl = JSON.parse(fs.readFileSync(args.template, 'utf8'));
   const { skillDir, inputs, outputs, dropped } = preflight(tpl);
+  const workHash = workHashOf(tpl, inputs, outputs);
 
-  const all = readRows(tpl);
+  const all = readRows(tpl, inputs.map((i) => i.field_id));
   const history = loadHistory(tpl.template_id);
 
   let rows = all;
@@ -418,7 +442,7 @@ function main() {
     trigger = 'record-id';
   } else if (args.pending) {
     // 指纹只覆盖实际生效的输入——删掉某个输入列即意味着输入变了，相关行会重跑一次
-    rows = all.filter((r) => !upToDate(history, r.record_id, fingerprintOf(inputs, r.cells)));
+    rows = all.filter((r) => !upToDate(history, r.record_id, fingerprintOf(inputs, r.cells), workHash));
     trigger = 'pending';
   }
   if (!rows.length) {
@@ -448,12 +472,13 @@ function main() {
 
   const ctx = { tpl, skillDir, inputs, outputs, workdir, dryRun: args.dryRun };
   const startedAt = Date.now();
-  const items = rows.map(({ record_id }) => {
-    const item = runRow(ctx, record_id);
-    if (item.status === 'dry-run') console.log(`  → ${record_id}  argv: ${JSON.stringify(item.argv)}`);
+  const items = rows.map((row) => {
+    const item = runRow(ctx, row);
+    const recordId = row.record_id;
+    if (item.status === 'dry-run') console.log(`  → ${recordId}  argv: ${JSON.stringify(item.argv)}`);
     else {
       const flag = item.status === 'succeeded' ? '✅' : '❌';
-      console.log(`  ${flag} ${record_id}  ${item.stage || 'done'}  ${item.ms ?? '-'}ms  ${item.error || ''}`);
+      console.log(`  ${flag} ${recordId}  ${item.stage || 'done'}  ${item.ms ?? '-'}ms  ${item.error || ''}`);
     }
     return item;
   });
@@ -468,6 +493,7 @@ function main() {
     run_id: runId,
     template_id: tpl.template_id,
     skill_hash: tpl.skill.hash,
+    work_hash: workHash,
     trigger,
     started_at: new Date(startedAt).toISOString(),
     finished_at: new Date().toISOString(),

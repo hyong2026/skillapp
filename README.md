@@ -39,7 +39,7 @@ node bin/map-table.js --ref <ref> --url '<表格链接>'       # 契约默认读
 node bin/run-template.js templates/<ref>.json --pending
 ```
 
-`--pending` 只跑**最近一次运行与当前输入对不上**的行（没跑过、上次失败、或输入变了），可安全重复执行。
+`--pending` 只跑**工作版本或当前输入与最近一次成功运行不一致**的行（没跑过、上次失败、Skill/Mapping/目标变过、或输入变了），可安全重复执行。
 
 判定只看**最近一次**运行，不看「历史上是否曾经成功」——否则把输入改回旧值会被误判为已完成，而表里的输出其实是另一组输入的产物。
 
@@ -71,6 +71,10 @@ skillapp/
 ├── lib/                       内部模块
 │   ├── lark.js                lark-cli 封装
 │   └── skill-hash.js          Skill 内容指纹
+├── test/                             引擎的回归测试（Node 自带 test runner，零依赖）
+│   ├── load-skill.safety.test.js     源/目标重叠与 ref 路径穿越
+│   ├── map-table.retry.test.js       建列后回读的重试：飞书字段是异步传播的
+│   └── run-template.integration.test.js  分页、pending 版本与复用列表 cells
 ├── .agents/skills/            项目级 Skill：SkillApp 自己的操作手册
 │   ├── skillapp/              操作入口：装载 / 映射 / 执行 各跑哪条命令
 │   └── analyze-skill-io/      读 Skill → IO 契约 + 风险清单
@@ -89,6 +93,8 @@ skillapp/
 | `skills/` | 被装载进来、准备执行的 Skill | ❌ 内容 |
 
 四个内容目录各有一个 `README.md` 说明用途，因此克隆后仍能看见结构、知道缺什么。
+
+**跑测试**：在仓库根跑 `node --test` —— 用 Node 自带的 test runner，仓库没有 `package.json`，也不需要装依赖。测试通过临时目录和假 `lark` 响应覆盖真实 CLI 与执行主逻辑，写操作全落在系统临时目录。
 
 ## 两个阶段
 
@@ -141,7 +147,7 @@ skillapp/
 - **串行执行，没有并发。** 逐行处理，也没有租约机制。多机或并行要先解决"谁拥有这一行"。
 - **失败行会被 `--pending` 反复捞出**（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入或用 `--record-id`。
 - **`runs/` 只增不减**，产物、日志都在里面，目前没有清理策略。
-- **`--pending` 每次扫描全部历史。** 行数上万后需建索引。
+- **`--pending` 每次读取全部历史文件。** 内存只保留每行最近状态；行数上万后仍需建索引。
 - **一个 Skill 只能映射到一张表。** `templates/<ref>.json` 只按 Skill 名命名，所以把同一个 Skill 映射到第二张表会**直接覆盖**第一份，连 `template_id` 都会沿用它。要支持多表，需把表格标识写进文件名（`<ref>.<table_id>.json`）——现在不做。
 - **Template 不可恢复。** 它不进 Git，克隆后无法还原；需要多人共享同一份 Template 时应把它放回 Git。
 - **只支持 JSON stdout 的 Skill。** 执行器直接 `JSON.parse` 标准输出；输出散文或非 JSON 的 Skill 需要先补一层解析。

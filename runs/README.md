@@ -18,6 +18,7 @@
   "run_id": "20260930-194727-86bc",
   "template_id": "c62d75ba-…",     // 指向 templates/<ref>.json
   "skill_hash": "sha256:a19b…",    // 本次使用的 Skill 版本
+  "work_hash": "sha256:7c31…",     // Skill + 命令 + 目标 + 生效映射的版本
   "trigger": "pending",            // all | pending | record-id
   "started_at": "…",
   "finished_at": "…",
@@ -39,7 +40,7 @@
 
 `stage` 取值 `validate` / `exec` / `upload` / `writeback`。区分它是因为**重试价值不同**：`validate` 失败是输入不合规，重试没有意义；后三者才值得重试。
 
-`--pending` 读这里的历史，判断该行**最近一次**运行是否与当前输入一致且成功。
+`--pending` 读这里的历史，判断该行的**最近一次成功运行**是否使用同一工作版本且输入一致。旧 Run 没有 `work_hash` 时会重跑一次。
 
 只看最近一次：若改用「历史上任意一次成功」，把输入改回旧值会被误判为已完成，而表里的输出其实是另一组输入产生的。
 
