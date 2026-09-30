@@ -1,101 +1,157 @@
 # SkillApp
 
-**一个容器**：装载 skill，把 skill 的 IO 映射到飞书 Base，并具备执行能力。
+**一个容器**：装载 Skill，把 Skill 的 IO 映射到飞书多维表格，并具备执行能力。
 
-三件事，不多不少：
+三步。用户只需要给两样东西：**一个 Skill 路径**，**一个表格链接**。
 
-| | |
-|---|---|
-| **装载** | 导入 skill 并固定版本（`bin/skill-import.js`） |
-| **映射** | skill 的输入输出 ←→ Base 的列（`init/`） |
-| **执行** | 按 Template 批量跑，结果回写（`bin/run-template.js`） |
+| # | 步骤 | 用户给什么 | 得到什么 |
+|---|---|---|---|
+| 1 | **装载** | Skill 路径 | 复制进 SkillApp + 一份**分析报告**（供评审）|
+| 2 | **映射** | 表格链接 | 表格列 + Template |
+| 3 | **执行** | —— | 回写的结果 |
+
+前两步合称「**初始化**」——把一个 Skill 变成可运行的 Template。
+
+**闸门在装载与映射之间**：装载只产出报告、不碰表格；映射会改表格结构，所以报告不过目就不动。
 
 ## 使用
 
+用自然语言驱动即可——`.agents/skills/` 里的项目级 Skill 会接住这些话：
+
+| 你说 | Agent 会做 |
+|---|---|
+| 「装载：/path/to/skill」 | 复制进 SkillApp，并分析它，交一份**报告**给你评审 |
+| 「映射到这张表：<链接>」 | 建列、设列顺序、出 Template（**要你先评审过报告**）|
+| 「执行 / 跑一批」 | 跑 `run-template.js --pending` |
+
+也可以直接敲命令：
+
 ```bash
-# 1. 装载 skill
-node bin/skill-import.js /path/to/skill --ref <name>
+# 1. 装载 = 复制 + 分析
+node bin/load-skill.js /path/to/skill --ref <ref>        # 复制（脚本）
+# 分析由 Agent 用 analyze-skill-io 做 → tmp/<ref>.io-schema.json + tmp/<ref>.io-report.md
+#   ↓ 评审：报告不过目，不进入下一步
 
-# 2. 初始化 Template —— 由 agent 按这两份说明执行
-#    init/analyze/SKILL.md    读 skill → IO 契约 + 风险清单
-#         ↓ 人工确认（必须）
-#    init/scaffold/SKILL.md   契约 → Base 列 + templates/<name>.template.json
+# 2. 映射：对齐列、设列顺序、写 Template，并自动自检
+node bin/map-table.js tmp/<ref>.io-schema.json --ref <ref> --url '<表格链接>'
 
-# 3. 自检：核对 skill 指纹、字段存在性与类型，打印解析出的 argv
-node bin/run-template.js templates/<name>.template.json --dry-run
-
-# 4. 执行
-node bin/run-template.js templates/<name>.template.json --pending
+# 3. 执行
+node bin/run-template.js templates/<ref>.json --pending
 ```
 
-`--pending` 只跑 **在 `runs/` 历史中没有成功记录、或输入已变**的行，因此可安全重复执行。
+`--pending` 只跑**最近一次运行与当前输入对不上**的行（没跑过、上次失败、或输入变了），可安全重复执行。
+
+判定只看**最近一次**运行，不看「历史上是否曾经成功」——否则把输入改回旧值会被误判为已完成，而表里的输出其实是另一组输入的产物。
 
 `-h` 查看各命令的完整选项。
 
 ## 边界
 
-> **Base 里只存 IO 数据。** 只有输入列、输出列，外加一个文本主字段作行名。
-> 运行状态、Run、RunItem 一律不进 Base——它们记在 `runs/` 目录里。
+> **表格里只存 IO 数据。**
+> 映射的目标是飞书多维表格中的**某张表格**（连同它的**视图**，视图决定列顺序与可见性）——不是整个多维表格。
+> 表里只有输入列、输出列，外加一个文本主字段作行名。运行状态、Run、RunItem 一律不进表，它们记在 `runs/`。
 
 | 谁管 | 存什么 |
 |---|---|
-| 飞书 Base | 用户的输入与输出 |
-| `templates/` | Template + Mapping（定义） |
+| 某张表格 + 视图 | 用户的输入与输出 |
+| `templates/` | Template（内含 Mapping） |
 | `runs/` | Run + RunItem + 产物（状态） |
+
+三个词的含义：**Template** 是可运行的定义（`templates/<ref>.json`），它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；**io-schema.json** 是 Mapping 的草案，两个步骤之间的中间物。
 
 ## 目录
 
 ```
 skillapp/
-├── bin/                       引擎
-│   ├── skill-import.js        装载：导入 skill
-│   ├── run-template.js        执行：读行 → 跑 skill → 回写
-│   └── skill-hash.js          内容指纹（内部模块）
-├── init/                      映射：把一个 skill 变成 Template
-│   ├── analyze/SKILL.md       读 skill → IO 契约 + 风险清单
-│   └── scaffold/SKILL.md      契约 → Base 列 + Template
-├── skills/<ref>/              导入的 skill —— 内容不进 git
-├── templates/                 Template —— 内容不进 git
-└── runs/<run_id>/             Run 与 RunItem —— 内容不进 git
+├── bin/                       可运行的命令
+│   ├── load-skill.js          装载：把 Skill 复制进来并固定版本
+│   ├── map-table.js           映射：IO 契约 → 表格列 + Template
+│   ├── run-template.js        执行：读行 → 跑 Skill → 回写
+│   └── unload-skill.js        卸载：清掉装载进来的东西（`-h` 看用法）
+├── lib/                       内部模块
+│   ├── lark.js                lark-cli 封装
+│   └── skill-hash.js          Skill 内容指纹
+├── .agents/skills/            项目级 Skill：SkillApp 自己的操作手册
+│   ├── skillapp/              操作入口：装载 / 映射 / 执行 各跑哪条命令
+│   └── analyze-skill-io/      读 Skill → IO 契约 + 风险清单
+├── skills/<ref>/              装载进来的 Skill —— 内容不进 git
+├── templates/                 Template（内含 Mapping）—— 内容不进 git
+│   └── <ref>.json             一个 Skill 一张表（见「已知边界」）
+├── runs/<run_id>/             Run 与 RunItem —— 内容不进 git
+└── tmp/io-schema.json         中间产物 —— 内容不进 git
 ```
 
-三个内容目录各有一个 `README.md` 说明用途，因此克隆后仍能看见结构、知道缺什么。
+**两个 `skills` 不是一回事**，别混：
+
+| 路径 | 是什么 | 进 git |
+|---|---|---|
+| `.agents/skills/` | SkillApp 自己的操作手册，给 Agent 用（项目级 Skill） | ✅ |
+| `skills/` | 被装载进来、准备执行的 Skill | ❌ 内容 |
+
+四个内容目录各有一个 `README.md` 说明用途，因此克隆后仍能看见结构、知道缺什么。
 
 ## 两个阶段
 
 ```
-① 初始化   要判断，是 Skill
-   analyze → 风险清单 → 人审 → scaffold
+① 初始化   装载（复制 + 分析）→ 映射      把一个 Skill 变成可运行的 Template
+   load-skill.js + analyze-skill-io  →  评审  →  map-table.js
 
-② 执行     要确定，是 Runtime
-   run
+② 执行     跑批量、回写结果
+   run-template.js
 ```
 
-**第二步为什么不做成 Skill：** 每跑一行就把 LLM 放进回路 = 慢、贵、不可重放，且等于让非确定性组件去写生产数据。
-**第一步为什么拆两段：** 中间那次人工确认必须有个落脚点。推断是建议，不是事实。
+**执行为什么不做成 Skill：** 每跑一行就把 LLM 放进回路 = 慢、贵、不可重放，且等于让非确定性组件去写生产数据。
+**分析为什么和映射分开：** `analyze` 要读任意实现、做类型取舍，只能是 Skill；`map` 是机械的，做成脚本才确定、可重跑、可 diff。中间那次人工确认也有了落脚点。
+
+**装载为什么包含分析：** 从用户视角，交出去一个 Skill 路径，意图就是「把它纳进来」——而单纯复制不产生任何可判断的东西，分析才是他要评审的成果。而且上游一改就必须重新装载，重新分析本来就应该跟着发生。
+
+**装载为什么不和映射合并：** 触发频率差一个数量级（装载随上游改动、映射极少），影响范围也不同（装载只动本机文件，映射要改用户表格结构）。
+
+## 列命名与删列
+
+**命名规范**（前缀只给人看；机器绑定一律用 `field_id`，所以改名不会破坏映射）
+
+| 区 | 格式 | 例 |
+|---|---|---|
+| 主字段 | 行名，无前缀 | `任务名称` |
+| 输入 | `In: <标签>`，必填项行首加 `* ` | `* In: 网格数` |
+| 输出 | `Out: <标签>` | `Out: 切片数` |
+
+**删列是预期用法。** 映射条目允许比表「宽」，执行前会与当前表格对账：
+
+| 情形 | 行为 |
+|---|---|
+| 删掉非必填输入列 | 从映射中剔除；对应参数**整对省略**（如 `-f` 一起消失），Skill 用它自己的默认行为 |
+| 删掉输出列 | 不再回写该列 |
+| 删掉必填输入列 | **拒绝运行**，报明确的错 |
+| 列还在但类型变了 | **拒绝运行** |
+
+副作用：删掉某个输入列会改变输入指纹，相关行会在下次 `--pending` 时**重跑一次**。
 
 ## 三条不变量
 
-1. **Template 里不出现绝对路径。** 只写 `ref` + `hash`；上游位置记在 `source_hint`（非运行时字段）。
+1. **Template 里不出现绝对路径。** Skill 只写 `skills/<ref>` 相对路径 + 内容 `hash`。
 2. **绑定一律用 `field_id`，不用字段名。** 名字随时会被改。
-3. **加载时核对，不靠自觉。** 启动时校验 skill 内容指纹、每个 `field_id` 的存在与类型，不符即拒绝运行。
+3. **加载时核对，不靠自觉。** 启动时校验 Skill 内容指纹、每个 `field_id` 的存在与类型。
 
 ## 已知边界
 
 刻意留着的缺口，不是遗漏：
 
-- **无并发锁。** 并发度 1，单执行器。多机时需把租约放进真实数据库。
-- **失败行会被 `--pending` 反复捞出**（它就是「没有成功记录」）。要让某行退出待运行，只能修输入或用 `--record-id`。
+- **串行执行，没有并发。** 逐行处理，也没有租约机制。多机或并行要先解决"谁拥有这一行"。
+- **失败行会被 `--pending` 反复捞出**（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入或用 `--record-id`。
 - **`runs/` 只增不减**，产物、日志都在里面，目前没有清理策略。
 - **`--pending` 每次扫描全部历史。** 行数上万后需建索引。
+- **一个 Skill 只能映射到一张表。** `templates/<ref>.json` 只按 Skill 名命名，所以把同一个 Skill 映射到第二张表会**直接覆盖**第一份，连 `template_id` 都会沿用它。要支持多表，需把表格标识写进文件名（`<ref>.<table_id>.json`）——现在不做。
 - **Template 不可恢复。** 它不进 git，克隆后无法还原；需要多人共享同一份 Template 时应把它放回 git。
-- **只支持 JSON stdout 的 skill。** Template 的 `invocation.parse` 目前只有 `json_stdout` 一种取值。
-- **skill 必须有可执行入口。** runner 需要 spawn 一个命令行进程；纯方法论型 skill（只有 `SKILL.md`，没有脚本）无法执行——那需要另一套执行模型。
+- **只支持 JSON stdout 的 Skill。** 执行器直接 `JSON.parse` 标准输出；输出散文或非 JSON 的 Skill 需要先补一层解析。
+- **Skill 必须有可执行入口。** 执行器需要 spawn 一个命令行进程；纯方法论型 Skill（只有 `SKILL.md`，没有脚本）无法执行——那需要另一套执行模型。
 
 ## 什么时候该再分层
 
-现在三个文件平铺在 `bin/`，够了。出现以下任一情况再拆：
+目录按**类别**分，不按文件数分：`bin/` 只放能直接运行的命令，`lib/` 只放内部模块。
 
-- `bin/` 超过 5 个文件 → 分出 `bin/`（入口）+ `src/`（模块）
-- 需要对外提供调用（HTTP / SDK）→ 把逻辑从 CLI 抽出来
-- `run-template.js` 里出现第二个 skill 的特例分支 → 该往 Template 加字段，而不是加 `if`
+出现以下任一情况再动结构：
+
+- 需要对外提供调用（HTTP / SDK）→ 把逻辑从 CLI 抽出来，CLI 变成薄壳
+- `run-template.js` 里出现第二个 Skill 的特例分支 → 该往 Template 加字段，而不是加 `if`

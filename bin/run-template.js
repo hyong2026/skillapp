@@ -1,26 +1,28 @@
 #!/usr/bin/env node
 /**
- * run-template.js — 执行 Template：逐行读 Base → 跑 skill → 回写结果
+ * run-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
  *
- * 边界：Base 只承担 IO（读输入 / 写输出），不写任何状态。
- *       Run = runs/<run_id>/run.json，RunItem = runs/<run_id>/items.ndjson。
+ *   node bin/run-template.js <template.json> [--all | --pending | --record-id <id> ...] [--dry-run]
+ *
+ * 边界：多维表格只承担 IO（读输入 / 写输出），不写任何状态。
+ *       Run 与其中的 RunItem 都记在 runs/<run_id>/run.json。
  */
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
-const { skillHash } = require('./skill-hash');
+const { ROOT, lark } = require('../lib/lark');
+const { skillHash } = require('../lib/skill-hash');
 
-const ROOT = path.join(__dirname, '..');
 const RUNS_DIR = path.join(ROOT, 'runs');
+const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
 
 const USAGE = `用法: node bin/run-template.js <template.json> [选项]
 
 选项:
   --all               处理表内所有行（默认）
-  --pending           只处理在 runs/ 历史中没有成功记录、或输入已变的行
+  --pending           只处理最近一次运行与当前输入对不上的行
   --record-id <id>    只处理指定行，可重复传
   --dry-run           只核对，不执行、不回写、不产生 Run 记录
   -h, --help          显示本帮助`;
@@ -28,11 +30,10 @@ const USAGE = `用法: node bin/run-template.js <template.json> [选项]
 // ─── 参数 ─────────────────────────────────────────────────────────────────
 
 function parseArgv(argv) {
-  const out = { template: null, recordIds: [], dryRun: false, all: false, pending: false, help: false };
+  const out = { template: null, recordIds: [], dryRun: false, pending: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') out.dryRun = true;
-    else if (a === '--all') out.all = true;
     else if (a === '--pending') out.pending = true;
     else if (a === '--record-id') out.recordIds.push(argv[++i]);
     else if (a === '-h' || a === '--help') out.help = true;
@@ -41,65 +42,118 @@ function parseArgv(argv) {
   return out;
 }
 
-// ─── lark-cli ─────────────────────────────────────────────────────────────
+// ─── 多维表格读写 ─────────────────────────────────────────────────────────
 
-function lark(args) {
-  const r = spawnSync('lark-cli', args, { encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`lark-cli ${args.slice(0, 3).join(' ')} 失败: ${(r.stderr || r.stdout).trim()}`);
-  let out;
-  try {
-    out = JSON.parse(r.stdout);
-  } catch {
-    throw new Error(`lark-cli 返回非 JSON: ${r.stdout.slice(0, 300)}`);
-  }
-  if (out.ok === false) throw new Error(`lark-cli 报错: ${JSON.stringify(out).slice(0, 300)}`);
-  return out;
-}
-
-/** base + 身份 + 表的公共参数 */
-const baseFlags = (tpl, ...rest) => ['--base-token', tpl.target.base_token, '--as', 'user', ...rest];
+const tableFlags = (tpl, ...rest) => [
+  '--base-token', tpl.target.base_token,
+  '--table-id', tpl.target.table_id,
+  '--as', 'user',
+  ...rest,
+];
 
 function updateRow(tpl, recordId, patch) {
-  lark(['base', '+record-batch-update', ...baseFlags(tpl,
-    '--table-id', tpl.target.table_id,
+  lark(['base', '+record-batch-update', ...tableFlags(tpl,
     '--json', JSON.stringify({ update_records: { [recordId]: patch } }))]);
 }
 
-/** 单行的 field_id → 单元格值 */
-function cellsOf(tpl, recordId) {
-  const d = lark(['base', '+record-get', ...baseFlags(tpl,
-    '--table-id', tpl.target.table_id, '--record-id', recordId, '--format', 'json')]).data;
+/** 记录列表 → [{ record_id, cells }]，cells 是 field_id → 值 */
+function readRows(tpl) {
+  const d = lark(['base', '+record-list', ...tableFlags(tpl, '--format', 'json')]).data;
+  const zip = (values) => Object.fromEntries(d.field_id_list.map((fid, i) => [fid, values[i]]));
+  return d.record_id_list.map((record_id, i) => ({ record_id, cells: zip(d.data[i]) }));
+}
+
+function readRow(tpl, recordId) {
+  const d = lark(['base', '+record-get', ...tableFlags(tpl,
+    '--record-id', recordId, '--format', 'json')]).data;
   return Object.fromEntries(d.field_id_list.map((fid, i) => [fid, d.data[0][i]]));
 }
 
-function listRows(tpl) {
-  const d = lark(['base', '+record-list', ...baseFlags(tpl,
-    '--table-id', tpl.target.table_id, '--format', 'json')]).data;
-  return d.record_id_list.map((rid, i) => ({
-    record_id: rid,
-    row: Object.fromEntries(d.field_id_list.map((fid, j) => [fid, d.data[i][j]])),
-  }));
+const download = (tpl, recordId, att, dest) => lark(['base', '+record-download-attachment', ...tableFlags(tpl,
+  '--record-id', recordId, '--file-token', att.file_token, '--output', dest, '--overwrite')]);
+
+const upload = (tpl, recordId, fieldId, files) => lark(['base', '+record-upload-attachment', ...tableFlags(tpl,
+  '--record-id', recordId, '--field-id', fieldId, ...files.flatMap((f) => ['--file', f]))]);
+
+// ─── 取值与命令组装 ───────────────────────────────────────────────────────
+
+/**
+ * 按点分路径取值，结果始终是数组。
+ * 段尾的 `[]` 表示对上一步结果逐项取值——注意必须**原样返回该数组**，
+ * 靠 flatMap 拍平一层把它摊成多个元素，否则后续段会拿到数组本身而不是元素。
+ */
+function walk(root, segments) {
+  let cur = [root];
+  for (const seg of segments) {
+    const pluck = seg.endsWith('[]');
+    const key = pluck ? seg.slice(0, -2) : seg;
+    cur = cur.flatMap((v) => {
+      if (v == null) return [];
+      const val = v[key];
+      return pluck ? (Array.isArray(val) ? val : []) : [val];
+    });
+  }
+  return cur;
 }
 
-// ─── 表达式与指纹 ─────────────────────────────────────────────────────────
+const resolvePath = (root, dotted) => walk(root, dotted.split('.'))[0];
 
-function resolvePath(root, dotted) {
-  return dotted.split('.').reduce((o, k) => (o == null ? undefined : o[k]), root);
-}
-
-/** 支持 "stdout.a.b" 与 "stdout.fileSize / 1024" */
+/**
+ * 求值 mapping 的 from 表达式：
+ *   "stdout.canvas.width"     值
+ *   "stdout.fileSize / 1024"  值 / 1024
+ *   "stdout.files[].path"     数组（产物是一组文件时用）
+ */
 function evalFrom(expr, stdout) {
-  const m = /^([A-Za-z_][\w.]*)(?:\s*\/\s*([\d.]+))?$/.exec(expr.trim());
-  if (!m) throw new Error(`不支持的表达式: ${expr}`);
-  const v = resolvePath({ stdout }, m[1]);
-  if (v === undefined || v === null) throw new Error(`表达式 ${expr} 解析为空`);
-  return m[2] ? v / parseFloat(m[2]) : v;
+  const m = /^stdout\.([\w.\[\]]+?)(?:\s*\/\s*([\d.]+))?$/.exec(expr.trim());
+  if (!m) throw new Error(`不支持的表达式（须以 stdout. 开头）: ${expr}`);
+
+  const plucked = m[1].includes('[]');
+  let out = walk(stdout, m[1].split('.'));
+  if (!plucked) out = out[0];
+  if (out == null || out.length === 0) throw new Error(`表达式 ${expr} 解析为空`);
+
+  if (m[2]) {
+    const d = parseFloat(m[2]);
+    out = plucked ? out.map((v) => v / d) : out / d;
+  }
+  return out;
 }
 
-/** 把 invocation.cmd 求值成 argv。`{key...}` 展开为数组（位置参数传多个文件）。 */
+/** 按空白切分命令，但 {} 内部的空白不算——成对参数要写成单个 token。 */
+function tokenize(cmd) {
+  const tokens = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of cmd) {
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    if (/\s/.test(ch) && depth === 0) {
+      if (cur) tokens.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  return cur ? [...tokens, cur] : tokens;
+}
+
+/**
+ * mapping.cmd 的模板语法：
+ *   {key}         该值；未定义则报错 —— 必填参数
+ *   {key...}      展开为数组，位置参数传多个文件
+ *   {--flag key}  成对参数：值为空或该列已被删除时整对省略 —— 可选参数
+ */
 function buildArgv(cmd, vars) {
   const argv = [];
-  for (const tok of cmd.split(/\s+/)) {
+  for (const tok of tokenize(cmd)) {
+    const paired = /^\{(\S+)\s+(\w+)\}$/.exec(tok);
+    if (paired) {
+      const v = resolvePath(vars, paired[2]);
+      if (v !== undefined && v !== null && v !== '') argv.push(paired[1], String(v));
+      continue;
+    }
+
     const splat = /^\{(\w+)\.\.\.\}$/.exec(tok);
     if (splat) {
       const arr = resolvePath(vars, splat[1]);
@@ -107,6 +161,7 @@ function buildArgv(cmd, vars) {
       argv.push(...arr);
       continue;
     }
+
     argv.push(tok.replace(/\{([\w.]+)\}/g, (whole, key) => {
       const v = resolvePath(vars, key);
       if (v === undefined) throw new Error(`cmd 中的 {${key}} 未定义`);
@@ -116,170 +171,229 @@ function buildArgv(cmd, vars) {
   return argv;
 }
 
-/** 输入指纹：覆盖全部输入单元格。附件计入 file_token，故换图即失效。 */
-function fingerprint(values) {
-  const stable = Object.fromEntries(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
+// ─── 输入指纹与运行历史 ───────────────────────────────────────────────────
+
+/** 覆盖全部输入单元格。附件计入 file_token，故换图即失效。 */
+function fingerprint(cells) {
+  const stable = Object.fromEntries(Object.entries(cells).sort(([a], [b]) => a.localeCompare(b)));
   return crypto.createHash('sha256').update(JSON.stringify(stable)).digest('hex').slice(0, 16);
 }
 
-const fingerprintOfRow = (tpl, row) => fingerprint(
-  Object.fromEntries(tpl.mapping.inputs.map((i) => [i.field_id, row[i.field_id]]))
-);
+const fingerprintOf = (inputs, cells) =>
+  fingerprint(Object.fromEntries(inputs.map((i) => [i.field_id, cells[i.field_id]])));
 
-// ─── 运行历史（runs/ 即状态层）────────────────────────────────────────────
-
-function loadHistory() {
+/**
+ * 本 Template 的历史：record_id → 历次运行，按时间先后排列。
+ *
+ * 必须按 template_id 过滤——同一张表上可能挂着别的 Template，
+ * 混进来会让「最近一次」变成别人的那次，导致本 Template 永远被判为待运行。
+ */
+function loadHistory(templateId) {
   const history = new Map();
   if (!fs.existsSync(RUNS_DIR)) return history;
+
   for (const runId of fs.readdirSync(RUNS_DIR).sort()) {
-    const file = path.join(RUNS_DIR, runId, 'items.ndjson');
+    const file = path.join(RUNS_DIR, runId, 'run.json');
     if (!fs.existsSync(file)) continue;
-    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-      if (!line.trim()) continue;
-      const { record_id, status, input_hash } = JSON.parse(line);
-      if (!history.has(record_id)) history.set(record_id, []);
-      history.get(record_id).push({ status, input_hash });
+    const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (run.template_id !== templateId) continue;
+    for (const { record_id, status, input_hash } of run.items) {
+      history.set(record_id, [...(history.get(record_id) || []), { status, input_hash }]);
     }
   }
   return history;
 }
 
-const alreadySucceeded = (history, recordId, inputHash) =>
-  (history.get(recordId) || []).some((e) => e.input_hash === inputHash && e.status === 'succeeded');
+/**
+ * 该行是否已是最新状态——只看**最近一次**运行。
+ * 若改用「历史上任意一次成功」，把输入改回旧值会被误判为已完成，
+ * 而表里的输出其实是另一组输入产生的。
+ */
+function upToDate(history, recordId, inputHash) {
+  const last = (history.get(recordId) || []).at(-1);
+  return Boolean(last && last.status === 'succeeded' && last.input_hash === inputHash);
+}
 
-// ─── 运行前核对：不通过就拒绝运行 ─────────────────────────────────────────
+// ─── 运行前核对 ───────────────────────────────────────────────────────────
 
+/**
+ * 返回实际生效的映射。
+ *
+ * 列可以被手工删除——那是预期用法：删掉的列从映射中剔除，执行时只读写剩下的。
+ * 三类情况仍拒绝运行：Skill 指纹不符；必填输入被删除；列还在但类型不符。
+ */
 function preflight(tpl) {
-  const reimport = `node bin/skill-import.js <源目录> --ref ${tpl.skill.ref}`;
+  const ref = path.basename(tpl.skill.path);
+  const reload = `node bin/load-skill.js <源目录> --ref ${ref}`;
+  const skillDir = path.join(ROOT, tpl.skill.path);
 
-  const dir = path.join(ROOT, 'skills', tpl.skill.ref);
-  if (!fs.existsSync(path.join(dir, 'SKILL.md'))) {
-    throw new Error(`skill 未导入: ${tpl.skill.ref}\n  先执行: ${reimport}`);
+  if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) {
+    throw new Error(`Skill 未装载: ${tpl.skill.path}\n  先执行: ${reload}`);
   }
-  const live = skillHash(dir);
+  const live = skillHash(skillDir);
   if (live !== tpl.skill.hash) {
-    throw new Error(`skill 内容指纹不符，拒绝运行:\n  template = ${tpl.skill.hash}\n  on-disk  = ${live}\n  重新导入: ${reimport}`);
+    throw new Error(`Skill 内容指纹不符，拒绝运行:\n  template = ${tpl.skill.hash}\n  on-disk  = ${live}\n  重新装载: ${reload}`);
   }
 
-  if (tpl.mapping.invocation.parse && tpl.mapping.invocation.parse !== 'json_stdout') {
-    throw new Error(`暂不支持的 invocation.parse: ${tpl.mapping.invocation.parse}`);
-  }
-
-  const fields = lark(['base', '+field-list', ...baseFlags(tpl, '--table-id', tpl.target.table_id)]).data.fields;
+  const fields = lark(['base', '+field-list', ...tableFlags(tpl)]).data.fields;
   const byId = new Map(fields.map((f) => [f.id, f]));
   const problems = [];
-  for (const f of [...tpl.mapping.inputs, ...tpl.mapping.outputs]) {
+
+  // 列名以活表为准——模板里不重复存。已删除的列取不到名字，退回 field_id。
+  const named = (f) => ({ ...f, field_name: byId.get(f.field_id)?.name ?? f.field_id });
+
+  const stillThere = (f) => {
     const actual = byId.get(f.field_id);
-    if (!actual) problems.push(`字段不存在: ${f.field_name} (${f.field_id})`);
-    else if (actual.type !== f.type) problems.push(`类型不符: ${f.field_name} 模板=${f.type} Base=${actual.type}`);
+    if (!actual) return false;
+    if (actual.type !== f.type) problems.push(`类型不符: ${actual.name} 模板=${f.type} 表格=${actual.type}`);
+    return true;
+  };
+
+  const inputs = tpl.mapping.inputs.filter(stillThere).map(named);
+  const outputs = tpl.mapping.outputs.filter(stillThere).map(named);
+
+  for (const f of tpl.mapping.inputs) {
+    if (f.required && !byId.has(f.field_id)) problems.push(`必填输入已被删除: ${named(f).field_name} (${f.field_id})`);
   }
   if (!byId.has(tpl.target.primary_field_id)) problems.push(`主字段不存在: ${tpl.target.primary_field_id}`);
-  if (problems.length) throw new Error(`Template 与 Base 不一致，拒绝运行:\n  - ${problems.join('\n  - ')}`);
+  if (!outputs.length) problems.push('没有任何输出列可用于回写');
+  if (problems.length) throw new Error(`Template 与当前表格不一致，拒绝运行:\n  - ${problems.join('\n  - ')}`);
 
-  return dir;
+  const dropped = [...tpl.mapping.inputs, ...tpl.mapping.outputs]
+    .filter((f) => !byId.has(f.field_id))
+    .map(named);
+  return { skillDir, inputs, outputs, dropped };
 }
 
 // ─── 单行执行 ─────────────────────────────────────────────────────────────
 
-function runRow(ctx, recordId) {
-  const { tpl, skillDir, workdir, dryRun } = ctx;
-  const item = { record_id: recordId, status: 'pending', stage: 'validate', ms: null, error: null, input_hash: null, outputs: {} };
-  const fail = (error) => { item.status = 'failed'; item.error = error; return item; };
-
-  // 1) 一次性读全输入并算指纹（失败行也要有，便于诊断）
-  const rawInputs = Object.fromEntries(
-    tpl.mapping.inputs.map((i) => [i.field_id, cellsOf(tpl, recordId)[i.field_id]])
-  );
-  item.input_hash = fingerprint(rawInputs);
-
-  // 2) 逐项校验，并把输入转成 cmd 变量
+/** 校验输入、下载附件、组装命令。返回 cmd 变量；校验不过则返回错误信息。 */
+function prepareInputs(ctx, recordId, cells) {
+  const { tpl, workdir } = ctx;
   const vars = { skill: tpl.skill, workdir };
-  for (const inp of tpl.mapping.inputs) {
-    const value = rawInputs[inp.field_id];
+
+  for (const inp of ctx.inputs) {
+    const value = cells[inp.field_id];
+    const rule = inp.validate || {};
 
     if (inp.type === 'attachment') {
-      const files = Array.isArray(value) ? value : [];
-      const min = inp.validate?.min_count ?? 0;
-      if (files.length < min) return fail(`${inp.field_name} 至少需要 ${min} 个文件，实际 ${files.length} 个`);
-      const dir = path.join(workdir, 'downloads', recordId); // 每行独立目录，避免同名附件互相覆盖
+      const atts = Array.isArray(value) ? value : [];
+      if (rule.count !== undefined && atts.length !== rule.count) {
+        return { error: `${inp.field_name} 需要恰好 ${rule.count} 个文件，实际 ${atts.length} 个` };
+      }
+      const min = rule.min_count ?? (inp.required ? 1 : 0);
+      if (atts.length < min) return { error: `${inp.field_name} 至少需要 ${min} 个文件，实际 ${atts.length} 个` };
+      if (rule.max_count !== undefined && atts.length > rule.max_count) {
+        return { error: `${inp.field_name} 最多 ${rule.max_count} 个文件，实际 ${atts.length} 个` };
+      }
+      // 每行独立目录，避免同名附件互相覆盖；同名时才加后缀，保留原文件名
+      const dir = path.join(workdir, 'downloads', recordId);
       fs.mkdirSync(dir, { recursive: true });
-      vars[inp.key] = files.map((att, i) => {
-        const dest = path.join(dir, `${i}-${att.name}`);
-        lark(['base', '+record-download-attachment', ...baseFlags(tpl,
-          '--table-id', tpl.target.table_id, '--record-id', recordId,
-          '--file-token', att.file_token, '--output', dest, '--overwrite')]);
+      const seen = new Map();
+      vars[inp.key] = atts.map((att) => {
+        const n = (seen.get(att.name) || 0) + 1;
+        seen.set(att.name, n);
+        const ext = path.extname(att.name);
+        const name = n === 1 ? att.name : `${path.basename(att.name, ext)}-${n}${ext}`;
+        const dest = path.join(dir, name);
+        download(tpl, recordId, att, dest);
         return dest;
       });
       continue;
     }
 
     let v = Array.isArray(value) ? value[0] : value;
-    if (v === null || v === undefined || v === '') v = inp.default;
-    const allowed = inp.validate?.enum;
-    if (allowed && !allowed.includes(v)) {
-      return fail(`${inp.field_name} 取值 ${JSON.stringify(v)} 不在 ${JSON.stringify(allowed)} 内`);
+    if (v === null || v === undefined || v === '') {
+      if (inp.required && inp.default === undefined) return { error: `${inp.field_name} 必填` };
+      v = inp.default;
     }
+    if (rule.enum && !rule.enum.includes(v)) {
+      return { error: `${inp.field_name} 取值 ${JSON.stringify(v)} 不在 ${JSON.stringify(rule.enum)} 内` };
+    }
+    if (rule.min !== undefined && v < rule.min) return { error: `${inp.field_name} 不能小于 ${rule.min}，实际 ${v}` };
+    if (rule.max !== undefined && v > rule.max) return { error: `${inp.field_name} 不能大于 ${rule.max}，实际 ${v}` };
     if (inp.transform && inp.transform[v] !== undefined) v = inp.transform[v];
+
     vars[inp.key] = v;
   }
+  return { vars };
+}
 
-  // 3) 组装命令
+/**
+ * 按 mapping 回写该行：先解析全部输出，再提交。
+ *
+ * 附件类型的输出即产物——它只能靠上传文件写入，所以按类型判定，不需要额外标记。
+ * 同一个解析式返回数组（一组文件）或字符串（单个文件）都可以。
+ */
+function writeBack(ctx, item, stdout) {
+  const { tpl, outputs } = ctx;
+  const scalars = {};
+  for (const o of outputs) {
+    if (o.type === 'attachment') continue;
+    let v = evalFrom(o.from, stdout);
+    if (o.round !== undefined) v = Number(v.toFixed(o.round));
+    scalars[o.field_id] = v;
+  }
+
+  for (const o of outputs) {
+    if (o.type !== 'attachment') continue;
+    const files = [].concat(evalFrom(o.from, stdout));
+    item.stage = 'writeback';
+    updateRow(tpl, item.record_id, { [o.field_id]: null }); // 上传是追加语义，先清空
+    item.stage = 'upload';
+    for (let i = 0; i < files.length; i += UPLOAD_CHUNK) {
+      upload(tpl, item.record_id, o.field_id, files.slice(i, i + UPLOAD_CHUNK));
+    }
+  }
+
+  if (Object.keys(scalars).length) {
+    item.stage = 'writeback';
+    updateRow(tpl, item.record_id, scalars);
+  }
+}
+
+function runRow(ctx, recordId) {
+  const { tpl, skillDir, workdir, dryRun } = ctx;
+  const item = { record_id: recordId, status: 'pending', stage: 'validate', ms: null, error: null, input_hash: null };
+  const fail = (error) => ({ ...item, status: 'failed', error });
+
+  // 1) 读该行，先算指纹（失败行也要有，便于诊断）
+  const cells = readRow(tpl, recordId);
+  item.input_hash = fingerprintOf(ctx.inputs, cells);
+
+  // 2) 校验输入并组装命令
+  const { vars, error } = prepareInputs(ctx, recordId, cells);
+  if (error) return fail(error);
+
   item.stage = 'exec';
   vars.outdir = path.join(workdir, 'artifacts', recordId); // 每行一个产物目录
   fs.mkdirSync(vars.outdir, { recursive: true });
-  const argv = buildArgv(tpl.mapping.invocation.cmd, vars);
-
+  const argv = buildArgv(tpl.mapping.cmd, vars);
   if (dryRun) return { ...item, status: 'dry-run', argv };
 
-  // 4) 执行
+  // 3) 执行
   const [bin, ...binArgs] = argv; // cmd 是完整命令行，首个 token 即可执行文件
   const t0 = Date.now();
-  const res = spawnSync(bin, binArgs, {
-    cwd: skillDir,
-    timeout: (tpl.executor.timeout_s || 60) * 1000,
-    encoding: 'utf8',
-  });
+  const res = spawnSync(bin, binArgs, { cwd: skillDir, timeout: (tpl.limits?.timeout_s || 60) * 1000, encoding: 'utf8' });
   item.ms = Date.now() - t0;
   fs.writeFileSync(path.join(workdir, `${recordId}.stdout.log`), res.stdout || '');
   fs.writeFileSync(path.join(workdir, `${recordId}.stderr.log`), res.stderr || '');
-  if (res.status !== 0) {
-    return fail(`skill 退出码 ${res.status}: ${(res.stderr || '').trim().split('\n').pop()}`);
-  }
+  if (res.status !== 0) return fail(`Skill 退出码 ${res.status}: ${(res.stderr || '').trim().split('\n').pop()}`);
 
   let stdout;
   try {
     stdout = JSON.parse(res.stdout);
   } catch {
-    return fail('skill 输出不是合法 JSON');
+    return fail('Skill 输出不是合法 JSON');
   }
 
-  // 5) 按 mapping 解析输出
-  const artifact = tpl.mapping.outputs.find((o) => o.write === 'upload_attachment_then_link_token');
-  const numbers = {};
-  for (const o of tpl.mapping.outputs) {
-    if (o === artifact) continue;
-    let v = evalFrom(o.from, stdout);
-    if (o.round !== undefined) v = Number(v.toFixed(o.round));
-    numbers[o.field_id] = v;
+  // 4) 回写
+  try {
+    writeBack(ctx, item, stdout);
+  } catch (err) {
+    return { ...item, status: 'failed', error: err.message };
   }
-  const artifactPath = artifact ? evalFrom(artifact.from, stdout) : null;
-  item.outputs = { ...numbers, ...(artifact ? { [artifact.field_id]: artifactPath } : {}) };
-
-  // 6) 回写：先清空附件格（上传是追加语义），再上传，最后写标量
-  if (artifact) {
-    item.stage = 'writeback';
-    updateRow(tpl, recordId, { [artifact.field_id]: null });
-    item.stage = 'upload';
-    lark(['base', '+record-upload-attachment', ...baseFlags(tpl,
-      '--table-id', tpl.target.table_id, '--record-id', recordId,
-      '--field-id', artifact.field_id, '--file', artifactPath)]);
-    item.stage = 'writeback';
-  }
-  if (Object.keys(numbers).length) updateRow(tpl, recordId, numbers);
-
-  item.status = 'succeeded';
-  item.stage = null;
-  return item;
+  return { ...item, status: 'succeeded', stage: null };
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────
@@ -292,10 +406,10 @@ function main() {
   }
 
   const tpl = JSON.parse(fs.readFileSync(args.template, 'utf8'));
-  const skillDir = preflight(tpl);
+  const { skillDir, inputs, outputs, dropped } = preflight(tpl);
 
-  const all = listRows(tpl);
-  const history = loadHistory();
+  const all = readRows(tpl);
+  const history = loadHistory(tpl.template_id);
 
   let rows = all;
   let trigger = 'all';
@@ -303,16 +417,15 @@ function main() {
     rows = all.filter((r) => args.recordIds.includes(r.record_id));
     trigger = 'record-id';
   } else if (args.pending) {
-    rows = all.filter((r) => !alreadySucceeded(history, r.record_id, fingerprintOfRow(tpl, r.row)));
+    // 指纹只覆盖实际生效的输入——删掉某个输入列即意味着输入变了，相关行会重跑一次
+    rows = all.filter((r) => !upToDate(history, r.record_id, fingerprintOf(inputs, r.cells)));
     trigger = 'pending';
   }
-
   if (!rows.length) {
     console.log('没有符合条件的行');
     return;
   }
 
-  // 批量闸门：误点一次不该炸掉一整张表
   const cap = tpl.limits?.max_rows_per_run;
   if (cap && rows.length > cap) {
     throw new Error(`选中 ${rows.length} 行，超过 Template 上限 ${cap}；请分批或用 --record-id 指定`);
@@ -324,22 +437,21 @@ function main() {
     + `-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
     + `-${Math.random().toString(16).slice(2, 6)}`;
 
-  // dry-run 不产生 Run 记录，因此不进 runs/，免得污染历史
-  const workdir = args.dryRun
-    ? fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-dry-'))
-    : path.join(RUNS_DIR, runId);
+  // dry-run 不产生 Run 记录，因此不进 runs/，免得污染历史。
+  // 用 /tmp 而非 os.tmpdir()：后者在 macOS 指向 /var/folders，不在 lark-cli 的白名单内。
+  const workdir = args.dryRun ? fs.mkdtempSync('/tmp/skillapp-dry-') : path.join(RUNS_DIR, runId);
   fs.mkdirSync(workdir, { recursive: true });
 
-  const ctx = { tpl, skillDir, workdir, dryRun: args.dryRun };
-  console.log(`Run ${runId}  ${tpl.template_id} v${tpl.version}  trigger=${trigger}  rows=${rows.length}`);
+  console.log(`Run ${runId}  ${tpl.template_id.slice(0, 8)}  trigger=${trigger}  rows=${rows.length}`);
+  if (dropped.length) console.log(`  [跳过 ${dropped.length} 个不在表格里的列] ${dropped.map((f) => f.field_name).join('、')}`);
   if (args.dryRun) console.log('  [dry-run] 只核对，不执行、不回写');
 
+  const ctx = { tpl, skillDir, inputs, outputs, workdir, dryRun: args.dryRun };
   const startedAt = Date.now();
   const items = rows.map(({ record_id }) => {
     const item = runRow(ctx, record_id);
-    if (item.status === 'dry-run') {
-      console.log(`  → ${record_id}  argv: ${JSON.stringify(item.argv)}`);
-    } else {
+    if (item.status === 'dry-run') console.log(`  → ${record_id}  argv: ${JSON.stringify(item.argv)}`);
+    else {
       const flag = item.status === 'succeeded' ? '✅' : '❌';
       console.log(`  ${flag} ${record_id}  ${item.stage || 'done'}  ${item.ms ?? '-'}ms  ${item.error || ''}`);
     }
@@ -351,22 +463,19 @@ function main() {
   const succeeded = items.filter((i) => i.status === 'succeeded').length;
   const failed = items.length - succeeded;
 
-  // Run = run.json；RunItem = items.ndjson。状态层就在这儿，不在 Base。
+  // 一个 Run 一个文件：状态层就在这儿，不在表格里
   fs.writeFileSync(path.join(workdir, 'run.json'), JSON.stringify({
     run_id: runId,
     template_id: tpl.template_id,
-    template_version: tpl.version,
-    skill_version: tpl.skill.hash,
+    skill_hash: tpl.skill.hash,
     trigger,
-    status: failed === 0 ? 'completed' : succeeded === 0 ? 'failed' : 'partial',
     started_at: new Date(startedAt).toISOString(),
     finished_at: new Date().toISOString(),
-    total: items.length,
+    status: failed === 0 ? 'completed' : succeeded === 0 ? 'failed' : 'partial',
     succeeded,
     failed,
     items,
-  }, null, 2));
-  fs.writeFileSync(path.join(workdir, 'items.ndjson'), items.map((i) => JSON.stringify(i)).join('\n') + '\n');
+  }, null, 2) + '\n');
 
   console.log(`\n完成: ${succeeded} 成功 / ${failed} 失败`);
   console.log(`记录: runs/${runId}/run.json`);
