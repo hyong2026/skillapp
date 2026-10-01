@@ -57,6 +57,26 @@ function updateRow(tpl, recordId, patch) {
     '--json', JSON.stringify({ update_records: { [recordId]: patch } }))]);
 }
 
+function jsonData(text) {
+  const raw = text || '';
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' ? parsed : { value: parsed };
+  } catch {
+    return { raw };
+  }
+}
+
+function writeStreamLog(recordDir, recordId, stream, text) {
+  const logsDir = path.join(recordDir, 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+  fs.writeFileSync(path.join(logsDir, `${stream}.json`), JSON.stringify({
+    record_id: recordId,
+    stream,
+    data: jsonData(text),
+  }, null, 2) + '\n');
+}
+
 /** 记录列表 → [{ record_id, cells }]，cells 是 field_id → 值 */
 function readRows(tpl, fieldIds) {
   const rows = [];
@@ -291,9 +311,9 @@ function preflight(tpl) {
 // ─── 单行执行 ─────────────────────────────────────────────────────────────
 
 /** 校验输入、下载附件、组装命令。返回 cmd 变量；校验不过则返回错误信息。 */
-function prepareInputs(ctx, recordId, cells) {
-  const { tpl, workdir } = ctx;
-  const vars = { skill: tpl.skill, workdir };
+function prepareInputs(ctx, recordId, recordDir, cells) {
+  const { tpl } = ctx;
+  const vars = { skill: tpl.skill };
 
   for (const inp of ctx.inputs) {
     const value = cells[inp.field_id];
@@ -310,7 +330,7 @@ function prepareInputs(ctx, recordId, cells) {
         return { error: `${inp.field_name} 最多 ${rule.max_count} 个文件，实际 ${atts.length} 个` };
       }
       // 每行独立目录，避免同名附件互相覆盖；同名时才加后缀，保留原文件名
-      const dir = path.join(workdir, 'downloads', recordId);
+      const dir = path.join(recordDir, 'downloads');
       fs.mkdirSync(dir, { recursive: true });
       const seen = new Map();
       vars[inp.key] = atts.map((att) => {
@@ -378,6 +398,7 @@ function writeBack(ctx, item, stdout) {
 function runRow(ctx, row) {
   const { tpl, skillDir, workdir, dryRun } = ctx;
   const { record_id: recordId, cells } = row;
+  const recordDir = path.join(workdir, recordId);
   const item = { record_id: recordId, status: 'pending', stage: 'validate', ms: null, error: null, input_hash: null };
   const fail = (error) => ({ ...item, status: 'failed', error });
 
@@ -385,11 +406,11 @@ function runRow(ctx, row) {
   item.input_hash = fingerprintOf(ctx.inputs, cells);
 
   // 2) 校验输入并组装命令
-  const { vars, error } = prepareInputs(ctx, recordId, cells);
+  const { vars, error } = prepareInputs(ctx, recordId, recordDir, cells);
   if (error) return fail(error);
 
   item.stage = 'exec';
-  vars.outdir = path.join(workdir, 'artifacts', recordId); // 每行一个产物目录
+  vars.outdir = path.join(recordDir, 'artifacts');
   fs.mkdirSync(vars.outdir, { recursive: true });
   const argv = buildArgv(tpl.mapping.cmd, vars);
   if (dryRun) return { ...item, status: 'dry-run', argv };
@@ -399,8 +420,8 @@ function runRow(ctx, row) {
   const t0 = Date.now();
   const res = spawnSync(bin, binArgs, { cwd: skillDir, timeout: (tpl.limits?.timeout_s || 60) * 1000, encoding: 'utf8' });
   item.ms = Date.now() - t0;
-  fs.writeFileSync(path.join(workdir, `${recordId}.stdout.log`), res.stdout || '');
-  fs.writeFileSync(path.join(workdir, `${recordId}.stderr.log`), res.stderr || '');
+  writeStreamLog(recordDir, recordId, 'stdout', res.stdout);
+  writeStreamLog(recordDir, recordId, 'stderr', res.stderr);
   if (res.status !== 0) return fail(`Skill 退出码 ${res.status}: ${(res.stderr || '').trim().split('\n').pop()}`);
 
   let stdout;

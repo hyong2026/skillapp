@@ -11,7 +11,7 @@
 
 ```
 analyze-skill-io  →  tmp/<ref>.io-{schema.json,report.md}  →  map-table.js
-                          ↑ 人在这里审
+                          ↑ 人在这里审；未回复按报告建议默认
 ```
 
 文件名带 Skill 名——SkillApp 可以同时装载多个 Skill，不区分就会互相覆盖。

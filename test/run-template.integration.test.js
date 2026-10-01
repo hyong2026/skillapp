@@ -6,6 +6,7 @@
  *   - record-list 必须翻完所有页，而不是只拿默认的前 100 行
  *   - 已经读到本页 cells 后，不再逐行 record-get
  *   - --pending 必须感知 Skill / Mapping 版本变化
+ *   - stdout / stderr 日志必须是 JSON 文件
  */
 
 const fs = require('fs');
@@ -34,7 +35,9 @@ function makeFixture(mode) {
   fs.mkdirSync(skillDir, { recursive: true });
   fs.mkdirSync(path.join(root, 'templates'), { recursive: true });
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# stub\n');
-  fs.writeFileSync(path.join(skillDir, 'entry.js'), 'process.stdout.write("{}")\n');
+  fs.writeFileSync(path.join(skillDir, 'entry.js'),
+    'process.stdout.write(JSON.stringify({ value: "ok" }) + "\\n");\n'
+    + 'process.stderr.write("warn-line\\n");\n');
 
   const { skillHash } = require(path.join(ROOT, 'lib', 'skill-hash'));
   const template = {
@@ -100,6 +103,7 @@ function runWorker(mode) {
       const row = rows.find((r) => r.record_id === flag(args, '--record-id'));
       return { ok: true, data: { field_id_list: FIELDS.map((f) => f.id), data: [row.values] } };
     }
+    if (cmd === '+record-batch-update') return { ok: true, data: {} };
     throw new Error(`未打桩的 lark 调用: ${args.join(' ')}`);
   };
 
@@ -121,7 +125,9 @@ function runWorker(mode) {
   class ExitCalled extends Error {}
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
-  process.argv = ['node', RUN_TEMPLATE, templatePath, '--dry-run', ...(mode === 'pending' ? ['--pending'] : [])];
+  process.argv = ['node', RUN_TEMPLATE, templatePath];
+  if (mode !== 'logs') process.argv.push('--dry-run');
+  if (mode === 'pending') process.argv.push('--pending');
 
   let exitCode = null;
   let harnessError = null;
@@ -136,6 +142,23 @@ function runWorker(mode) {
   console.log = realLog;
   console.error = realError;
 
+  let logs = null;
+  let logReadError = null;
+  if (mode === 'logs') {
+    try {
+      const runDir = path.join(root, 'runs', fs.readdirSync(path.join(root, 'runs'))[0]);
+      const recordDir = path.join(runDir, 'rec1');
+      logs = {
+        recordFiles: fs.readdirSync(recordDir).sort(),
+        logFiles: fs.readdirSync(path.join(recordDir, 'logs')).sort(),
+        stdout: JSON.parse(fs.readFileSync(path.join(recordDir, 'logs', 'stdout.json'), 'utf8')),
+        stderr: JSON.parse(fs.readFileSync(path.join(recordDir, 'logs', 'stderr.json'), 'utf8')),
+      };
+    } catch (err) {
+      logReadError = err.message;
+    }
+  }
+
   process.stdout.write(MARKER + JSON.stringify({
     mode,
     exitCode,
@@ -145,6 +168,8 @@ function runWorker(mode) {
     getCalls: table.getCalls,
     dryRows: stdout.filter((l) => l.includes('→ rec')).length,
     noRows: stdout.some((l) => l.includes('没有符合条件的行')),
+    logs,
+    logReadError,
   }) + '\n');
 }
 
@@ -181,5 +206,23 @@ if (process.argv.includes('--worker')) {
     assert.equal(out.noRows, false);
     assert.equal(out.dryRows, 1);
     assert.equal(out.getCalls, 0);
+  });
+
+  test('stdout / stderr 日志写成 JSON 文件', () => {
+    const out = scenario('logs');
+    assert.equal(out.exitCode, null);
+    assert.equal(out.logReadError, null);
+    assert.deepEqual(out.logs.recordFiles, ['artifacts', 'logs']);
+    assert.deepEqual(out.logs.logFiles, ['stderr.json', 'stdout.json']);
+    assert.deepEqual(out.logs.stdout, {
+      record_id: 'rec1',
+      stream: 'stdout',
+      data: { value: 'ok' },
+    });
+    assert.deepEqual(out.logs.stderr, {
+      record_id: 'rec1',
+      stream: 'stderr',
+      data: { raw: 'warn-line\n' },
+    });
   });
 }
