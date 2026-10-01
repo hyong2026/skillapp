@@ -17,9 +17,9 @@ const { spawnSync } = require('child_process');
 const { ROOT, lark } = require('../lib/lark');
 
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
-const INPUT_PREFIX = 'In: ';
-const OUTPUT_PREFIX = 'Out: ';
-const REQUIRED_MARK = '* '; // 必填项在列名行首加星号
+const INPUT_PREFIX = 'in: ';
+const OUTPUT_PREFIX = 'out: ';
+const REQUIRED_MARK = '＊'; // 必填项在列名行首加全角星号
 const PRIMARY_NAME = '任务名称';
 const DEFAULT_PRIMARY = '文本'; // 新建表格时多维表格给主字段的默认名
 

@@ -20,8 +20,8 @@ const MARKER = '__RESULT__ ';
 
 const FIELDS = [
   { id: 'fldP', name: '任务名称', type: 'text' },
-  { id: 'fldIn', name: 'In: 文本', type: 'text' },
-  { id: 'fldOut', name: 'Out: 结果', type: 'text' },
+  { id: 'fldIn', name: 'in: 文本', type: 'text' },
+  { id: 'fldOut', name: 'out: 结果', type: 'text' },
 ];
 
 function flag(args, name) {

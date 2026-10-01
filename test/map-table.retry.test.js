@@ -11,7 +11,7 @@
  *   node test/map-table.retry.test.js --worker --hidden-reads 2   # 单跑一个场景（调试用）
  *
  * 这个 bug 的由来：第一次把 image-split 映射到真实表格时，8 列建完后立刻回读却没读到，
- * 于是报「新建后仍找不到列『Out: 每格高 (px)』」中断。旧代码的回读只试一次，
+ * 于是报「新建后仍找不到列『out: 每格高 (px)』」中断。旧代码的回读只试一次，
  * 而同一个文件里的 setColumnOrder 对同样的延迟已经重试了 3 次。
  *
  * 修复前后都验证过：摘掉补丁（`git stash push bin/map-table.js`）后跑 `node --test`，
@@ -44,7 +44,7 @@ const FIXTURE = {
 };
 
 /** 契约期望的列序（主字段 → 输入 → 输出） */
-const EXPECTED_ORDER = ['任务名称', '* In: 待切图片', '* In: 网格数', 'Out: 切片', 'Out: 切片数'];
+const EXPECTED_ORDER = ['任务名称', '＊in: 待切图片', '＊in: 网格数', 'out: 切片', 'out: 切片数'];
 const EXPECTED_CREATED = FIXTURE.inputs.length + FIXTURE.outputs.length;
 
 // ─── worker：打桩跑一次 map-table ─────────────────────────────────────────
@@ -232,7 +232,7 @@ if (process.argv.includes('--worker')) {
     assert.equal(out.exitCode, 1, '应以退出码 1 结束');
     assert.equal(out.sleeps, 9, '预算内应等待 CREATE_ATTEMPTS - 1 次');
     assert.match(out.errorText, /新建后仍找不到列/, '要点名问题');
-    assert.match(out.errorText, /\* In: 待切图片/, '要列出缺失的列名');
+    assert.match(out.errorText, /＊in: 待切图片/, '要列出缺失的列名');
     assert.match(out.errorText, /重跑本命令即可/, '要给出可操作的下一步');
     assert.equal(out.templateWritten, false, '失败时不应写 Template');
   });
