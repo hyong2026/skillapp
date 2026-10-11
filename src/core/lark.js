@@ -2,13 +2,11 @@
  * lark.js — lark-cli 的最小封装
  *
  * cwd 固定为仓库根：lark-cli 只允许把文件写到 cwd / /tmp / ~/files，
- * 而下载目录位于 runs/ 之下——固定 cwd 才能保证它在白名单内。
+ * 而下载目录位于 .data/runs/ 之下——固定 cwd 才能保证它在白名单内。
  */
 
-const path = require('path');
 const { spawnSync } = require('child_process');
-
-const ROOT = path.join(__dirname, '..');
+const { ROOT } = require('./paths');
 
 function lark(args) {
   const r = spawnSync('lark-cli', args, { encoding: 'utf8', cwd: ROOT });

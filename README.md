@@ -28,15 +28,15 @@
 
 ```bash
 # 1. 装载 = 复制 + 分析
-node bin/load-skill.js /path/to/skill --ref <ref>        # 复制（脚本）
-# 分析由 Agent 用 analyze-skill-io 做 → tmp/<ref>.io-schema.json + tmp/<ref>.io-report.md
+node src/cli/load-skill.js /path/to/skill --ref <ref>    # 复制（脚本）
+# 分析由 Agent 用 analyze-skill-io 做 → .data/tmp/<ref>.io-schema.json + .data/tmp/<ref>.io-report.md
 #   ↓ 评审：有异议先改；未回复按报告建议默认
 
 # 2. 映射：对齐列、设列顺序、写 Template，并自动自检
-node bin/map-table.js --ref <ref> --url '<表格链接>'       # 契约默认读 tmp/<ref>.io-schema.json
+node src/cli/map-table.js --ref <ref> --url '<表格链接>'  # 契约默认读 .data/tmp/<ref>.io-schema.json
 
 # 3. 执行
-node bin/run-template.js templates/<ref>.json --pending
+node src/cli/run-template.js .data/templates/<ref>.json --pending
 ```
 
 `--pending` 只跑**工作版本或当前输入与最近一次成功运行不一致**的行（没跑过、上次失败、Skill/Mapping/目标变过、或输入变了），可安全重复执行。
@@ -49,40 +49,44 @@ node bin/run-template.js templates/<ref>.json --pending
 
 > **表格里只存 IO 数据。**
 > 映射的目标是飞书多维表格中的**某张表格**（连同它的**视图**，视图决定列顺序与可见性）——不是整个多维表格。
-> 表里只有输入列、输出列，外加一个文本主字段作行名。运行状态、Run、RunItem 一律不进表，它们记在 `runs/`。
+> 表里只有输入列、输出列，外加一个文本主字段作行名。运行状态、Run、RunItem 一律不进表，它们记在 `.data/runs/`。
 
 | 谁管 | 存什么 |
 |---|---|
 | 某张表格 + 视图 | 用户的输入与输出 |
-| `templates/` | Template（内含 Mapping） |
-| `runs/` | Run + RunItem + 产物（状态） |
+| `.data/templates/` | Template（内含 Mapping） |
+| `.data/runs/` | Run + RunItem + 产物（状态） |
 
-三个词的含义：**Template** 是可运行的定义（`templates/<ref>.json`），它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；**io-schema.json** 是 Mapping 的草案，两个步骤之间的中间物。
+三个词的含义：**Template** 是可运行的定义（`.data/templates/<ref>.json`），它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；**io-schema.json** 是 Mapping 的草案，两个步骤之间的中间物。
 
 ## 目录
 
 ```
 skillapp/
-├── bin/                       可运行的命令
-│   ├── load-skill.js          装载：把 Skill 复制进来并固定版本
-│   ├── map-table.js           映射：IO 契约 → 表格列 + Template
-│   ├── run-template.js        执行：读行 → 跑 Skill → 回写
-│   └── unload-skill.js        卸载：清掉装载进来的东西（`-h` 看用法）
-├── lib/                       内部模块
-│   ├── lark.js                lark-cli 封装
-│   └── skill-hash.js          Skill 内容指纹
-├── test/                             引擎的回归测试（Node 自带 test runner，零依赖）
-│   ├── load-skill.safety.test.js     源/目标重叠与 ref 路径穿越
-│   ├── map-table.retry.test.js       建列后回读的重试：飞书字段是异步传播的
-│   └── run-template.integration.test.js  分页、pending 版本与复用列表 cells
+├── src/                       引擎代码
+│   ├── cli/                   可运行的命令薄壳
+│   │   ├── load-skill.js      装载：把 Skill 复制进来并固定版本
+│   │   ├── map-table.js       映射：IO 契约 → 表格列 + Template
+│   │   ├── run-template.js    执行：读行 → 跑 Skill → 回写
+│   │   └── unload-skill.js    卸载：清理本地内容层
+│   ├── core/                  内部模块
+│   │   ├── paths.js           所有内容目录的唯一路径来源
+│   │   ├── lark.js            lark-cli 封装
+│   │   └── skill-hash.js      Skill 内容指纹
+│   ├── server/                Web 控制台：HTTP API 与只读读模型
+│   └── web/                   Web 控制台静态页面
+├── .data/                      内容层 —— 除 README 外不进 Git
+│   ├── skills/<ref>/          装载进来的 Skill
+│   ├── templates/<ref>.json   Template（内含 Mapping）
+│   ├── runs/<run_id>/         Run、RunItem、日志与产物
+│   └── tmp/<ref>.io-*         分析报告与中间产物
+├── test/                      引擎回归测试（Node 自带 test runner，零依赖）
 ├── .agents/skills/            项目级 Skill：SkillApp 自己的操作手册
-│   ├── skillapp/              操作入口：装载 / 映射 / 执行 各跑哪条命令
+│   ├── skillapp/              操作入口：装载 / 映射 / 执行
 │   └── analyze-skill-io/      读 Skill → IO 契约 + 风险清单
-├── skills/<ref>/              装载进来的 Skill —— 内容不进 Git
-├── templates/                 Template（内含 Mapping）—— 内容不进 Git
-│   └── <ref>.json             一个 Skill 一张表（见「已知边界」）
-├── runs/<run_id>/             Run 与 RunItem —— 内容不进 Git
-└── tmp/<ref>.io-*             中间产物 —— 内容不进 Git
+├── docs/                      设计文档
+├── README.md
+└── .gitignore
 ```
 
 **两个 `skills` 不是一回事**，别混：
@@ -90,9 +94,9 @@ skillapp/
 | 路径 | 是什么 | 进 Git |
 |---|---|---|
 | `.agents/skills/` | SkillApp 自己的操作手册，给 Agent 用（项目级 Skill） | ✅ |
-| `skills/` | 被装载进来、准备执行的 Skill | ❌ 内容 |
+| `.data/skills/` | 被装载进来、准备执行的 Skill | ❌ 内容 |
 
-四个内容目录各有一个 `README.md` 说明用途，因此克隆后仍能看见结构、知道缺什么。
+`.data/` 的四个子目录各有一个 `README.md` 说明用途，因此克隆后仍能看见结构、知道缺什么。
 
 **跑测试**：在仓库根跑 `node --test` —— 用 Node 自带的 test runner，仓库没有 `package.json`，也不需要装依赖。测试通过临时目录和假 `lark` 响应覆盖真实 CLI 与执行主逻辑，写操作全落在系统临时目录。
 
@@ -136,7 +140,7 @@ skillapp/
 
 ## 三条不变量
 
-1. **Template 里不出现绝对路径。** Skill 只写 `skills/<ref>` 相对路径 + 内容 `hash`。
+1. **Template 里不出现绝对路径。** Skill 只写相对 `.data/` 的 `skills/<ref>` 路径 + 内容 `hash`。
 2. **绑定一律用 `field_id`，不用字段名。** 名字随时会被改。
 3. **加载时核对，不靠自觉。** 启动时校验 Skill 内容指纹、每个 `field_id` 的存在与类型。
 
@@ -146,18 +150,29 @@ skillapp/
 
 - **串行执行，没有并发。** 逐行处理，也没有租约机制。多机或并行要先解决"谁拥有这一行"。
 - **失败行会被 `--pending` 反复捞出**（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入或用 `--record-id`。
-- **`runs/` 只增不减**，产物、日志都在里面，目前没有清理策略。
+- **`.data/runs/` 只增不减**，产物、日志都在里面，目前没有清理策略。
 - **`--pending` 每次读取全部历史文件。** 内存只保留每行最近状态；行数上万后仍需建索引。
-- **一个 Skill 只能映射到一张表。** `templates/<ref>.json` 只按 Skill 名命名，所以把同一个 Skill 映射到第二张表会**直接覆盖**第一份，连 `template_id` 都会沿用它。要支持多表，需把表格标识写进文件名（`<ref>.<table_id>.json`）——现在不做。
+- **一个 Skill 只能映射到一张表。** `.data/templates/<ref>.json` 只按 Skill 名命名，所以把同一个 Skill 映射到第二张表会**直接覆盖**第一份，连 `template_id` 都会沿用它。要支持多表，需把表格标识写进文件名（`<ref>.<table_id>.json`）——现在不做。
 - **Template 不可恢复。** 它不进 Git，克隆后无法还原；需要多人共享同一份 Template 时应把它放回 Git。
 - **只支持 JSON stdout 的 Skill。** 执行器直接 `JSON.parse` 标准输出；输出散文或非 JSON 的 Skill 需要先补一层解析。
 - **Skill 必须有可执行入口。** 执行器需要 spawn 一个命令行进程；纯方法论型 Skill（只有 `SKILL.md`，没有脚本）无法执行——那需要另一套执行模型。
 
 ## 什么时候该再分层
 
-目录按**类别**分，不按文件数分：`bin/` 只放能直接运行的命令，`lib/` 只放内部模块。
+代码按**层次**分：`src/cli/` 只放命令薄壳，`src/core/` 放内部模块，`src/server/` 和 `src/web/` 放 Web 控制台。运行时数据统一放在 `.data/`。
 
 出现以下任一情况再动结构：
 
 - 需要对外提供调用（HTTP / SDK）→ 把逻辑从 CLI 抽出来，CLI 变成薄壳
 - `run-template.js` 里出现第二个 Skill 的特例分支 → 该往 Template 加字段，而不是加 `if`
+
+## Web UI
+
+只读控制台已经实现：浏览器可以查看 Skill、Template、Run、RunItem、日志和产物，不能执行写入操作。
+
+```bash
+node src/server/index.js --port 4173 --token '<token>'
+# 打开 http://127.0.0.1:4173
+```
+
+本机访问时 token 可省略；监听非本机地址时必须设置 token，或显式使用 `--insecure`。完整方案和后续 milestone 见 [`docs/web-ui.md`](docs/web-ui.md)。

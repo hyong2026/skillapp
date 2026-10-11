@@ -1,17 +1,17 @@
-# 本仓库只保留引擎：bin/ + lib/ + .agents/。
-# 内容层（装载的 Skill、Template、运行记录、中间产物）不进 Git；
-# 但每个目录留一个 README.md 说明用途，这样克隆后仍能看见结构、知道缺什么。
+# 本仓库只保留引擎：src/ + .agents/。
+# .data 是运行时内容层（装载的 Skill、Template、运行记录、中间产物）；
+# 内容不进 Git，但每个子目录留一个 README.md 说明用途。
 
-runs/*
-!runs/README.md
+.data/skills/*
+!.data/skills/README.md
 
-skills/*
-!skills/README.md
+.data/templates/*
+!.data/templates/README.md
 
-templates/*
-!templates/README.md
+.data/runs/*
+!.data/runs/README.md
 
-tmp/*
-!tmp/README.md
+.data/tmp/*
+!.data/tmp/README.md
 
 .DS_Store

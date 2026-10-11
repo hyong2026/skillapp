@@ -6,11 +6,11 @@
 
 | 文件 | 是什么 |
 |---|---|
-| `<ref>.io-schema.json` | IO 契约草案，`map-table.js` 的输入 |
-| `<ref>.io-report.md` | 分析报告（含风险清单），**给人评审** |
+| `.data/tmp/<ref>.io-schema.json` | IO 契约草案，`src/cli/map-table.js` 的输入 |
+| `.data/tmp/<ref>.io-report.md` | 分析报告（含风险清单），**给人评审** |
 
 ```
-analyze-skill-io  →  tmp/<ref>.io-{schema.json,report.md}  →  map-table.js
+analyze-skill-io  →  .data/tmp/<ref>.io-{schema.json,report.md}  →  map-table.js
                           ↑ 人在这里审；未回复按报告建议默认
 ```
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * run-template.js 的回归测试：真跑 CLI，只把 lib/lark 换成内存表。
+ * run-template.js 的回归测试：真跑 CLI，只把 src/core/lark 换成内存表。
  *
  * 覆盖：
  *   - record-list 必须翻完所有页，而不是只拿默认的前 100 行
@@ -15,7 +15,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const RUN_TEMPLATE = path.join(ROOT, 'bin', 'run-template.js');
+const RUN_TEMPLATE = path.join(ROOT, 'src', 'cli', 'run-template.js');
 const MARKER = '__RESULT__ ';
 
 const FIELDS = [
@@ -31,15 +31,15 @@ function flag(args, name) {
 
 function makeFixture(mode) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-run-template-'));
-  const skillDir = path.join(root, 'skills', 'ref');
+  const skillDir = path.join(root, '.data', 'skills', 'ref');
   fs.mkdirSync(skillDir, { recursive: true });
-  fs.mkdirSync(path.join(root, 'templates'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.data', 'templates'), { recursive: true });
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# stub\n');
   fs.writeFileSync(path.join(skillDir, 'entry.js'),
     'process.stdout.write(JSON.stringify({ value: "ok" }) + "\\n");\n'
     + 'process.stderr.write("warn-line\\n");\n');
 
-  const { skillHash } = require(path.join(ROOT, 'lib', 'skill-hash'));
+  const { skillHash } = require(path.join(ROOT, 'src', 'core', 'skill-hash'));
   const template = {
     template_id: 'tpl-test',
     created_at: '2026-01-01T00:00:00+08:00',
@@ -56,12 +56,12 @@ function makeFixture(mode) {
     },
     limits: { timeout_s: 5 },
   };
-  const templatePath = path.join(root, 'templates', 'ref.json');
+  const templatePath = path.join(root, '.data', 'templates', 'ref.json');
   fs.writeFileSync(templatePath, JSON.stringify(template, null, 2));
 
   if (mode === 'pending') {
-    fs.mkdirSync(path.join(root, 'runs', 'old-run'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'runs', 'old-run', 'run.json'), JSON.stringify({
+    fs.mkdirSync(path.join(root, '.data', 'runs', 'old-run'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.data', 'runs', 'old-run', 'run.json'), JSON.stringify({
       run_id: 'old-run',
       template_id: template.template_id,
       skill_hash: 'sha256:old',
@@ -79,6 +79,8 @@ function makeFixture(mode) {
 
 function runWorker(mode) {
   const { root, templatePath, rows } = makeFixture(mode);
+  process.env.SKILLAPP_ROOT = root;
+  process.env.SKILLAPP_DATA_DIR = path.join(root, '.data');
   const table = { rows, listCalls: [], getCalls: 0 };
 
   const fakeLark = (args) => {
@@ -107,7 +109,7 @@ function runWorker(mode) {
     throw new Error(`未打桩的 lark 调用: ${args.join(' ')}`);
   };
 
-  const larkPath = require.resolve(path.join(ROOT, 'lib', 'lark.js'));
+  const larkPath = require.resolve(path.join(ROOT, 'src', 'core', 'lark.js'));
   require.cache[larkPath] = {
     id: larkPath,
     filename: larkPath,
@@ -146,7 +148,7 @@ function runWorker(mode) {
   let logReadError = null;
   if (mode === 'logs') {
     try {
-      const runDir = path.join(root, 'runs', fs.readdirSync(path.join(root, 'runs'))[0]);
+      const runDir = path.join(root, '.data', 'runs', fs.readdirSync(path.join(root, '.data', 'runs'))[0]);
       const recordDir = path.join(runDir, 'rec1');
       logs = {
         recordFiles: fs.readdirSync(recordDir).sort(),

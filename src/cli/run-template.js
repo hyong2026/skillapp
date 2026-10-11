@@ -2,24 +2,23 @@
 /**
  * run-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
  *
- *   node bin/run-template.js <template.json> [--all | --pending | --record-id <id> ...] [--dry-run]
+ *   node src/cli/run-template.js <template.json> [--all | --pending | --record-id <id> ...] [--dry-run]
  *
  * 边界：多维表格只承担 IO（读输入 / 写输出），不写任何状态。
- *       Run 与其中的 RunItem 都记在 runs/<run_id>/run.json。
+ *       Run 与其中的 RunItem 都记在 .data/runs/<run_id>/run.json。
  */
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
-const { ROOT, lark } = require('../lib/lark');
-const { skillHash } = require('../lib/skill-hash');
-
-const RUNS_DIR = path.join(ROOT, 'runs');
+const { lark } = require('../core/lark');
+const { skillHash } = require('../core/skill-hash');
+const { ROOT, DATA_DIR, RUNS_DIR } = require('../core/paths');
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
 const RECORD_PAGE_SIZE = 200; // JSON 模式 record-list 的上限
 
-const USAGE = `用法: node bin/run-template.js <template.json> [选项]
+const USAGE = `用法: node src/cli/run-template.js <template.json> [选项]
 
 选项:
   --all               处理表内所有行（默认）
@@ -267,8 +266,8 @@ function upToDate(history, recordId, inputHash, workHash) {
  */
 function preflight(tpl) {
   const ref = path.basename(tpl.skill.path);
-  const reload = `node bin/load-skill.js <源目录> --ref ${ref}`;
-  const skillDir = path.join(ROOT, tpl.skill.path);
+  const reload = `node src/cli/load-skill.js <源目录> --ref ${ref}`;
+  const skillDir = path.join(DATA_DIR, tpl.skill.path);
 
   if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) {
     throw new Error(`Skill 未装载: ${tpl.skill.path}\n  先执行: ${reload}`);
@@ -482,7 +481,7 @@ function main() {
     + `-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
     + `-${Math.random().toString(16).slice(2, 6)}`;
 
-  // dry-run 不产生 Run 记录，因此不进 runs/，免得污染历史。
+  // dry-run 不产生 Run 记录，因此不进 .data/runs/，免得污染历史。
   // 用 /tmp 而非 os.tmpdir()：后者在 macOS 指向 /var/folders，不在 lark-cli 的白名单内。
   const workdir = args.dryRun ? fs.mkdtempSync('/tmp/skillapp-dry-') : path.join(RUNS_DIR, runId);
   fs.mkdirSync(workdir, { recursive: true });
@@ -525,7 +524,7 @@ function main() {
   }, null, 2) + '\n');
 
   console.log(`\n完成: ${succeeded} 成功 / ${failed} 失败`);
-  console.log(`记录: runs/${runId}/run.json`);
+  console.log(`记录: ${path.relative(ROOT, path.join(workdir, 'run.json'))}`);
 }
 
 try {

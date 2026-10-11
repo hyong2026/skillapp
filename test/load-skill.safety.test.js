@@ -2,9 +2,9 @@
 /**
  * load-skill.js 的安全回归：
  *   - 源目录与目标目录相同，不能先把源删掉再失败
- *   - --ref 不能借 .. 写出 skills/ 目录
+ *   - --ref 不能借 .. 写出 .data/skills/ 目录
  *
- * 测试把脚本复制到临时仓库后跑真进程，避免碰到当前仓库的 skills/。
+ * 测试把脚本复制到临时仓库后跑真进程，避免碰到当前仓库的 .data/skills/。
  */
 
 const fs = require('fs');
@@ -18,23 +18,24 @@ const ROOT = path.resolve(__dirname, '..');
 
 function makeRepo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-load-safety-'));
-  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
-  fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
-  fs.mkdirSync(path.join(root, 'skills'), { recursive: true });
-  fs.copyFileSync(path.join(ROOT, 'bin', 'load-skill.js'), path.join(root, 'bin', 'load-skill.js'));
-  fs.copyFileSync(path.join(ROOT, 'lib', 'skill-hash.js'), path.join(root, 'lib', 'skill-hash.js'));
+  fs.mkdirSync(path.join(root, 'src', 'cli'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'src', 'core'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.data', 'skills'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'src', 'cli', 'load-skill.js'), path.join(root, 'src', 'cli', 'load-skill.js'));
+  fs.copyFileSync(path.join(ROOT, 'src', 'core', 'skill-hash.js'), path.join(root, 'src', 'core', 'skill-hash.js'));
+  fs.copyFileSync(path.join(ROOT, 'src', 'core', 'paths.js'), path.join(root, 'src', 'core', 'paths.js'));
   return root;
 }
 
 function runLoad(root, source, ref) {
-  return spawnSync(process.execPath, [path.join(root, 'bin', 'load-skill.js'), source, '--ref', ref], {
+  return spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'load-skill.js'), source, '--ref', ref], {
     encoding: 'utf8',
   });
 }
 
 test('源目录就是目标目录时：拒绝，且不删除源 Skill', () => {
   const root = makeRepo();
-  const source = path.join(root, 'skills', 'same');
+  const source = path.join(root, '.data', 'skills', 'same');
   fs.mkdirSync(source, { recursive: true });
   fs.writeFileSync(path.join(source, 'SKILL.md'), '# original\n');
 
@@ -67,6 +68,6 @@ test('普通装载仍然可用', () => {
   const r = runLoad(root, source, 'safe');
 
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(fs.readFileSync(path.join(root, 'skills', 'safe', 'SKILL.md'), 'utf8'), '# source\n');
-  assert.equal(fs.existsSync(path.join(root, 'skills', 'safe', 'source.json')), true);
+  assert.equal(fs.readFileSync(path.join(root, '.data', 'skills', 'safe', 'SKILL.md'), 'utf8'), '# source\n');
+  assert.equal(fs.existsSync(path.join(root, '.data', 'skills', 'safe', 'source.json')), true);
 });

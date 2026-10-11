@@ -7,16 +7,16 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 IO �
 
 把 Skill 的接口从实现里提取出来，变成可审的结构化契约。
 
-这是第 1 步「装载」的后半。装载 = **复制** + **分析**：复制由 `bin/load-skill.js` 管，分析要判断，所以由你来读、来写。
+这是第 1 步「装载」的后半。装载 = **复制** + **分析**：复制由 `src/cli/load-skill.js` 管，分析要判断，所以由你来读、来写。
 
-产出是**一份给人评审的报告**。评审通过才进入第 2 步「映射」（契约 → 表格列 + Template，纯机械，交给 `bin/map-table.js`）。
+产出是**一份给人评审的报告**。评审通过才进入第 2 步「映射」（契约 → 表格列 + Template，纯机械，交给 `src/cli/map-table.js`）。
 
 | | |
 |---|---|
-| **输入** | Skill 根目录路径（含 `SKILL.md`）；该 Skill 已装载（`node bin/load-skill.js`） |
-| **输出** | `tmp/<ref>.io-schema.json`（契约草案）+ `tmp/<ref>.io-report.md`（分析报告，给人评审）|
+| **输入** | Skill 根目录路径（含 `SKILL.md`）；该 Skill 已装载（`node src/cli/load-skill.js`） |
+| **输出** | `.data/tmp/<ref>.io-schema.json`（契约草案）+ `.data/tmp/<ref>.io-report.md`（分析报告，给人评审）|
 
-文件名带 Skill 名，因为 SkillApp 可以同时装载多个 Skill——`tmp/` 是单槽目录，不区分就会互相覆盖。整个 `tmp/` 已被 Git 忽略。
+文件名带 Skill 名，因为 SkillApp 可以同时装载多个 Skill——`.data/tmp/` 是单槽目录，不区分就会互相覆盖。整个 `.data/tmp/` 已被 Git 忽略。
 
 ## 原则：以实现为准
 
@@ -31,7 +31,7 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 IO �
 3. 对每个参数判定三项属性（见下）
 4. 读实现的输出路径：成功输出什么；失败走 stdout / stderr / 退出码哪一条；错误能否结构化解析
 5. 剔除输入回显——被原样返回的输入不应成为输出列
-6. 写 `tmp/<ref>.io-schema.json` 与 `tmp/<ref>.io-report.md`
+6. 写 `.data/tmp/<ref>.io-schema.json` 与 `.data/tmp/<ref>.io-report.md`
 
 ## 参数属性
 
@@ -70,7 +70,7 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 IO �
 
 ## label 命名
 
-`label` 只写标签本身，**不带前缀、不带必填标记**——列名由 `bin/map-table.js` 按规范拼装：
+`label` 只写标签本身，**不带前缀、不带必填标记**——列名由 `src/cli/map-table.js` 按规范拼装：
 
 ```
 ＊in: 网格数       ← 必填输入
@@ -118,7 +118,7 @@ out: 切片数        ← 输出
 
 ## 分析报告
 
-写成一份能直接给人评审的文件（`tmp/<ref>.io-report.md`），至少包含：
+写成一份能直接给人评审的文件（`.data/tmp/<ref>.io-report.md`），至少包含：
 
 1. **契约草案** —— 列名 / 类型 / 必填 / 默认 / 从哪个参数来
 2. **风险清单** —— 逐条列，每条说清**后果**与**处理**。必须覆盖：
@@ -145,7 +145,7 @@ out: 切片数        ← 输出
 用户明确确认、提出修改，或未回复但其后要求继续 / 映射时，按明确意见或默认建议交给第 2 步：
 
 ```bash
-node bin/map-table.js --ref <ref> --url '<表格链接>'
+node src/cli/map-table.js --ref <ref> --url '<表格链接>'
 ```
 
 它只消费这份契约、不重新判断。契约是一次性的，落库后即可丢弃——下次要改映射，重跑本 Skill 即可。

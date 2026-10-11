@@ -2,9 +2,9 @@
 /**
  * map-table.js — 把 IO 契约映射到飞书多维表格中的某张表格，并生成 Template
  *
- *   node bin/map-table.js --ref <ref> --url <表格链接> [契约路径] [--dry-run]
+ *   node src/cli/map-table.js --ref <ref> --url <表格链接> [契约路径] [--dry-run]
  *
- * 契约路径默认由 --ref 推导为 tmp/<ref>.io-schema.json，可不传——这样就不会指错文件。
+ * 契约路径默认由 --ref 推导为 .data/tmp/<ref>.io-schema.json，可不传——这样就不会指错文件。
  *
  * 只做机械的事：列对齐、列顺序、写 Template。
  * 类型怎么选、这一列要不要，都在上游（analyze-skill-io）决定好了——这里不替人做判断。
@@ -14,20 +14,19 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
-const { ROOT, lark } = require('../lib/lark');
-
-const TEMPLATES_DIR = path.join(ROOT, 'templates');
+const { lark } = require('../core/lark');
+const { ROOT, SKILLS_DIR, TEMPLATES_DIR, TMP_DIR } = require('../core/paths');
 const INPUT_PREFIX = 'in: ';
 const OUTPUT_PREFIX = 'out: ';
 const REQUIRED_MARK = '＊'; // 必填项在列名行首加全角星号
 const PRIMARY_NAME = '任务名称';
 const DEFAULT_PRIMARY = '文本'; // 新建表格时多维表格给主字段的默认名
 
-const USAGE = `用法: node bin/map-table.js --ref <ref> --url <链接> [契约路径] [选项]
+const USAGE = `用法: node src/cli/map-table.js --ref <ref> --url <链接> [契约路径] [选项]
 
 参数:
-  --ref <ref>          已装载的 Skill 名（skills/<ref>）；Template 也以此命名
-  [契约路径]           省略则用 tmp/<ref>.io-schema.json；路径以仓库根为基准
+  --ref <ref>          已装载的 Skill 名（.data/skills/<ref>）；Template 也以此命名
+  [契约路径]           省略则用 .data/tmp/<ref>.io-schema.json；路径以仓库根为基准
   --url <链接>         目标表格链接，需带 table 与 view 参数
   --base <token>       ┐ 也可以直接给 token，替代 --url
   --table <table_id>   │
@@ -285,7 +284,9 @@ function main() {
   }
 
   // 契约路径默认由 --ref 推导。让正确的做法成为唯一做法——指错文件的机会就没了。
-  const schemaPath = path.resolve(ROOT, args.schema || path.join('tmp', `${args.ref}.io-schema.json`));
+  const schemaPath = args.schema
+    ? path.resolve(ROOT, args.schema)
+    : path.join(TMP_DIR, `${args.ref}.io-schema.json`);
   if (!fs.existsSync(schemaPath)) {
     throw new Error(`找不到 IO 契约: ${path.relative(ROOT, schemaPath)}\n`
       + `  先跑 analyze-skill-io，或用位置参数指定契约路径`);
@@ -299,9 +300,9 @@ function main() {
   const target = resolveTarget(args);
   if (!target.view_id) throw new Error('缺少 view_id：映射目标是「表格 + 视图」，请给出带 view 参数的链接或显式 --view');
 
-  const sourceFile = path.join(ROOT, 'skills', args.ref, 'source.json');
+  const sourceFile = path.join(SKILLS_DIR, args.ref, 'source.json');
   if (!fs.existsSync(sourceFile)) {
-    throw new Error(`Skill 未装载: skills/${args.ref}\n  先执行: node bin/load-skill.js <源目录> --ref ${args.ref}`);
+    throw new Error(`Skill 未装载: ${path.relative(ROOT, path.join(SKILLS_DIR, args.ref))}\n  先执行: node src/cli/load-skill.js <源目录> --ref ${args.ref}`);
   }
   const { hash } = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
 

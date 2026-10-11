@@ -21,10 +21,10 @@ description: SkillApp 的操作入口：装载 Skill、把它的 IO 映射到飞
 
 这一步包含两个动作：
 
-1. **复制进来并固定版本** —— `node bin/load-skill.js <源目录> --ref <name>`
+1. **复制进来并固定版本** —— `node src/cli/load-skill.js <源目录> --ref <name>`
 2. **分析它的输入输出** —— 用 `analyze-skill-io`
 
-上游改动后**必须重新装载**才生效——它会覆盖 `skills/<ref>/` 并重算内容指纹。指纹一变，旧 Template 就被执行器拒绝；这是故意的，在逼人复核映射。
+上游改动后**必须重新装载**才生效——它会覆盖 `.data/skills/<ref>/` 并重算内容指纹。指纹一变，旧 Template 就被执行器拒绝；这是故意的，在逼人复核映射。
 
 `--ref` 是装载后的名字，也是 Template 里 `skill.path` 的末段。
 
@@ -37,10 +37,10 @@ description: SkillApp 的操作入口：装载 Skill、把它的 IO 映射到飞
 跑之前确认分析报告已交付给用户，且**风险清单**的待确认项已有明确答复或默认建议可执行。
 
 ```bash
-node bin/map-table.js --ref <ref> --url '<表格链接>'
+node src/cli/map-table.js --ref <ref> --url '<表格链接>'
 ```
 
-契约默认读 `tmp/<ref>.io-schema.json`（由 `--ref` 推导），不用手写路径。
+契约默认读 `.data/tmp/<ref>.io-schema.json`（由 `--ref` 推导），不用手写路径。
 
 ## 3 执行
 
@@ -51,8 +51,8 @@ node bin/map-table.js --ref <ref> --url '<表格链接>'
 ## 清空 / 重来
 
 ```bash
-node bin/unload-skill.js <ref>          # 卸载一个 Skill 和引用它的 Template
-node bin/unload-skill.js --all --yes    # 清空整个内容层（引擎保留）
+node src/cli/unload-skill.js <ref>          # 卸载一个 Skill 和引用它的 Template
+node src/cli/unload-skill.js --all --yes    # 清空整个内容层（引擎保留）
 ```
 
 本地能清干净，**飞书表格里的列不会被删**——脚本不碰用户的表；要去掉得在表格里手工删，或换一张表。
@@ -63,7 +63,7 @@ node bin/unload-skill.js --all --yes    # 清空整个内容层（引擎保留�
 
 | | |
 |---|---|
-| 运行记录（Run / RunItem） | `runs/<run_id>/run.json` |
+| 运行记录（Run / RunItem） | `.data/runs/<run_id>/run.json` |
 | 多维表格 | **只有输入列和输出列**，不含任何运行状态 |
 
 失败的行会被 `--pending` 一直捞出（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入，或用 `--record-id` 单独跑别的行。

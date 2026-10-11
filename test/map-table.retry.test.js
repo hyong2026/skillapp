@@ -2,10 +2,10 @@
 /**
  * map-table.js 的「建列后回读」回归测试。
  *
- * 被测的是真代码：真跑 bin/map-table.js，只替换两处外部依赖——
- *   - lib/lark  → 假的多维表格（可让新建的列延迟 N 次 field-list 才可见 = 飞书字段传播延迟）
+ * 被测的是真代码：真跑 src/cli/map-table.js，只替换两处外部依赖——
+ *   - src/core/lark → 假的多维表格（可让新建的列延迟 N 次 field-list 才可见 = 飞书字段传播延迟）
  *   - spawnSync → sleep 空转、node 自检直接成功
- * 契约夹具内嵌在下面，写操作全落在 os.tmpdir() 下的临时 ROOT 里，不碰真表、不碰 templates/。
+ * 契约夹具内嵌在下面，写操作全落在 os.tmpdir() 下的临时 ROOT 里，不碰真表、不碰 .data/templates/。
  *
  *   node --test                     # 在仓库根跑全部（Node 默认的测试文件匹配规则）
  *   node test/map-table.retry.test.js --worker --hidden-reads 2   # 单跑一个场景（调试用）
@@ -14,7 +14,7 @@
  * 于是报「新建后仍找不到列『out: 每格高 (px)』」中断。旧代码的回读只试一次，
  * 而同一个文件里的 setColumnOrder 对同样的延迟已经重试了 3 次。
  *
- * 修复前后都验证过：摘掉补丁（`git stash push bin/map-table.js`）后跑 `node --test`，
+ * 修复前后都验证过：摘掉补丁（`git stash push src/cli/map-table.js`）后跑 `node --test`，
  * 5 个用例里 4 个失败（零延迟那个仍会过——它一次回读就命中）；恢复补丁后 5/5 通过。
  */
 
@@ -24,7 +24,7 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const MAP_TABLE = path.join(ROOT, 'bin', 'map-table.js');
+const MAP_TABLE = path.join(ROOT, 'src', 'cli', 'map-table.js');
 const REF = 'testref';
 const MARKER = '__RESULT__ ';
 
@@ -51,6 +51,8 @@ const EXPECTED_CREATED = FIXTURE.inputs.length + FIXTURE.outputs.length;
 
 function runWorker(hiddenReads) {
   const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-retry-'));
+  process.env.SKILLAPP_ROOT = fake;
+  process.env.SKILLAPP_DATA_DIR = path.join(fake, '.data');
 
   // 1) 打桩 child_process.spawnSync —— 必须早于 require（两端都在 require 时解构）
   const cp = require('child_process');
@@ -63,14 +65,14 @@ function runWorker(hiddenReads) {
   };
 
   // 2) 临时 ROOT：已装 Skill + 契约副本
-  fs.mkdirSync(path.join(fake, 'skills', REF), { recursive: true });
-  fs.mkdirSync(path.join(fake, 'tmp'), { recursive: true });
-  fs.writeFileSync(path.join(fake, 'skills', REF, 'SKILL.md'), '# stub\n');
-  fs.writeFileSync(path.join(fake, 'skills', REF, 'source.json'),
+  fs.mkdirSync(path.join(fake, '.data', 'skills', REF), { recursive: true });
+  fs.mkdirSync(path.join(fake, '.data', 'tmp'), { recursive: true });
+  fs.writeFileSync(path.join(fake, '.data', 'skills', REF, 'SKILL.md'), '# stub\n');
+  fs.writeFileSync(path.join(fake, '.data', 'skills', REF, 'source.json'),
     JSON.stringify({ source: '/tmp/stub', hash: 'sha256:stub', loaded_at: '' }));
-  fs.writeFileSync(path.join(fake, 'tmp', `${REF}.io-schema.json`), JSON.stringify(FIXTURE, null, 2));
+  fs.writeFileSync(path.join(fake, '.data', 'tmp', `${REF}.io-schema.json`), JSON.stringify(FIXTURE, null, 2));
 
-  // 3) 打桩 lib/lark
+  // 3) 打桩 src/core/lark
   const table = {
     fields: [{ id: 'fldP', name: '文本', type: 'text' }],
     visible: ['文本'],
@@ -128,7 +130,7 @@ function runWorker(hiddenReads) {
     }
   };
 
-  const larkPath = require.resolve(path.join(ROOT, 'lib', 'lark.js'));
+  const larkPath = require.resolve(path.join(ROOT, 'src', 'core', 'lark.js'));
   require.cache[larkPath] = {
     id: larkPath, filename: larkPath, loaded: true,
     exports: { ROOT: fake, lark: fakeLark },
@@ -155,7 +157,7 @@ function runWorker(hiddenReads) {
   process.exit = realExit;
   console.error = realError;
 
-  const templatePath = path.join(fake, 'templates', `${REF}.json`);
+  const templatePath = path.join(fake, '.data', 'templates', `${REF}.json`);
   const template = fs.existsSync(templatePath) ? JSON.parse(fs.readFileSync(templatePath, 'utf8')) : null;
 
   process.stdout.write(MARKER + JSON.stringify({

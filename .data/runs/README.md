@@ -2,10 +2,10 @@
 
 运行记录与产物。**内容不进 Git**，本文件除外。
 
-每次执行产生一个 `runs/<run_id>/`：
+每次执行产生一个 `.data/runs/<run_id>/`：
 
 ```text
-runs/<run_id>/
+.data/runs/<run_id>/
 ├── run.json
 └── <record_id>/
     ├── downloads/
@@ -28,7 +28,7 @@ runs/<run_id>/
 ```jsonc
 {
   "run_id": "20260930-194727-86bc",
-  "template_id": "c62d75ba-…",     // 指向 templates/<ref>.json
+  "template_id": "c62d75ba-…",     // 指向 .data/templates/<ref>.json
   "skill_hash": "sha256:a19b…",    // 本次使用的 Skill 版本
   "work_hash": "sha256:7c31…",     // Skill + 命令 + 目标 + 生效映射的版本
   "trigger": "pending",            // all | pending | record-id

@@ -2,18 +2,17 @@
 /**
  * load-skill.js — 装载 Skill：把外部 Skill 复制进 SkillApp 并固定版本
  *
- * 装载后 skills/<ref>/ 是运行时的唯一真相；上游改动必须重新装载才生效。
+ * 装载后 .data/skills/<ref>/ 是运行时的唯一真相；上游改动必须重新装载才生效。
  * node_modules 属于 Skill 的运行契约（"无需额外安装"），默认一并复制，但不进 Git。
  */
 
 const fs = require('fs');
 const path = require('path');
-const { skillHash } = require('../lib/skill-hash');
-
-const SKILLS_DIR = path.resolve(__dirname, '..', 'skills');
+const { skillHash } = require('../core/skill-hash');
+const { SKILLS_DIR } = require('../core/paths');
 const REF_RE = /^[A-Za-z0-9._-]+$/;
 
-const USAGE = `用法: node bin/load-skill.js <源目录> --ref <name> [选项]
+const USAGE = `用法: node src/cli/load-skill.js <源目录> --ref <name> [选项]
 
 选项:
   --ref <name>   装载后的目录名，也是 Template 里 skill.path 的末段
