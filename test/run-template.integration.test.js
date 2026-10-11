@@ -77,7 +77,7 @@ function makeFixture(mode) {
   return { root, templatePath, rows };
 }
 
-function runWorker(mode) {
+async function runWorker(mode) {
   const { root, templatePath, rows } = makeFixture(mode);
   process.env.SKILLAPP_ROOT = root;
   process.env.SKILLAPP_DATA_DIR = path.join(root, '.data');
@@ -134,7 +134,8 @@ function runWorker(mode) {
   let exitCode = null;
   let harnessError = null;
   try {
-    require(RUN_TEMPLATE);
+    const cli = require(RUN_TEMPLATE);
+    await cli.mainPromise;
   } catch (err) {
     if (err instanceof ExitCalled) exitCode = err.code;
     else harnessError = err.stack || String(err);
@@ -176,7 +177,10 @@ function runWorker(mode) {
 }
 
 if (process.argv.includes('--worker')) {
-  runWorker(flag(process.argv, '--mode'));
+  runWorker(flag(process.argv, '--mode')).catch((err) => {
+    console.error(err.stack || String(err));
+    process.exit(1);
+  });
 } else {
   const { test } = require('node:test');
   const assert = require('node:assert');

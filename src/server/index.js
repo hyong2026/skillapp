@@ -59,12 +59,16 @@ function main() {
   server.listen(args.port, args.host, () => {
     const address = server.address();
     const port = typeof address === 'object' && address ? address.port : args.port;
-    console.log(`SkillApp Web 已启动（只读）`);
+    console.log(`SkillApp Web 已启动（执行控制台）`);
     console.log(`  地址: http://${args.host}:${port}`);
     console.log(`  鉴权: ${args.token ? '已开启' : '未开启'}`);
   });
 
-  const close = () => server.close(() => process.exit(0));
+  const close = () => {
+    server.jobRunner?.shutdown();
+    server.closeAllConnections?.();
+    server.close(() => process.exit(0));
+  };
   process.on('SIGINT', close);
   process.on('SIGTERM', close);
 }

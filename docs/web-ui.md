@@ -1,6 +1,6 @@
 # SkillApp Web UI
 
-> 状态：方案草案  
+> 状态：M2 已实现
 > 目标：让用户通过浏览器完成装载、分析结果确认、映射、执行和查看结果。  
 > 前提：单实例、单用户或可信内网、单飞书身份；文件系统仍是运行状态的唯一真相。
 
@@ -27,9 +27,9 @@ Web UI 负责把 CLI 的输入、状态和产物可视化，并提供异步任�
 | 现状 | Web UI 需要 |
 |---|---|
 | `src/cli/` 里的同步 CLI | 从 CLI 抽出 core service，CLI 只做薄壳 |
-| `src/core/lark.js` 使用 `spawnSync` | 长任务不能阻塞 HTTP 事件循环 |
+| `src/core/lark.js` 使用 `spawnSync` | 在独立 worker 进程中调用，HTTP 事件循环不阻塞 |
 | `run.json` 完成后才写入 | Run 启动时就落盘，并持续更新状态和进度 |
-| 没有队列、锁、取消 | 单 worker 队列、Template 级锁、取消和中断恢复 |
+| 没有队列、锁、取消 | 单 worker、Template 级锁、取消、重试和中断恢复 |
 | `analyze-skill-io` 是 Agent Skill | Web 只展示/编辑结果，不在服务端重做分析 |
 | `load-skill.js` 接受本地路径 | Web 需要上传、允许目录或受控路径三种来源 |
 | `map-table.js` 直接改表 | 先 dry-run 出差异，再显式确认应用 |
@@ -125,11 +125,8 @@ Core Services
 
 ### 4.4 执行控制台
 
-- 选择 Template。
-- 触发方式：
-  - `pending`：只跑未更新或失败的行
-  - `all`：全表重跑，需要二次确认
-  - `record-id`：指定行运行
+- Template 详情页右上角提供一个 `Run` 按钮，固定按 `pending` 增量执行。
+- `all`、`record-id` 和 dry-run 保留给 CLI/API 与失败行重试，不作为普通页面入口。
 - 运行前展示：
   - 总行数
   - pending 行数
@@ -216,6 +213,7 @@ GET    /api/templates
 GET    /api/templates/:id
 GET    /api/templates/:id/export
 
+POST   /api/runs/preview
 POST   /api/runs
 GET    /api/runs
 GET    /api/runs/:id
@@ -282,26 +280,26 @@ queued → running → completed
 node src/server/index.js --port 4173 --token '<token>'
 ```
 
-### M2：执行控制台
+### M2：执行控制台（已实现）
 
 **目标**：把 `run-template` 变成可观测、可取消的异步任务。
 
 任务：
 
-- 抽出 `runTemplate` core service，CLI 变成薄壳。
-- 引入单 worker Job Runner。
-- Run 启动时落盘，执行中持续更新进度。
-- 增加 SSE 事件流。
-- 支持 pending 预览、dry-run、all、record-id。
-- 增加 Template 级锁、取消和失败行重试。
-- 处理进程退出、服务重启和中断恢复。
+- [x] 抽出 `runTemplate` core service，CLI 变成薄壳。
+- [x] 引入单 worker Job Runner。
+- [x] Run 启动时立即落盘，执行中持续更新进度。
+- [x] 增加 SSE 事件流。
+- [x] 支持 pending 预览、dry-run、all、record-id。
+- [x] 增加 Template 级锁、取消和失败行重试。
+- [x] 处理进程退出、服务重启和中断恢复。
 
 验收：
 
-- 页面可以启动一次运行并实时看到每行阶段。
-- 刷新页面后仍能恢复进度。
-- 取消后不会继续写表。
-- 同一 Template 不能并发运行两次。
+- [x] 页面可以启动一次运行并实时看到每行阶段。
+- [x] 刷新页面后仍能恢复进度。
+- [x] 取消后不会继续写表。
+- [x] 同一 Template 不能并发运行两次。
 
 ### M3：初始化与映射向导
 

@@ -118,11 +118,11 @@ test('未登录请求被拒绝，并返回 Basic Auth 挑战', async () => {
   assert.match(response.headers.get('www-authenticate'), /^Basic /);
 });
 
-test('状态接口返回只读模式和文件计数', async () => {
+test('状态接口返回运行模式和文件计数', async () => {
   const { response, body } = await getJson('/api/status');
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
-  assert.equal(body.data.readonly, true);
+  assert.equal(body.data.readonly, false);
   assert.deepEqual(body.data.counts, {
     skills: 1,
     valid_skills: 1,
@@ -193,9 +193,9 @@ test('静态控制台可访问', async () => {
   assert.match(await renderer.text(), /renderMarkdown/);
 });
 
-test('M1 API 明确拒绝写操作', async () => {
-  const { response, body } = await getJson('/api/runs', { method: 'POST' });
+test('未开放的写接口仍会被拒绝', async () => {
+  const { response, body } = await getJson('/api/skills', { method: 'POST' });
   assert.equal(response.status, 405);
   assert.equal(body.ok, false);
-  assert.equal(body.error.code, 'READ_ONLY');
+  assert.equal(body.error.code, 'METHOD_NOT_ALLOWED');
 });

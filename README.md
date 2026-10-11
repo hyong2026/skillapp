@@ -72,8 +72,9 @@ skillapp/
 │   ├── core/                  内部模块
 │   │   ├── paths.js           所有内容目录的唯一路径来源
 │   │   ├── lark.js            lark-cli 封装
+│   │   ├── run-template.js    Run 核心服务：预检、执行、回写、进度
 │   │   └── skill-hash.js      Skill 内容指纹
-│   ├── server/                Web 控制台：HTTP API 与只读读模型
+│   ├── server/                Web 控制台：HTTP API、SSE、Job Runner
 │   └── web/                   Web 控制台静态页面
 ├── .data/                      内容层 —— 除 README 外不进 Git
 │   ├── skills/<ref>/          装载进来的 Skill
@@ -168,7 +169,7 @@ skillapp/
 
 ## Web UI
 
-只读控制台已经实现：浏览器可以查看 Skill、Template、Run、RunItem、日志和产物，不能执行写入操作。
+执行控制台已经实现：浏览器可以启动增量 Run、实时查看每行阶段与 stdout/stderr、取消运行、重试失败行，也可以继续查看 Skill、Template、RunItem、日志和产物。
 
 ```bash
 node src/server/index.js --port 4173 --token '<token>'

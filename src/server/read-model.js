@@ -104,7 +104,7 @@ class ReadModel {
     const runs = this.listRuns();
     const templates = this.listTemplates(runs);
     return {
-      readonly: true,
+      readonly: false,
       generated_at: new Date().toISOString(),
       counts: {
         skills: skills.length,

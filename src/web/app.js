@@ -4,6 +4,7 @@
   const app = document.getElementById('app');
   const notice = document.getElementById('notice');
   let renderSequence = 0;
+  let activeStream = null;
 
   function h(tag, attrs = {}, children = []) {
     const el = document.createElement(tag);
@@ -12,6 +13,10 @@
       if (key === 'className') el.className = value;
       else if (key === 'textContent') el.textContent = value;
       else if (key === 'onClick') el.addEventListener('click', value);
+      else if (key === 'onChange') el.addEventListener('change', value);
+      else if (key === 'value') el.value = value;
+      else if (key === 'checked') el.checked = value;
+      else if (key === 'disabled') el.disabled = value;
       else if (value === true) el.setAttribute(key, '');
       else el.setAttribute(key, String(value));
     }
@@ -36,9 +41,16 @@
     notice.className = `notice${message ? ' visible' : ''}${isError ? ' error' : ''}`;
   }
 
-  async function api(path) {
+  async function api(path, options = {}) {
+    const body = options.body === undefined ? undefined : JSON.stringify(options.body);
     const response = await fetch(path, {
-      headers: { accept: 'application/json' },
+      method: options.method || 'GET',
+      headers: {
+        accept: 'application/json',
+        ...(body ? { 'content-type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
+      body,
       credentials: 'same-origin',
       cache: 'no-store',
     });
@@ -54,6 +66,58 @@
       throw new Error(error?.action ? `${message}. ${error.action}` : message);
     }
     return payload.data;
+  }
+
+  function stopRunStream() {
+    if (activeStream) activeStream.abort();
+    activeStream = null;
+  }
+
+  async function watchRun(runId, onEvent) {
+    stopRunStream();
+    const controller = new AbortController();
+    activeStream = controller;
+    try {
+      const response = await fetch(`/api/runs/${encoded(runId)}/events`, {
+        headers: { accept: 'text/event-stream' },
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw new Error(`Event stream failed (${response.status})`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let streamDone = false;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary;
+        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const data = frame.split('\n')
+            .filter((line) => line.startsWith('data: '))
+            .map((line) => line.slice(6))
+            .join('\n');
+          if (data) {
+            const event = JSON.parse(data);
+            onEvent(event);
+            if (event.type === 'done') {
+              streamDone = true;
+              controller.abort();
+              break;
+            }
+          }
+        }
+        if (streamDone) break;
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError') setNotice(error.message, true);
+    } finally {
+      if (activeStream === controller) activeStream = null;
+    }
   }
 
   function formatDate(value) {
@@ -84,7 +148,8 @@
     interrupted: 'Interrupted',
     running: 'Running',
     queued: 'Queued',
-    'dry-run': 'Dry run',
+    canceling: 'Canceling',
+    'dry-run': 'Dry Run',
   };
 
   function statusBadge(status) {
@@ -171,31 +236,31 @@
       section(`Inputs (${inputs.length})`, dataTable(
         ['Column', 'Key', 'Type', 'Required', 'Default', 'Constraints / Notes'],
         inputRows(inputs),
-        'Input fields',
+        'Input Fields',
       )),
       section(`Outputs (${outputs.length})`, dataTable(
-        ['Column', 'Key', 'Type', 'Value path', 'Precision'],
+        ['Column', 'Key', 'Type', 'Value Path', 'Precision'],
         outputRows(outputs),
-        'Output fields',
+        'Output Fields',
       )),
     ]), () => codeBlock(schema));
   }
 
-  function mappingPanel(template) {
+  function templateDefinitionPanel(template) {
     const inputs = Array.isArray(template?.mapping?.inputs) ? template.mapping.inputs : [];
     const outputs = Array.isArray(template?.mapping?.outputs) ? template.mapping.outputs : [];
-    return togglePanel('Mapping', 'JSON', () => h('div', { className: 'contract-body' }, [
+    return togglePanel('Template Definition', 'JSON', () => h('div', { className: 'contract-body' }, [
       section(`Inputs (${inputs.length})`, dataTable(
-        ['Key', 'field_id', 'Type', 'Required', 'Default', 'Rules'],
+        ['Key', 'Field ID', 'Type', 'Required', 'Default', 'Rules'],
         mappingInputRows(inputs),
-        'Template input mapping',
+        'Template Input Mapping',
       )),
       section(`Outputs (${outputs.length})`, dataTable(
-        ['Key', 'field_id', 'Type', 'Value path', 'Precision'],
+        ['Key', 'Field ID', 'Type', 'Value Path', 'Precision'],
         mappingOutputRows(outputs),
-        'Template output mapping',
+        'Template Output Mapping',
       )),
-    ]), () => codeBlock(template.mapping));
+    ]), () => codeBlock(template));
   }
 
   function dataPanel(body) {
@@ -215,7 +280,7 @@
     return h('div', { className: 'empty', textContent: message });
   }
 
-  function dataTable(headers, rows, label = 'Data table') {
+  function dataTable(headers, rows, label = 'Data Table') {
     const table = h('table');
     const thead = h('thead');
     const headerRow = h('tr');
@@ -324,6 +389,20 @@
     return hashLink(templateId, `#templates/${encoded(templateId)}`);
   }
 
+  function feishuBaseLink(target = {}) {
+    if (!target.base_token) return '—';
+    const url = new URL(`https://my.feishu.cn/base/${encodeURIComponent(target.base_token)}`);
+    if (target.table_id) url.searchParams.set('table', target.table_id);
+    if (target.view_id) url.searchParams.set('view', target.view_id);
+    return h('a', {
+      className: 'mono',
+      href: url.toString(),
+      target: '_blank',
+      rel: 'noreferrer',
+      textContent: url.toString(),
+    });
+  }
+
   function encoded(value) {
     return encodeURIComponent(String(value));
   }
@@ -404,10 +483,38 @@
     return fragment(
       head('Templates'),
       dataPanel(h('div', { className: 'panel-body flush' }, dataTable(
-        ['Ref', 'Template ID', 'Table ID', 'IO', 'Last run', 'Created'],
+        ['Ref', 'Template ID', 'Table ID', 'IO', 'Last Run', 'Created'],
         rows,
       ))),
     );
+  }
+
+  function runControl(template) {
+    const allRows = h('input', { type: 'checkbox' });
+    const allRowsField = h('label', { className: 'run-option' }, [
+      allRows,
+      h('span', { textContent: 'All Rows' }),
+    ]);
+    const button = h('button', { className: 'button primary', type: 'button', textContent: 'Run Template' });
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      setNotice('');
+      try {
+        if (allRows.checked && !window.confirm('Run all rows and write results back to the table?')) return;
+        const run = await api('/api/runs', {
+          method: 'POST',
+          body: {
+            template_id: template.template_id,
+            trigger: allRows.checked ? 'all' : 'pending',
+          },
+        });
+        location.hash = `runs/${encoded(run.run_id)}`;
+      } catch (error) {
+        setNotice(error.message, true);
+        button.disabled = false;
+      }
+    });
+    return h('div', { className: 'run-actions' }, [allRowsField, button]);
   }
 
   async function templateView(id) {
@@ -421,17 +528,16 @@
           h('h1', { textContent: data.ref }),
           h('p', { className: 'back-link' }, hashLink('Back to Templates', '#templates')),
         ]),
+        runControl(template),
       ]),
       panel('Summary', h('div', { className: 'panel-body' }, kv([
         ['Template ID', h('span', { className: 'mono', textContent: template.template_id || '—' })],
         ['Skill', skillLink(skill.path)],
-        ['Skill hash', h('span', { className: 'mono', textContent: skill.hash || '—' })],
-        ['Base token', target.base_token || '—'],
-        ['Table ID', target.table_id || '—'],
-        ['View ID', target.view_id || '—'],
+        ['Skill Hash', h('span', { className: 'mono', textContent: skill.hash || '—' })],
+        ['Feishu Base URL', feishuBaseLink(target)],
         ['Created', formatDate(template.created_at)],
       ]))),
-      mappingPanel(template),
+      templateDefinitionPanel(template),
     );
   }
 
@@ -455,8 +561,11 @@
     );
   }
 
-  async function runView(runId) {
-    const run = await api(`/api/runs/${encoded(runId)}`);
+  function isRunActive(status) {
+    return status === 'queued' || status === 'running' || status === 'canceling';
+  }
+
+  function runContent(runId, run, liveLogs) {
     const items = Array.isArray(run.items) ? run.items : [];
     const rows = items.map((item) => [
       hashLink(item.record_id, `#runs/${encoded(runId)}/${encoded(item.record_id)}`),
@@ -465,27 +574,111 @@
       item.ms === null || item.ms === undefined ? '—' : `${item.ms} ms`,
       item.error || '—',
     ]);
+    const total = run.total ?? items.length;
+    const completed = run.completed ?? items.filter((item) => item.status !== 'queued' && item.status !== 'running').length;
+    const percent = total ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+    const actions = h('div', { className: 'run-actions' });
+    if (isRunActive(run.status)) {
+      actions.append(h('button', {
+        className: 'button',
+        type: 'button',
+        textContent: 'Cancel',
+        disabled: run.status === 'canceling',
+        onClick: async (event) => {
+          event.currentTarget.disabled = true;
+          try {
+            await api(`/api/runs/${encoded(runId)}/cancel`, { method: 'POST' });
+          } catch (error) {
+            setNotice(error.message, true);
+            event.currentTarget.disabled = false;
+          }
+        },
+      }));
+    }
+    if (!isRunActive(run.status) && (run.failed || 0) > 0) {
+      actions.append(h('button', {
+        className: 'button primary',
+        type: 'button',
+        textContent: 'Retry Failed Rows',
+        onClick: async (event) => {
+          event.currentTarget.disabled = true;
+          try {
+            const next = await api(`/api/runs/${encoded(runId)}/retry`, { method: 'POST' });
+            location.hash = `runs/${encoded(next.run_id)}`;
+          } catch (error) {
+            setNotice(error.message, true);
+            event.currentTarget.disabled = false;
+          }
+        },
+      }));
+    }
+
+    const logPanel = h('div', { className: 'live-logs' });
+    for (const [recordId, streams] of liveLogs.entries()) {
+      logPanel.append(h('section', { className: 'live-log' }, [
+        h('h3', { textContent: recordId }),
+        h('div', { className: 'detail-grid' }, [
+          panel('Stdout', h('div', { className: 'panel-body' }, streams.stdout ? codeBlock(streams.stdout) : empty('No output'))),
+          panel('Stderr', h('div', { className: 'panel-body' }, streams.stderr ? codeBlock(streams.stderr) : empty('No output'))),
+        ]),
+      ]));
+    }
+
     return fragment(
       h('div', { className: 'view-head' }, [
         h('div', {}, [
           h('h1', { textContent: run.run_id || runId }),
           h('p', { className: 'back-link' }, hashLink('Back to Runs', '#runs')),
         ]),
+        actions,
       ]),
       panel('Summary', h('div', { className: 'panel-body' }, kv([
         ['Status', statusBadge(run.status)],
         ['Template ID', h('span', { className: 'mono' }, templateLink(run.template_id))],
         ['Trigger', run.trigger || '—'],
+        ['Progress', `${completed} / ${total}`],
+        ['Progress Bar', h('div', { className: 'progress' }, h('div', { className: 'progress-bar', style: `width:${percent}%` }))],
         ['Started', formatDate(run.started_at)],
         ['Finished', formatDate(run.finished_at)],
         ['Succeeded / Failed', `${run.succeeded ?? '—'} / ${run.failed ?? '—'}`],
-        ['Work hash', h('span', { className: 'mono', textContent: run.work_hash || '—' })],
+        ['Work Hash', h('span', { className: 'mono', textContent: run.work_hash || '—' })],
       ]))),
-      panel('RunItem', h('div', { className: 'panel-body flush' }, dataTable(
+      panel('Run Item', h('div', { className: 'panel-body flush' }, dataTable(
         ['Record ID', 'Status', 'Stage', 'Duration', 'Error'],
         rows,
       ))),
+      logPanel.childElementCount ? panel('Live Output', h('div', { className: 'panel-body' }, logPanel)) : null,
     );
+  }
+
+  async function runView(runId) {
+    const initial = await api(`/api/runs/${encoded(runId)}`);
+    const view = h('div');
+    const liveLogs = new Map();
+    let currentRun = initial;
+    const refresh = (run) => {
+      currentRun = run;
+      view.replaceChildren(runContent(runId, run, liveLogs));
+    };
+    refresh(initial);
+    watchRun(runId, (event) => {
+      if (event.type === 'item-stage') {
+        const item = (currentRun.items || []).find((entry) => entry.record_id === event.record_id);
+        if (item) item.stage = event.stage;
+        refresh(currentRun);
+        return;
+      }
+      if (event.type === 'item-log') {
+        const streams = liveLogs.get(event.record_id) || { stdout: '', stderr: '' };
+        streams[event.stream] = `${streams[event.stream]}${event.chunk}`.slice(-24000);
+        liveLogs.set(event.record_id, streams);
+        refresh(currentRun);
+        return;
+      }
+      if (event.run) refresh(event.run);
+      if (event.type === 'error') setNotice(event.error?.message || 'Run failed', true);
+    });
+    return view;
   }
 
   async function runItemView(runId, recordId) {
@@ -517,12 +710,12 @@
         ['Stage', item.stage || '—'],
         ['Duration', item.ms === null || item.ms === undefined ? '—' : `${item.ms} ms`],
         ['Error', item.error || '—'],
-        ['Input hash', h('span', { className: 'mono', textContent: item.input_hash || '—' })],
+        ['Input Hash', h('span', { className: 'mono', textContent: item.input_hash || '—' })],
       ]))),
       panel(`Artifacts (${(item.artifacts || []).length})`, h('div', { className: 'panel-body' }, artifacts)),
       h('div', { className: 'detail-grid' }, [
-        panel('stdout', h('div', { className: 'panel-body' }, codeBlock(item.logs?.stdout))),
-        panel('stderr', h('div', { className: 'panel-body' }, codeBlock(item.logs?.stderr))),
+        panel('Stdout', h('div', { className: 'panel-body' }, codeBlock(item.logs?.stdout))),
+        panel('Stderr', h('div', { className: 'panel-body' }, codeBlock(item.logs?.stderr))),
       ]),
     );
   }
@@ -555,6 +748,7 @@
   }
 
   async function render() {
+    stopRunStream();
     const sequence = ++renderSequence;
     const rawHash = (location.hash || '#skills').slice(1);
     let parts;

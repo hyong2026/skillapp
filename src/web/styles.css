@@ -197,6 +197,23 @@ h3 { color: var(--text-strong); font-size: 14px; font-weight: 600; }
 .contract-section h3 { margin-bottom: 9px; }
 .contract-section .table-wrap { border: 1px solid var(--line); border-radius: 10px; }
 .contract-section table { min-width: 660px; }
+.run-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.view-head .run-actions { align-items: center; }
+.run-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.run-option input { width: 15px; height: 15px; accent-color: var(--accent); }
+.progress { width: min(360px, 100%); height: 7px; overflow: hidden; border-radius: 999px; background: var(--surface-3); }
+.progress-bar { height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
+.live-logs { display: grid; gap: 14px; }
+.live-log h3 { margin-bottom: 8px; font: 600 12px/1.4 var(--font-mono); color: var(--muted); }
+.live-log .panel { margin-bottom: 0; box-shadow: none; }
+.live-log pre { max-height: 280px; }
 
 .table-wrap {
   max-width: 100%;
@@ -211,7 +228,7 @@ th {
   background: rgba(15, 24, 41, .5);
   font: 600 10px/1.4 var(--font-mono);
   letter-spacing: .08em;
-  text-transform: uppercase;
+  text-transform: capitalize;
   white-space: nowrap;
 }
 td { color: var(--text); font-size: 13px; }
@@ -302,7 +319,7 @@ pre {
 .markdown th, .markdown td { padding: 9px 11px; }
 .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .kv { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 8px 14px; margin: 0; }
-.kv dt { color: var(--muted-2); font: 500 11px/1.5 var(--font-mono); }
+.kv dt { color: var(--muted-2); font: 500 11px/1.5 var(--font-mono); text-transform: capitalize; }
 .kv dd { margin: 0; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
 .artifact-list { display: grid; gap: 8px; }
 .artifact {
@@ -371,6 +388,7 @@ pre {
 .button:hover { border-color: var(--line-strong); background: var(--surface-3); color: var(--text-strong); text-decoration: none; }
 .button.primary { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 .button.primary:hover { border-color: #4ade80; background: #4ade80; color: var(--on-accent); }
+.button:disabled { cursor: wait; opacity: .55; }
 
 @media (max-width: 920px) {
   .topbar { flex-wrap: wrap; gap: 10px; padding: 10px 18px; }

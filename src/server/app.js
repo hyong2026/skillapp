@@ -5,7 +5,9 @@ const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
 const { ReadModel, HttpError, isWithin } = require('./read-model');
+const { JobRunner } = require('./job-runner');
 const { DATA_DIR, WEB_DIR } = require('../core/paths');
+const MAX_BODY_BYTES = 1024 * 1024;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -66,6 +68,96 @@ function sendJson(req, res, status, payload) {
   });
   if (req.method === 'HEAD') res.end();
   else res.end(body);
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let size = 0;
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      size += Buffer.byteLength(chunk);
+      if (size > MAX_BODY_BYTES) {
+        reject(new HttpError(413, 'BODY_TOO_LARGE', 'Request body is too large', 'Send a smaller JSON body'));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on('end', () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new HttpError(400, 'INVALID_JSON', 'Request body is not valid JSON', 'Send a valid JSON body'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function assertSameOrigin(req) {
+  const site = req.headers['sec-fetch-site'];
+  if (site === 'cross-site') {
+    throw new HttpError(403, 'CROSS_ORIGIN_BLOCKED', 'Cross-site writes are blocked', 'Open the Web UI from its own origin');
+  }
+  const origin = req.headers.origin;
+  if (!origin) return;
+  try {
+    if (new URL(origin).host !== req.headers.host) {
+      throw new Error('origin mismatch');
+    }
+  } catch {
+    throw new HttpError(403, 'CROSS_ORIGIN_BLOCKED', 'Cross-origin writes are blocked', 'Open the Web UI from its own origin');
+  }
+}
+
+function sendSseEvent(res, event) {
+  res.write(`event: ${event.type}\n`);
+  res.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+function serveEvents(req, res, runner, runId) {
+  const initialRun = runner.getRun(runId);
+  res.writeHead(200, {
+    ...securityHeaders(),
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  res.flushHeaders?.();
+  let unsubscribe = () => {};
+  let heartbeat = null;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    if (heartbeat) clearInterval(heartbeat);
+    unsubscribe();
+  };
+  unsubscribe = runner.subscribe(runId, (event) => {
+    sendSseEvent(res, event);
+    const terminal = event.run && ['completed', 'partial', 'failed', 'canceled', 'interrupted', 'dry-run'].includes(event.run.status);
+    if (event.type === 'done' || terminal) {
+      res.end();
+      close();
+    }
+  });
+  sendSseEvent(res, { type: 'snapshot', run: initialRun });
+  const initialTerminal = ['completed', 'partial', 'failed', 'canceled', 'interrupted', 'dry-run'].includes(initialRun.status);
+  if (initialTerminal) {
+    res.end();
+    close();
+  }
+  if (closed) return;
+  heartbeat = setInterval(() => res.write(': ping\n\n'), 15000);
+  heartbeat.unref?.();
+  req.on('close', close);
+  req.on('end', close);
 }
 
 function sendApi(req, res, data) {
@@ -155,27 +247,49 @@ function serveArtifact(req, res, file) {
   fs.createReadStream(file).pipe(res);
 }
 
-function routeApi(req, res, model, segments) {
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    throw new HttpError(405, 'READ_ONLY', 'This API is read-only', 'Write operations are not supported in this version');
-  }
+async function routeApi(req, res, model, runner, segments) {
+  const readOnly = req.method === 'GET' || req.method === 'HEAD';
 
   if (segments.length === 2 && segments[1] === 'status') {
     return sendApi(req, res, model.status());
   }
 
   if (segments[1] === 'skills') {
+    if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
     if (segments.length === 2) return sendApi(req, res, model.listSkills());
     if (segments.length === 3) return sendApi(req, res, model.getSkill(segments[2]));
   }
 
   if (segments[1] === 'templates') {
+    if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
     if (segments.length === 2) return sendApi(req, res, model.listTemplates());
     if (segments.length === 3) return sendApi(req, res, model.getTemplate(segments[2]));
   }
 
   if (segments[1] === 'runs') {
-    if (segments.length === 3) return sendApi(req, res, model.getRun(segments[2]));
+    if (req.method === 'POST' && segments.length === 2) {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
+      return sendJson(req, res, 202, { ok: true, data: runner.start(body), error: null });
+    }
+    if (req.method === 'POST' && segments.length === 3 && segments[2] === 'preview') {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
+      return sendApi(req, res, await runner.preview(body));
+    }
+    if (req.method === 'POST' && segments.length === 4 && segments[3] === 'cancel') {
+      assertSameOrigin(req);
+      return sendApi(req, res, await runner.cancel(segments[2]));
+    }
+    if (req.method === 'POST' && segments.length === 4 && segments[3] === 'retry') {
+      assertSameOrigin(req);
+      return sendJson(req, res, 202, { ok: true, data: runner.retry(segments[2]), error: null });
+    }
+    if (req.method === 'GET' && segments.length === 4 && segments[3] === 'events') {
+      return serveEvents(req, res, runner, segments[2]);
+    }
+    if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
+    if (segments.length === 3) return sendApi(req, res, runner.getRun(segments[2]));
     if (segments.length === 5 && segments[3] === 'items') {
       return sendApi(req, res, model.getRunItem(segments[2], segments[4]));
     }
@@ -183,7 +297,7 @@ function routeApi(req, res, model, segments) {
       const relative = segments.slice(5).join('/');
       return serveArtifact(req, res, model.artifactPath(segments[2], segments[4], relative));
     }
-    if (segments.length === 2) return sendApi(req, res, model.listRuns());
+    if (segments.length === 2) return sendApi(req, res, runner.listRuns());
   }
 
   throw new HttpError(404, 'NOT_FOUND', 'API endpoint not found', 'Check the request path');
@@ -193,8 +307,9 @@ function createRequestHandler(options = {}) {
   const root = path.resolve(options.root || DATA_DIR);
   const token = options.token ? String(options.token) : null;
   const model = new ReadModel(root);
+  const runner = options.jobRunner || new JobRunner({ root, repoRoot: options.repoRoot });
 
-  return (req, res) => {
+  const handler = async (req, res) => {
     try {
       let url;
       try {
@@ -215,7 +330,7 @@ function createRequestHandler(options = {}) {
 
       const segments = url.pathname.split('/').filter(Boolean).map((part, i) => decodeSegment(part, i ? 'Path segment' : 'Path'));
       if (segments[0] === 'api') {
-        routeApi(req, res, model, segments);
+        await routeApi(req, res, model, runner, segments);
         return;
       }
 
@@ -231,10 +346,15 @@ function createRequestHandler(options = {}) {
       sendError(req, res, err);
     }
   };
+  handler.jobRunner = runner;
+  return handler;
 }
 
 function createServer(options = {}) {
-  return http.createServer(createRequestHandler(options));
+  const handler = createRequestHandler(options);
+  const server = http.createServer(handler);
+  server.jobRunner = handler.jobRunner;
+  return server;
 }
 
 module.exports = {
