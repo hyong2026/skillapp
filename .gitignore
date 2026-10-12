@@ -11,7 +11,13 @@
 .data/runs/*
 !.data/runs/README.md
 
+.data/operations/*
+!.data/operations/README.md
+
 .data/tmp/*
 !.data/tmp/README.md
 
 .DS_Store
+
+.env
+!.env.example

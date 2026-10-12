@@ -19,6 +19,7 @@ module.exports = {
   SKILLS_DIR: path.join(DATA_DIR, 'skills'),
   TEMPLATES_DIR: path.join(DATA_DIR, 'templates'),
   RUNS_DIR: path.join(DATA_DIR, 'runs'),
+  OPERATIONS_DIR: path.join(DATA_DIR, 'operations'),
   TMP_DIR: path.join(DATA_DIR, 'tmp'),
 
   WEB_DIR: path.join(SRC_DIR, 'web'),

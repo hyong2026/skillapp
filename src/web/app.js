@@ -36,6 +36,97 @@
     return el;
   }
 
+  const ICON_PATHS = {
+    load: ['M12 3v12', 'm7 8 5-5 5 5', 'M5 21h14'],
+    analyze: ['M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3z', 'M5 15l.8 2.2L8 18l-2.2.8L5 21l-.8-2.2L2 18l2.2-.8L5 15z'],
+    mapping: ['M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1', 'M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1'],
+    unload: ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14H6L5 6', 'M10 11v5', 'M14 11v5'],
+    run: ['M8 5v14l11-7z'],
+    cancel: ['M18 6 6 18', 'M6 6l12 12'],
+    retry: ['M21 12a9 9 0 1 1-2.64-6.36', 'M21 3v6h-6'],
+    download: ['M12 3v12', 'm7 10 5 5 5-5', 'M5 21h14'],
+    code: ['m8 9-4 3 4 3', 'M16 9l4 3-4 3', 'M14 5l-4 14'],
+    drag: ['M9 5h.01', 'M9 12h.01', 'M9 19h.01', 'M15 5h.01', 'M15 12h.01', 'M15 19h.01'],
+    check: ['m5 12 4 4L19 6'],
+    close: ['M18 6 6 18', 'M6 6l12 12'],
+    spinner: ['M12 3a9 9 0 1 0 9 9'],
+  };
+
+  function icon(name, className = 'icon') {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', className);
+    for (const d of ICON_PATHS[name] || []) {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      svg.append(path);
+    }
+    return svg;
+  }
+
+  function actionButton(label, iconName, className = 'button') {
+    return h('button', { className, type: 'button' }, [
+      icon(iconName),
+      h('span', { textContent: label }),
+    ]);
+  }
+
+  function loadingPanel(title, message) {
+    return panel(title, h('div', { className: 'panel-body' }, h('div', { className: 'loading-state' }, [
+      icon('spinner', 'icon spinner'),
+      h('span', { textContent: message }),
+    ])));
+  }
+
+  function openInputDialog({ title, label, placeholder, confirmText, iconName, validate, onConfirm }) {
+    const dialog = h('dialog', { className: 'modal' });
+    const input = h('input', { type: 'text', placeholder });
+    const error = h('p', { className: 'modal-error' });
+    const cancel = actionButton('Cancel', 'close');
+    const confirm = actionButton(confirmText, iconName, 'button primary');
+    confirm.type = 'submit';
+    const form = h('form', { className: 'modal-form' }, [
+      h('label', { className: 'modal-field' }, [h('span', { textContent: label }), input]),
+      error,
+      h('div', { className: 'modal-actions' }, [cancel, confirm]),
+    ]);
+    const close = () => dialog.close();
+    cancel.addEventListener('click', close);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const value = input.value.trim();
+      error.textContent = '';
+      if (!value || (validate && !validate(value))) {
+        error.textContent = `Enter a valid ${label}`;
+        input.focus();
+        return;
+      }
+      cancel.disabled = true;
+      confirm.disabled = true;
+      confirm.replaceChildren(icon('spinner', 'icon spinner'), h('span', { textContent: 'Working...' }));
+      try {
+        await onConfirm(value);
+        close();
+      } catch (err) {
+        error.textContent = err.message;
+        cancel.disabled = false;
+        confirm.disabled = false;
+        confirm.replaceChildren(icon(iconName), h('span', { textContent: confirmText }));
+        input.focus();
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    dialog.append(h('div', { className: 'modal-head' }, [
+      h('div', {}, [icon(iconName, 'modal-icon'), h('h2', { textContent: title })]),
+      h('button', { className: 'icon-button', type: 'button', 'aria-label': 'Close', onClick: close }, icon('close')),
+    ]), form);
+    document.body.append(dialog);
+    dialog.showModal();
+    input.focus();
+    return dialog;
+  }
+
   function setNotice(message = '', isError = false) {
     notice.textContent = message;
     notice.className = `notice${message ? ' visible' : ''}${isError ? ' error' : ''}`;
@@ -120,6 +211,73 @@
     }
   }
 
+  function watchOperation(ref, operationId, onEvent = () => {}) {
+    stopRunStream();
+    const controller = new AbortController();
+    activeStream = controller;
+    const query = operationId ? `?operation_id=${encoded(operationId)}` : '';
+    return new Promise(async (resolve, reject) => {
+      try {
+        const response = await fetch(`/api/skills/${encoded(ref)}/events${query}`, {
+          headers: { accept: 'text/event-stream' },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error(`Operation stream failed (${response.status})`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let boundary;
+          while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const data = frame.split('\n')
+              .filter((line) => line.startsWith('data: '))
+              .map((line) => line.slice(6))
+              .join('\n');
+            if (!data) continue;
+            const event = JSON.parse(data);
+            onEvent(event);
+            if (event.error) {
+              throw new Error(event.error.action ? `${event.error.message}. ${event.error.action}` : event.error.message);
+            }
+            if (event.type === 'done') {
+              controller.abort();
+              resolve((event.operation || event.job).result);
+              return;
+            }
+            const operation = event.operation || event.job;
+            if (operation && ['completed', 'failed', 'canceled', 'interrupted'].includes(operation.status)) {
+              controller.abort();
+              if (operation.status !== 'completed') {
+                const message = operation.error?.message || `Operation ${operation.status}`;
+                const action = operation.error?.action ? `. ${operation.error.action}` : '';
+                throw new Error(`${message}${action}`);
+              }
+              resolve(operation.result);
+              return;
+            }
+          }
+        }
+        throw new Error('Operation stream ended before it finished');
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        reject(error);
+      }
+    });
+  }
+
+  async function startOperation(path, body, method = 'POST') {
+    const operation = await api(path, { method, body });
+    const ref = operation.input?.ref || body.ref;
+    return watchOperation(ref, operation.operation_id);
+  }
+
   function formatDate(value) {
     if (!value) return '—';
     const date = new Date(value);
@@ -141,7 +299,9 @@
   const STATUS_LABELS = {
     succeeded: 'Succeeded',
     completed: 'Completed',
-    valid: 'Valid',
+    invalid: 'Invalid',
+    unanalyzed: 'Unanalyzed',
+    ready: 'Ready',
     failed: 'Failed',
     partial: 'Partial',
     canceled: 'Canceled',
@@ -150,6 +310,10 @@
     queued: 'Queued',
     canceling: 'Canceling',
     'dry-run': 'Dry Run',
+    analyzing: 'Analyzing',
+    stale: 'Stale',
+    unverified: 'Unverified',
+    missing: 'Missing',
   };
 
   function statusBadge(status) {
@@ -161,27 +325,11 @@
     });
   }
 
-  function markdownBlock(value) {
-    if (value === null || value === undefined || value === '') {
-      return h('p', { className: 'muted', textContent: 'Not recorded' });
-    }
-    const article = h('article', { className: 'markdown' });
-    article.innerHTML = window.SkillAppMarkdown.renderMarkdown(value);
-    return article;
-  }
-
   function codeBlock(value) {
     if (value === null || value === undefined) return h('span', { className: 'muted', textContent: 'Not recorded' });
     const code = h('code');
     code.innerHTML = window.SkillAppMarkdown.highlightJson(value);
     return h('pre', { className: 'code-block' }, code);
-  }
-
-  function textBlock(value) {
-    if (value === null || value === undefined || value === '') {
-      return h('span', { className: 'muted', textContent: 'Not recorded' });
-    }
-    return h('pre', { className: 'code-block' }, h('code', { textContent: String(value) }));
   }
 
   function kv(entries) {
@@ -222,6 +370,7 @@
         body.replaceChildren(showCode ? renderCode() : renderUI());
       },
     }, [
+      icon('code'),
       h('span', { textContent: codeLabel }),
       h('span', { className: 'toggle-track', 'aria-hidden': 'true' }, h('span', { className: 'toggle-thumb' })),
     ]);
@@ -229,21 +378,186 @@
     return panel(title, body, control);
   }
 
-  function ioContractPanel(schema) {
-    const inputs = Array.isArray(schema?.inputs) ? schema.inputs : [];
-    const outputs = Array.isArray(schema?.outputs) ? schema.outputs : [];
-    return togglePanel('IO Contract', 'JSON', () => h('div', { className: 'contract-body' }, [
-      section(`Inputs (${inputs.length})`, dataTable(
-        ['Column', 'Key', 'Type', 'Required', 'Default', 'Constraints / Notes'],
-        inputRows(inputs),
-        'Input Fields',
-      )),
-      section(`Outputs (${outputs.length})`, dataTable(
-        ['Column', 'Key', 'Type', 'Value Path', 'Precision'],
-        outputRows(outputs),
-        'Output Fields',
-      )),
-    ]), () => codeBlock(schema));
+  function editableText(value, onCommit) {
+    const button = h('button', { className: 'inline-edit', type: 'button', textContent: value || '—' });
+    button.addEventListener('click', () => {
+      const input = h('input', { className: 'inline-edit-input', type: 'text', value: value || '' });
+      input.setAttribute('aria-label', 'Column name');
+      button.replaceWith(input);
+      input.focus();
+      input.select();
+      let finished = false;
+      const restore = () => input.replaceWith(button);
+      const commit = async () => {
+        if (finished) return;
+        finished = true;
+        const next = input.value.trim();
+        if (!next || next === value) {
+          restore();
+          return;
+        }
+        try {
+          await onCommit(next);
+        } catch (error) {
+          setNotice(error.message, true);
+          restore();
+        }
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); input.blur(); }
+        if (event.key === 'Escape') { finished = true; restore(); }
+      });
+    });
+    return button;
+  }
+
+  function editableColumnTable(kind, specs, canEdit, onSave) {
+    const isInput = kind === 'inputs';
+    const headers = isInput
+      ? ['', 'Column', 'Key', 'Type', 'Required', 'Default', 'Constraints / Notes']
+      : ['', 'Column', 'Key', 'Type', 'Value Path', 'Precision'];
+    const widths = isInput
+      ? [42, 180, 130, 100, 84, 120, null]
+      : [42, 180, 130, 100, 190, null];
+    const table = h('table', { className: `schema-table schema-table-${isInput ? 'inputs' : 'outputs'}` });
+    const colgroup = h('colgroup');
+    for (const width of widths) colgroup.append(h('col', width === null ? {} : { style: `width:${width}px` }));
+    const thead = h('thead');
+    const headerRow = h('tr');
+    for (const header of headers) headerRow.append(h('th', { scope: 'col', textContent: header }));
+    thead.append(headerRow);
+    const tbody = h('tbody');
+    let dragSource = null;
+
+    const commitChange = async (change) => {
+      const next = JSON.parse(JSON.stringify(specs));
+      change(next);
+      await onSave({ [kind]: next });
+    };
+
+    if (!specs.length) {
+      const td = h('td', { colSpan: headers.length });
+      td.append(empty('No data'));
+      tbody.append(h('tr', {}, td));
+    }
+
+    specs.forEach((spec, index) => {
+      const row = h('tr');
+      const dragHandle = canEdit
+        ? h('button', {
+          className: 'drag-handle',
+          type: 'button',
+          draggable: 'true',
+          title: 'Drag or use Arrow Up / Arrow Down to reorder',
+          'aria-label': `Reorder ${spec.label || spec.key}`,
+        }, icon('drag'))
+        : null;
+      if (dragHandle) {
+        dragHandle.addEventListener('dragstart', (event) => {
+          dragSource = { kind, index };
+          row.classList.add('dragging');
+          event.dataTransfer?.setData('text/plain', String(index));
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+        });
+        dragHandle.addEventListener('dragend', () => {
+          dragSource = null;
+          row.classList.remove('dragging');
+          row.classList.remove('drag-over');
+        });
+        dragHandle.addEventListener('keydown', async (event) => {
+          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+          event.preventDefault();
+          const target = event.key === 'ArrowUp' ? index - 1 : index + 1;
+          if (target < 0 || target >= specs.length) return;
+          await commitChange((next) => {
+            const [moved] = next.splice(index, 1);
+            next.splice(target, 0, moved);
+          });
+        });
+      }
+      row.addEventListener('dragover', (event) => {
+        if (dragSource?.kind === kind) {
+          event.preventDefault();
+          row.classList.add('drag-over');
+        }
+      });
+      row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+      row.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        row.classList.remove('drag-over');
+        if (!dragSource || dragSource.kind !== kind || dragSource.index === index) return;
+        await commitChange((next) => {
+          const [moved] = next.splice(dragSource.index, 1);
+          next.splice(index, 0, moved);
+        });
+      });
+
+      const dragCell = h('td', { className: 'drag-cell' }, dragHandle);
+      const columnCell = h('td', { className: 'column-cell' }, editableText(spec.label || spec.key, async (label) => {
+        await commitChange((next) => { next[index].label = label; });
+      }));
+      const cells = [
+        dragCell,
+        columnCell,
+        h('td', {}, h('span', { className: 'mono', textContent: spec.key || '—' })),
+        h('td', {}, h('span', { className: 'mono', textContent: spec.type || '—' })),
+      ];
+      if (isInput) {
+        cells.push(
+          h('td', { textContent: spec.required ? 'Yes' : 'No' }),
+          h('td', { textContent: formatMeta(spec.default) }),
+          h('td', { textContent: specMeta(spec) }),
+        );
+      } else {
+        cells.push(
+          h('td', {}, h('span', { className: 'mono', textContent: spec.from || '—' })),
+          h('td', { textContent: spec.round === undefined ? '—' : String(spec.round) }),
+        );
+      }
+      for (const cell of cells) row.append(cell);
+      tbody.append(row);
+    });
+
+    table.append(colgroup, thead, tbody);
+    const wrap = h('div', { className: 'table-wrap', role: 'region', tabindex: '0', 'aria-label': isInput ? 'Input Fields' : 'Output Fields' });
+    wrap.append(table);
+    return wrap;
+  }
+
+  function ioContractPanel(ref, schema, canEdit) {
+    const body = h('div', { className: 'panel-body toggle-body' });
+    let showJson = false;
+    const control = h('button', {
+      className: 'code-toggle',
+      type: 'button',
+      role: 'switch',
+      'aria-checked': 'false',
+      'aria-label': 'Show JSON',
+      onClick: () => {
+        showJson = !showJson;
+        control.classList.toggle('active', showJson);
+        control.setAttribute('aria-checked', String(showJson));
+        control.setAttribute('aria-label', `${showJson ? 'Hide' : 'Show'} JSON`);
+        body.replaceChildren(showJson ? codeBlock(schema) : contractBody());
+      },
+    }, [
+      icon('code'),
+      h('span', { textContent: 'JSON' }),
+      h('span', { className: 'toggle-track', 'aria-hidden': 'true' }, h('span', { className: 'toggle-thumb' })),
+    ]);
+    const save = async (patch) => {
+      const next = { ...schema, ...patch };
+      await api(`/api/skills/${encoded(ref)}/io-schema`, { method: 'PUT', body: { schema: next } });
+      setNotice('IO Schema saved');
+      await render({ preserveScroll: true });
+    };
+    const contractBody = () => h('div', { className: 'contract-body' }, [
+      section(`Inputs (${schema.inputs.length})`, editableColumnTable('inputs', schema.inputs, canEdit, save)),
+      section(`Outputs (${schema.outputs.length})`, editableColumnTable('outputs', schema.outputs, canEdit, save)),
+    ]);
+    body.replaceChildren(contractBody());
+    return panel('IO Schema', body, control);
   }
 
   function templateDefinitionPanel(template) {
@@ -267,12 +581,13 @@
     return panel(null, body);
   }
 
-  function head(title, description = '') {
+  function head(title, description = '', actions = null) {
     return h('div', { className: 'view-head' }, [
       h('div', {}, [
         h('h1', { textContent: title }),
         description ? h('p', { className: 'muted', textContent: description }) : null,
       ]),
+      actions,
     ]);
   }
 
@@ -416,16 +731,46 @@
     return /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(file);
   }
 
+  function openLoadDialog() {
+    openInputDialog({
+      title: 'Load Skill',
+      label: 'Skill Root',
+      placeholder: '/Users/me/skills/my-skill',
+      confirmText: 'OK',
+      iconName: 'check',
+      onConfirm: async (sourcePath) => {
+        const result = await startOperation('/api/skills/load', { source_path: sourcePath }, 'POST');
+        location.hash = `skills/${encoded(result.ref)}`;
+      },
+    });
+  }
+
+  function openMappingDialog(ref) {
+    openInputDialog({
+      title: 'Mapping',
+      label: 'Feishu Base URL',
+      placeholder: 'https://my.feishu.cn/base/...?table=...&view=...',
+      confirmText: 'Mapping',
+      iconName: 'mapping',
+      onConfirm: async (url) => {
+        const result = await startOperation('/api/mappings', { ref, url }, 'POST');
+        location.hash = `templates/${encoded(result.template.template_id)}`;
+      },
+    });
+  }
+
   async function skillsView() {
     const skills = await api('/api/skills');
     const rows = skills.map((skill) => [
       hashLink(skill.ref, `#skills/${encoded(skill.ref)}`),
-      statusBadge(skill.valid ? 'valid' : 'failed'),
+      statusBadge(skill.status || 'invalid'),
       h('span', { textContent: formatDate(skill.loaded_at) }),
       h('span', { className: 'truncate', textContent: skill.source || '—' }),
     ]);
+    const load = actionButton('Load', 'load', 'button primary');
+    load.addEventListener('click', openLoadDialog);
     return fragment(
-      head('Skills'),
+      head('Skills', '', h('div', { className: 'run-actions' }, load)),
       dataPanel(h('div', { className: 'panel-body flush' }, dataTable(
         ['Ref', 'Status', 'Loaded', 'Source'],
         rows,
@@ -433,36 +778,96 @@
     );
   }
 
+  function skillActions(ref, analysis, hasSchema, activeOperations, setAnalysisLoading, restoreAnalysis) {
+    const analyzeLabel = analysis?.state === 'missing' || !analysis?.state ? 'Analyze' : 'Re-analyze';
+    const analyze = actionButton(activeOperations.analyze ? 'Analyzing' : analyzeLabel, 'analyze', 'button primary');
+    if (activeOperations.analyze) {
+      analyze.disabled = true;
+      analyze.replaceChildren(icon('spinner', 'icon spinner'), h('span', { textContent: 'Analyzing' }));
+    }
+    analyze.addEventListener('click', async () => {
+      analyze.disabled = true;
+      analyze.replaceChildren(icon('spinner', 'icon spinner'), h('span', { textContent: 'Analyzing' }));
+      setAnalysisLoading();
+      try {
+        await startOperation(`/api/skills/${encoded(ref)}/analyze`, {}, 'POST');
+        setNotice('');
+        render();
+      } catch (error) {
+        restoreAnalysis();
+        setNotice(error.message, true);
+        analyze.disabled = false;
+        analyze.replaceChildren(icon('analyze'), h('span', { textContent: analyzeLabel }));
+      }
+    });
+
+    const mapping = actionButton(activeOperations.mapping ? 'Mapping...' : 'Mapping', 'mapping', 'button');
+    mapping.disabled = !hasSchema || Boolean(activeOperations.mapping);
+    mapping.title = hasSchema ? 'Create a Template from this Skill' : 'Analyze the Skill first';
+    if (activeOperations.mapping) mapping.replaceChildren(icon('spinner', 'icon spinner'), h('span', { textContent: 'Mapping...' }));
+    mapping.addEventListener('click', () => openMappingDialog(ref));
+
+    const unload = actionButton('Unload', 'unload', 'button danger');
+    unload.disabled = Boolean(activeOperations.analyze || activeOperations.mapping || activeOperations.unload);
+    unload.addEventListener('click', async () => {
+      if (!window.confirm('Unload this Skill? Local files will be removed. Feishu columns will remain.')) return;
+      unload.disabled = true;
+      try {
+        await startOperation(`/api/skills/${encoded(ref)}`, {}, 'DELETE');
+        location.hash = 'skills';
+      } catch (error) {
+        setNotice(error.message, true);
+        unload.disabled = false;
+      }
+    });
+    return h('div', { className: 'run-actions' }, [analyze, mapping, unload]);
+  }
+
   async function skillView(ref) {
     const skill = await api(`/api/skills/${encoded(ref)}`);
     const analysis = skill.analysis || {};
     const schema = analysis.schema || null;
-    const summary = panel('Skill', h('div', { className: 'panel-body' }, kv([
+    const activeOperations = skill.operations || {};
+    const contractSlot = h('div');
+    const mappingSlot = h('div');
+    const paintAnalysis = () => {
+      contractSlot.replaceChildren(analysis.schema
+        ? ioContractPanel(ref, analysis.schema, !activeOperations.analyze && !activeOperations.mapping && !activeOperations.unload)
+        : panel('IO Schema', h('div', { className: 'panel-body' }, empty('No IO Schema available.'))));
+    };
+    const setAnalysisLoading = () => {
+      contractSlot.replaceChildren(loadingPanel('IO Schema', 'Analyzing Skill IO...'));
+    };
+    const restoreAnalysis = () => paintAnalysis();
+    paintAnalysis();
+    if (activeOperations.analyze) setAnalysisLoading();
+    if (activeOperations.mapping) mappingSlot.replaceChildren(loadingPanel('Mapping', 'Creating Template...'));
+    const summary = panel('Summary', h('div', { className: 'panel-body' }, kv([
       ['Ref', skill.ref],
-      ['Status', statusBadge(skill.valid ? 'valid' : 'failed')],
+      ['Status', statusBadge(skill.status || 'invalid')],
       ['Fingerprint', h('span', { className: 'mono', textContent: skill.hash || '—' })],
       ['Loaded', formatDate(skill.loaded_at)],
       ['Source', skill.source || '—'],
     ])));
-    const contract = schema
-      ? ioContractPanel(schema)
-      : panel('IO Contract', h('div', { className: 'panel-body' }, empty('No IO contract available.')));
-    const report = togglePanel(
-      'Analysis Report',
-      'Markdown',
-      () => markdownBlock(analysis.report),
-      () => textBlock(analysis.report),
-    );
+    if (activeOperations.analyze) {
+      watchOperation(ref, activeOperations.analyze.operation_id).then(() => render()).catch((error) => setNotice(error.message, true));
+    } else if (activeOperations.mapping) {
+      watchOperation(ref, activeOperations.mapping.operation_id)
+        .then((result) => { location.hash = `templates/${encoded(result.template.template_id)}`; })
+        .catch((error) => setNotice(error.message, true));
+    }
+
     return fragment(
       h('div', { className: 'view-head' }, [
-        h('div', {}, [
+        h('div', { className: 'view-title' }, [
           h('h1', { textContent: skill.ref }),
-          h('p', { className: 'back-link' }, hashLink('Back to Skills', '#skills')),
         ]),
+        skillActions(ref, analysis, Boolean(schema), activeOperations, setAnalysisLoading, restoreAnalysis),
       ]),
       summary,
-      contract,
-      report,
+      analysis.state === 'stale' || analysis.state === 'unverified' ? h('div', { className: 'warning-box', textContent: analysis.reason }) : null,
+      contractSlot,
+      mappingSlot,
     );
   }
 
@@ -474,7 +879,6 @@
       return [
         hashLink(template.ref, `#templates/${encoded(id)}`),
         h('span', { className: 'mono truncate', textContent: template.template_id || '—' }),
-        h('span', { textContent: template.target?.table_id || '—' }),
         `${template.inputs} in / ${template.outputs} out`,
         last ? statusBadge(last.status) : h('span', { className: 'muted', textContent: 'Never' }),
         h('span', { textContent: formatDate(template.created_at) }),
@@ -483,7 +887,7 @@
     return fragment(
       head('Templates'),
       dataPanel(h('div', { className: 'panel-body flush' }, dataTable(
-        ['Ref', 'Template ID', 'Table ID', 'IO', 'Last Run', 'Created'],
+        ['Ref', 'Template ID', 'IO', 'Last Run', 'Created'],
         rows,
       ))),
     );
@@ -495,7 +899,7 @@
       allRows,
       h('span', { textContent: 'All Rows' }),
     ]);
-    const button = h('button', { className: 'button primary', type: 'button', textContent: 'Run Template' });
+    const button = actionButton('Run', 'run', 'button primary');
     button.addEventListener('click', async () => {
       button.disabled = true;
       setNotice('');
@@ -524,9 +928,8 @@
     const skill = template.skill || {};
     return fragment(
       h('div', { className: 'view-head' }, [
-        h('div', {}, [
+        h('div', { className: 'view-title' }, [
           h('h1', { textContent: data.ref }),
-          h('p', { className: 'back-link' }, hashLink('Back to Templates', '#templates')),
         ]),
         runControl(template),
       ]),
@@ -579,12 +982,9 @@
     const percent = total ? Math.min(100, Math.round((completed / total) * 100)) : 0;
     const actions = h('div', { className: 'run-actions' });
     if (isRunActive(run.status)) {
-      actions.append(h('button', {
-        className: 'button',
-        type: 'button',
-        textContent: 'Cancel',
-        disabled: run.status === 'canceling',
-        onClick: async (event) => {
+      const cancel = actionButton('Cancel', 'cancel');
+      cancel.disabled = run.status === 'canceling';
+      cancel.addEventListener('click', async (event) => {
           event.currentTarget.disabled = true;
           try {
             await api(`/api/runs/${encoded(runId)}/cancel`, { method: 'POST' });
@@ -592,15 +992,12 @@
             setNotice(error.message, true);
             event.currentTarget.disabled = false;
           }
-        },
-      }));
+      });
+      actions.append(cancel);
     }
     if (!isRunActive(run.status) && (run.failed || 0) > 0) {
-      actions.append(h('button', {
-        className: 'button primary',
-        type: 'button',
-        textContent: 'Retry Failed Rows',
-        onClick: async (event) => {
+      const retry = actionButton('Retry', 'retry', 'button primary');
+      retry.addEventListener('click', async (event) => {
           event.currentTarget.disabled = true;
           try {
             const next = await api(`/api/runs/${encoded(runId)}/retry`, { method: 'POST' });
@@ -609,8 +1006,8 @@
             setNotice(error.message, true);
             event.currentTarget.disabled = false;
           }
-        },
-      }));
+      });
+      actions.append(retry);
     }
 
     const logPanel = h('div', { className: 'live-logs' });
@@ -626,9 +1023,8 @@
 
     return fragment(
       h('div', { className: 'view-head' }, [
-        h('div', {}, [
+        h('div', { className: 'view-title' }, [
           h('h1', { textContent: run.run_id || runId }),
-          h('p', { className: 'back-link' }, hashLink('Back to Runs', '#runs')),
         ]),
         actions,
       ]),
@@ -643,7 +1039,7 @@
         ['Succeeded / Failed', `${run.succeeded ?? '—'} / ${run.failed ?? '—'}`],
         ['Work Hash', h('span', { className: 'mono', textContent: run.work_hash || '—' })],
       ]))),
-      panel('Run Item', h('div', { className: 'panel-body flush' }, dataTable(
+      panel('Run Items', h('div', { className: 'panel-body flush' }, dataTable(
         ['Record ID', 'Status', 'Stage', 'Duration', 'Error'],
         rows,
       ))),
@@ -693,16 +1089,15 @@
           h('div', { className: 'muted', textContent: formatBytes(artifact.size) }),
           preview,
         ]),
-        h('a', { className: 'button primary', href: url, download: true, textContent: 'Download' }),
+        h('a', { className: 'button primary', href: url, download: true }, [icon('download'), h('span', { textContent: 'Download' })]),
       ]));
     }
     if (!(item.artifacts || []).length) artifacts.append(empty('No artifacts.'));
 
     return fragment(
       h('div', { className: 'view-head' }, [
-        h('div', {}, [
+        h('div', { className: 'view-title' }, [
           h('h1', { textContent: item.record_id || recordId }),
-          h('p', { className: 'back-link' }, hashLink('Back to Run', `#runs/${encoded(runId)}`)),
         ]),
       ]),
       panel('Status', h('div', { className: 'panel-body' }, kv([
@@ -733,7 +1128,7 @@
       h('strong', { textContent: 'Failed to load' }),
       h('p', { textContent: error.message }),
       h('div', { className: 'error-actions' }, [
-        h('button', { className: 'button primary', type: 'button', textContent: 'Retry', onClick: render }),
+        (() => { const button = actionButton('Retry', 'retry', 'button primary'); button.addEventListener('click', render); return button; })(),
       ]),
     ]);
   }
@@ -747,9 +1142,10 @@
     }
   }
 
-  async function render() {
+  async function render({ preserveScroll = false } = {}) {
     stopRunStream();
     const sequence = ++renderSequence;
+    const previousScroll = preserveScroll ? { x: window.scrollX, y: window.scrollY } : null;
     const rawHash = (location.hash || '#skills').slice(1);
     let parts;
     try {
@@ -761,7 +1157,7 @@
     setActive(route);
     setNotice('');
     app.setAttribute('aria-busy', 'true');
-    app.replaceChildren(loadingView());
+    if (!preserveScroll) app.replaceChildren(loadingView());
 
     try {
       let content;
@@ -781,6 +1177,10 @@
       app.removeAttribute('aria-busy');
       setNotice(error.message, true);
       app.replaceChildren(errorView(error));
+    } finally {
+      if (previousScroll && sequence === renderSequence) {
+        window.scrollTo({ left: previousScroll.x, top: previousScroll.y, behavior: 'instant' });
+      }
     }
   }
 

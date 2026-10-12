@@ -13,7 +13,10 @@ const { HttpError, ReadModel } = require('./read-model');
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'canceling']);
 const DEFAULT_WORKER = path.join(__dirname, 'run-worker.js');
+const DEFAULT_TASK_WORKER = path.join(__dirname, 'task-worker.js');
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '..', '..');
+const TASK_KINDS = new Set(['load-skill', 'analyze-skill', 'map-table', 'unload-skill']);
+const TERMINAL_OPERATION_STATUSES = new Set(['completed', 'failed', 'canceled', 'interrupted']);
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -23,6 +26,16 @@ function assertRunId(runId) {
   if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId === '.' || runId === '..') {
     throw new HttpError(400, 'INVALID_RUN_ID', 'Run ID is invalid', 'Check the Run link');
   }
+}
+
+function assertOperationId(operationId) {
+  if (!/^[A-Za-z0-9._-]+$/.test(operationId) || operationId === '.' || operationId === '..') {
+    throw new HttpError(400, 'INVALID_OPERATION_ID', 'Operation ID is invalid', 'Check the operation link');
+  }
+}
+
+function generateOperationId(date = new Date()) {
+  return `op-${generateRunId(date)}`;
 }
 
 function summaryOfRun(run) {
@@ -69,16 +82,19 @@ function normalizePreviewError(rawMessage) {
   return new HttpError(502, 'PREVIEW_FAILED', raw.slice(0, 2000), 'Check the server logs and retry');
 }
 
-class JobRunner {
+class TaskRunner {
   constructor(options = {}) {
     this.root = path.resolve(options.root);
     this.repoRoot = path.resolve(options.repoRoot || DEFAULT_REPO_ROOT);
     this.workerPath = options.workerPath || DEFAULT_WORKER;
+    this.taskWorkerPath = options.taskWorkerPath || DEFAULT_TASK_WORKER;
     this.spawn = options.spawn || spawn;
     this.model = new ReadModel(this.root);
     this.jobs = new Map();
+    this.operations = new Map();
     this.locks = new Map();
     this.recoverInterrupted();
+    this.recoverInterruptedOperations();
   }
 
   recoverInterrupted() {
@@ -94,6 +110,271 @@ class JobRunner {
       run.error = 'Server restarted while the run was active';
       atomicWriteJson(file, run);
     }
+  }
+
+  recoverInterruptedOperations() {
+    if (!fs.existsSync(this.model.operationsDir)) return;
+    for (const entry of fs.readdirSync(this.model.operationsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const file = path.join(this.model.operationsDir, entry.name, 'operation.json');
+      if (!fs.existsSync(file)) continue;
+      const job = readJson(file);
+      if (TERMINAL_OPERATION_STATUSES.has(job.status)) continue;
+      job.status = 'interrupted';
+      job.finished_at = new Date().toISOString();
+      job.error = { code: 'OPERATION_INTERRUPTED', message: 'Server restarted while the operation was active', action: 'Start the operation again' };
+      atomicWriteJson(file, job);
+    }
+  }
+
+  acquireLocks(owner, keys, code = 'RESOURCE_LOCKED', message = 'Resource is already in use') {
+    const unique = [...new Set((keys || []).filter(Boolean))];
+    for (const key of unique) {
+      const existing = this.locks.get(key);
+      if (existing && existing !== owner) {
+        throw new HttpError(409, code, `${message}: ${key}`, 'Wait for the active job to finish or cancel it');
+      }
+    }
+    for (const key of unique) this.locks.set(key, owner);
+    return unique;
+  }
+
+  releaseLocks(owner) {
+    for (const [key, value] of this.locks) {
+      if (value === owner) this.locks.delete(key);
+    }
+  }
+
+  listOperations() {
+    const byId = new Map();
+    if (fs.existsSync(this.model.operationsDir)) {
+      for (const entry of fs.readdirSync(this.model.operationsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        const file = path.join(this.model.operationsDir, entry.name, 'operation.json');
+        if (fs.existsSync(file)) {
+          const job = readJson(file);
+          byId.set(job.operation_id, job);
+        }
+      }
+    }
+    for (const item of this.operations.values()) byId.set(item.job.operation_id, item.job);
+    return [...byId.values()].sort((a, b) => String(b.created_at || b.operation_id).localeCompare(String(a.created_at || a.operation_id)));
+  }
+
+  skillOperations(ref) {
+    const active = this.listOperations().filter((job) => job.input?.ref === ref && ACTIVE_STATUSES.has(job.status));
+    return {
+      analyze: active.find((job) => job.kind === 'analyze-skill') || null,
+      mapping: active.find((job) => job.kind === 'map-table') || null,
+      unload: active.find((job) => job.kind === 'unload-skill') || null,
+    };
+  }
+
+  skillOperation(ref, kind) {
+    const aliases = {
+      load: new Set(['load-skill']),
+      analyze: new Set(['analyze-skill']),
+      mapping: new Set(['map-table']),
+      'map-table': new Set(['map-table']),
+      unload: new Set(['unload-skill']),
+    };
+    const kinds = aliases[kind];
+    if (!kinds) return null;
+    return this.listOperations()
+      .filter((job) => job.input?.ref === ref && kinds.has(job.kind))
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0] || null;
+  }
+
+  getOperation(operationId) {
+    assertOperationId(operationId);
+    const running = this.operations.get(operationId);
+    if (running) return running.job;
+    const file = path.join(this.model.operationsDir, operationId, 'operation.json');
+    if (!fs.existsSync(file)) {
+      throw new HttpError(404, 'OPERATION_NOT_FOUND', `Operation not found: ${operationId}`, 'Refresh the Skill details');
+    }
+    return readJson(file);
+  }
+
+  subscribeOperation(operationId, listener) {
+    const job = this.operations.get(operationId);
+    if (!job) {
+      this.getOperation(operationId);
+      return () => {};
+    }
+    job.listeners.add(listener);
+    return () => job.listeners.delete(listener);
+  }
+
+  emitOperation(job, event) {
+    for (const listener of job.listeners) {
+      try {
+        listener(event);
+      } catch {
+        job.listeners.delete(listener);
+      }
+    }
+  }
+
+  persistOperation(job) {
+    atomicWriteJson(path.join(this.model.operationsDir, job.job.operation_id, 'operation.json'), job.job);
+  }
+
+  updateOperation(job, patch = {}) {
+    Object.assign(job.job, patch);
+    this.persistOperation(job);
+    this.emitOperation(job, { type: 'snapshot', operation: job.job });
+  }
+
+  attachTask(job, child) {
+    job.child = child;
+    let stderr = '';
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+      if (stderr.length > 16000) stderr = stderr.slice(-16000);
+    });
+    child.on('message', (message) => {
+      if (!message || typeof message.type !== 'string') return;
+      if (message.type === 'operation-started') {
+        this.updateOperation(job, { status: 'running', started_at: job.job.started_at || new Date().toISOString() });
+        return;
+      }
+      if (message.type === 'operation-progress') {
+        this.updateOperation(job, { progress: message.progress || null });
+        this.emitOperation(job, { type: 'progress', progress: message.progress || null, operation: job.job });
+        return;
+      }
+      if (message.type === 'operation-result') {
+        this.finishTask(job, message.result);
+        return;
+      }
+      if (message.type === 'error') this.failTask(job, message.error || {});
+    });
+    child.on('error', (err) => this.failTask(job, { code: 'OPERATION_WORKER_ERROR', message: err.message, action: 'Retry the operation' }));
+    child.on('close', (code, signal) => {
+      if (job.done) return;
+      if (job.cancelRequested) {
+        this.cancelTaskNow(job);
+        return;
+      }
+      const detail = stderr.trim().split('\n').filter(Boolean).pop();
+      this.failTask(job, {
+        code: 'OPERATION_WORKER_EXIT',
+        message: detail || `Task worker exited with code ${code}${signal ? ` (${signal})` : ''}`,
+        action: 'Check the server logs and retry',
+      });
+    });
+    child.stdin.end(JSON.stringify({ kind: job.job.kind, input: job.input }));
+  }
+
+  startTask(kind, input = {}, options = {}) {
+    if (!TASK_KINDS.has(kind)) {
+      throw new HttpError(400, 'INVALID_OPERATION_KIND', `Unsupported operation kind: ${kind}`, 'Choose a supported operation');
+    }
+    const jobId = generateOperationId();
+    const now = new Date().toISOString();
+    const record = {
+      operation_id: jobId,
+      kind,
+      status: 'queued',
+      created_at: now,
+      started_at: null,
+      finished_at: null,
+      progress: null,
+      input,
+      result: null,
+      error: null,
+      lock_keys: options.lockKeys || [],
+    };
+    this.acquireLocks(jobId, record.lock_keys);
+    const job = {
+      job: record,
+      input,
+      child: null,
+      listeners: new Set(),
+      cancelRequested: false,
+      done: false,
+      donePromise: null,
+    };
+    job.donePromise = new Promise((resolve) => { job.resolveDone = resolve; });
+    this.operations.set(jobId, job);
+    this.persistOperation(job);
+    try {
+      const child = this.spawn(process.execPath, [this.taskWorkerPath], {
+        cwd: this.repoRoot,
+        detached: process.platform !== 'win32',
+        env: {
+          ...process.env,
+          SKILLAPP_ROOT: this.repoRoot,
+          SKILLAPP_DATA_DIR: this.root,
+        },
+        stdio: ['pipe', 'ignore', 'pipe', 'ipc'],
+      });
+      this.attachTask(job, child);
+    } catch (err) {
+      this.failTask(job, { code: 'OPERATION_START_FAILED', message: err.message, action: 'Check the server logs and retry' });
+    }
+    return job.job;
+  }
+
+  finishTask(job, result) {
+    if (job.done) return;
+    job.done = true;
+    this.releaseLocks(job.job.operation_id);
+    Object.assign(job.job, { status: 'completed', result, finished_at: new Date().toISOString(), error: null });
+    this.persistOperation(job);
+    this.emitOperation(job, { type: 'snapshot', operation: job.job });
+    this.emitOperation(job, { type: 'done', operation: job.job });
+    job.resolveDone(job.job);
+  }
+
+  failTask(job, error = {}) {
+    if (job.done) return;
+    job.done = true;
+    this.releaseLocks(job.job.operation_id);
+    Object.assign(job.job, {
+      status: 'failed',
+      finished_at: new Date().toISOString(),
+      error: {
+        code: error.code || 'OPERATION_FAILED',
+        message: error.message || 'Operation failed',
+        action: error.action || 'Check the server logs and retry',
+      },
+    });
+    this.persistOperation(job);
+    this.emitOperation(job, { type: 'snapshot', operation: job.job });
+    this.emitOperation(job, { type: 'error', error: job.job.error, operation: job.job });
+    this.emitOperation(job, { type: 'done', operation: job.job });
+    job.resolveDone(job.job);
+  }
+
+  cancelTaskNow(job) {
+    if (job.done) return;
+    job.done = true;
+    this.releaseLocks(job.job.operation_id);
+    Object.assign(job.job, { status: 'canceled', finished_at: new Date().toISOString() });
+    this.persistOperation(job);
+    this.emitOperation(job, { type: 'snapshot', operation: job.job });
+    this.emitOperation(job, { type: 'done', operation: job.job });
+    job.resolveDone(job.job);
+  }
+
+  async cancelOperation(operationId) {
+    const job = this.operations.get(operationId);
+    if (!job) {
+      const stored = this.getOperation(operationId);
+      if (TERMINAL_OPERATION_STATUSES.has(stored.status)) return stored;
+      throw new HttpError(409, 'OPERATION_NOT_ACTIVE', 'Operation is not active on this server', 'Refresh the operation details');
+    }
+    if (job.done || TERMINAL_OPERATION_STATUSES.has(job.job.status)) return job.job;
+    job.cancelRequested = true;
+    this.updateOperation(job, { status: 'canceling' });
+    this.killTree(job, 'SIGTERM');
+    await Promise.race([job.donePromise, new Promise((resolve) => setTimeout(resolve, 3000))]);
+    if (!job.done) this.killTree(job, 'SIGKILL');
+    await Promise.race([job.donePromise, new Promise((resolve) => setTimeout(resolve, 1000))]);
+    if (!job.done) this.cancelTaskNow(job);
+    return job.job;
   }
 
   listRuns() {
@@ -205,7 +486,8 @@ class JobRunner {
     }
     const selected = this.model.getTemplate(templateId);
     const canonicalId = selected.template.template_id || templateId;
-    const existing = this.locks.get(canonicalId);
+    const lockKey = `template:${canonicalId}`;
+    const existing = this.locks.get(lockKey);
     if (existing) {
       throw new HttpError(409, 'TEMPLATE_LOCKED', `Template is already running: ${existing}`, 'Wait for the active run to finish or cancel it');
     }
@@ -240,6 +522,7 @@ class JobRunner {
       cancelRequested: false,
       done: false,
       donePromise: null,
+      lockKey,
       input: {
         type: 'run',
         template_path: templatePath,
@@ -250,7 +533,7 @@ class JobRunner {
     };
     job.donePromise = new Promise((resolve) => { job.resolveDone = resolve; });
     this.jobs.set(runId, job);
-    this.locks.set(canonicalId, runId);
+    this.locks.set(lockKey, runId);
 
     try {
       const child = this.spawn(process.execPath, [this.workerPath], {
@@ -285,7 +568,7 @@ class JobRunner {
   finish(job) {
     if (job.done) return;
     job.done = true;
-    if (this.locks.get(job.run.template_id) === job.run.run_id) this.locks.delete(job.run.template_id);
+    this.releaseLocks(job.run.run_id);
     this.emit(job, { type: 'done', run: job.run });
     job.resolveDone(job.run);
   }
@@ -294,7 +577,7 @@ class JobRunner {
     if (job.done) return;
     this.persistTerminal(job, 'failed', message);
     job.done = true;
-    if (this.locks.get(job.run.template_id) === job.run.run_id) this.locks.delete(job.run.template_id);
+    this.releaseLocks(job.run.run_id);
     this.emit(job, { type: 'snapshot', run: job.run });
     this.emit(job, { type: 'error', error: { message } });
     this.emit(job, { type: 'done', run: job.run });
@@ -305,7 +588,7 @@ class JobRunner {
     if (job.done) return;
     this.persistTerminal(job, 'canceled');
     job.done = true;
-    if (this.locks.get(job.run.template_id) === job.run.run_id) this.locks.delete(job.run.template_id);
+    this.releaseLocks(job.run.run_id);
     this.emit(job, { type: 'snapshot', run: job.run });
     this.emit(job, { type: 'done', run: job.run });
     job.resolveDone(job.run);
@@ -372,10 +655,26 @@ class JobRunner {
       this.killTree(job, 'SIGTERM');
       this.persistTerminal(job, 'interrupted', 'Server stopped while the run was active');
       job.done = true;
-      if (this.locks.get(job.run.template_id) === job.run.run_id) this.locks.delete(job.run.template_id);
+      this.releaseLocks(job.run.run_id);
       this.emit(job, { type: 'snapshot', run: job.run });
       this.emit(job, { type: 'done', run: job.run });
       job.resolveDone(job.run);
+    }
+    for (const job of this.operations.values()) {
+      if (job.done) continue;
+      job.cancelRequested = true;
+      this.killTree(job, 'SIGTERM');
+      job.done = true;
+      this.releaseLocks(job.job.operation_id);
+      Object.assign(job.job, {
+        status: 'interrupted',
+        finished_at: new Date().toISOString(),
+        error: { code: 'OPERATION_INTERRUPTED', message: 'Server stopped while the job was active', action: 'Start the operation again' },
+      });
+      this.persistOperation(job);
+      this.emitOperation(job, { type: 'snapshot', operation: job.job });
+      this.emitOperation(job, { type: 'done', operation: job.job });
+      job.resolveDone(job.job);
     }
   }
 
@@ -435,7 +734,7 @@ class JobRunner {
 }
 
 module.exports = {
-  JobRunner,
+  TaskRunner,
   ACTIVE_STATUSES,
   normalizePreviewError,
   summaryOfRun,

@@ -6,13 +6,13 @@
 
 | # | 步骤 | 用户给什么 | 得到什么 |
 |---|---|---|---|
-| 1 | **装载** | Skill 路径 | 复制进 SkillApp + 一份**分析报告**（供评审）|
+| 1 | **装载** | Skill 路径 | 复制进 SkillApp + 一份 **IO Schema** |
 | 2 | **映射** | 表格链接 | 表格列 + Template |
 | 3 | **执行** | —— | 回写的结果 |
 
 前两步合称「**初始化**」——把一个 Skill 变成可运行的 Template。
 
-**闸门在装载与映射之间**：装载只产出报告、不碰表格；映射会改表格结构，所以报告交付后停下让用户评审。待确认项都带默认建议；用户未回复时，后续进入映射按建议执行。
+**闸门在装载与映射之间**：装载只复制并生成 IO Schema，不碰表格；映射会改表格结构，按 Schema 中的默认建议执行。
 
 ## 使用
 
@@ -20,17 +20,16 @@
 
 | 你说 | Agent 会做 |
 |---|---|
-| 「装载：/path/to/skill」 | 复制进 SkillApp，并分析它，交一份**报告**给你评审 |
-| 「映射到这张表：<链接>」 | 建列、设列顺序、出 Template（报告已给建议；未回复则按建议执行）|
+| 「装载：/path/to/skill」 | 复制进 SkillApp，并分析它的 IO |
+| 「映射到这张表：<链接>」 | 建列、设列顺序、出 Template |
 | 「执行 / 跑一批」 | 跑 `run-template.js --pending` |
 
 也可以直接敲命令：
 
 ```bash
 # 1. 装载 = 复制 + 分析
-node src/cli/load-skill.js /path/to/skill --ref <ref>    # 复制（脚本）
-# 分析由 Agent 用 analyze-skill-io 做 → .data/tmp/<ref>.io-schema.json + .data/tmp/<ref>.io-report.md
-#   ↓ 评审：有异议先改；未回复按报告建议默认
+node src/cli/load-skill.js /path/to/skill             # 目录名就是 ref
+# 分析由 Agent 用 analyze-skill-io 做 → .data/tmp/<ref>.io-schema.json
 
 # 2. 映射：对齐列、设列顺序、写 Template，并自动自检
 node src/cli/map-table.js --ref <ref> --url '<表格链接>'  # 契约默认读 .data/tmp/<ref>.io-schema.json
@@ -72,15 +71,20 @@ skillapp/
 │   ├── core/                  内部模块
 │   │   ├── paths.js           所有内容目录的唯一路径来源
 │   │   ├── lark.js            lark-cli 封装
+│   │   ├── load-skill.js      根目录校验、完整复制、原子替换
+│   │   ├── io-schema.js       IO Schema 校验、版本与原子保存
+│   │   ├── map-table.js       Mapping 计划、plan hash、建列与 Template
+│   │   ├── unload-skill.js    卸载影响清单、plan hash 与删除
 │   │   ├── run-template.js    Run 核心服务：预检、执行、回写、进度
 │   │   └── skill-hash.js      Skill 内容指纹
-│   ├── server/                Web 控制台：HTTP API、SSE、Job Runner
+│   ├── server/                Web 控制台：HTTP API、SSE、任务执行器
 │   └── web/                   Web 控制台静态页面
 ├── .data/                      内容层 —— 除 README 外不进 Git
 │   ├── skills/<ref>/          装载进来的 Skill
 │   ├── templates/<ref>.json   Template（内含 Mapping）
+│   ├── operations/             Load、Analyze、Mapping、Unload 操作状态
 │   ├── runs/<run_id>/         Run、RunItem、日志与产物
-│   └── tmp/<ref>.io-*         分析报告与中间产物
+│   └── tmp/<ref>.io-schema.json  IO Schema
 ├── test/                      引擎回归测试（Node 自带 test runner，零依赖）
 ├── .agents/skills/            项目级 Skill：SkillApp 自己的操作手册
 │   ├── skillapp/              操作入口：装载 / 映射 / 执行
@@ -169,11 +173,25 @@ skillapp/
 
 ## Web UI
 
-执行控制台已经实现：浏览器可以启动增量 Run、实时查看每行阶段与 stdout/stderr、取消运行、重试失败行，也可以继续查看 Skill、Template、RunItem、日志和产物。
+初始化与执行控制台已经实现：浏览器可以输入 Skill 根目录完成装载（默认完整导入）并进入详情页，点击 Analyze 生成 IO Schema，输入 Feishu Base URL 后点击 Mapping 生成 Template；也可以启动增量/全量 Run、实时查看每行阶段与 stdout/stderr、取消运行、重试失败行，并查看 RunItem、日志和产物。
 
 ```bash
+# 首次运行可复制一份环境配置
+cp .env.example .env
+
 node src/server/index.js --port 4173 --token '<token>'
 # 打开 http://127.0.0.1:4173
 ```
 
-本机访问时 token 可省略；监听非本机地址时必须设置 token，或显式使用 `--insecure`。完整方案和后续 milestone 见 [`docs/web-ui.md`](docs/web-ui.md)。
+本机访问时 token 可省略；监听非本机地址时必须设置 token，或显式使用 `--insecure`。
+
+服务启动时会自动读取应用根目录的 `.env`。Web 分析默认调用本机已登录的 `codex exec`；常见配置包括：
+
+```bash
+SKILLAPP_ANALYZE_COMMAND=codex
+SKILLAPP_ANALYZE_MODEL=<optional-model>
+SKILLAPP_ANALYZE_REASONING_EFFORT=low
+SKILLAPP_ANALYZE_TIMEOUT_MS=900000
+```
+
+完整方案和后续 milestone 见 [`docs/web-ui.md`](docs/web-ui.md)。

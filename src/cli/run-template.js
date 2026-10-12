@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+'use strict';
+
+const { loadEnv } = require('../core/load-env');
+loadEnv();
 /**
  * run-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
  *

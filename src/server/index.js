@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
+const { loadEnv } = require('../core/load-env');
+loadEnv();
+
 const { createServer } = require('./app');
 const { DATA_DIR } = require('../core/paths');
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
@@ -59,13 +62,13 @@ function main() {
   server.listen(args.port, args.host, () => {
     const address = server.address();
     const port = typeof address === 'object' && address ? address.port : args.port;
-    console.log(`SkillApp Web 已启动（执行控制台）`);
+    console.log(`SkillApp Web 已启动（初始化与执行控制台）`);
     console.log(`  地址: http://${args.host}:${port}`);
     console.log(`  鉴权: ${args.token ? '已开启' : '未开启'}`);
   });
 
   const close = () => {
-    server.jobRunner?.shutdown();
+    server.taskRunner?.shutdown();
     server.closeAllConnections?.();
     server.close(() => process.exit(0));
   };

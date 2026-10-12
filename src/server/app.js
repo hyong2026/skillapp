@@ -5,9 +5,11 @@ const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
 const { ReadModel, HttpError, isWithin } = require('./read-model');
-const { JobRunner } = require('./job-runner');
+const { TaskRunner } = require('./task-runner');
 const { DATA_DIR, WEB_DIR } = require('../core/paths');
+const { assertRef, saveSchema } = require('../core/io-schema');
 const MAX_BODY_BYTES = 1024 * 1024;
+const OPERATION_TERMINAL = new Set(['completed', 'failed', 'canceled', 'interrupted']);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -70,14 +72,14 @@ function sendJson(req, res, status, payload) {
   else res.end(body);
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let body = '';
     let size = 0;
     req.setEncoding('utf8');
     req.on('data', (chunk) => {
       size += Buffer.byteLength(chunk);
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         reject(new HttpError(413, 'BODY_TOO_LARGE', 'Request body is too large', 'Send a smaller JSON body'));
         req.destroy();
         return;
@@ -158,6 +160,81 @@ function serveEvents(req, res, runner, runId) {
   heartbeat.unref?.();
   req.on('close', close);
   req.on('end', close);
+}
+
+function serveOperationEvents(req, res, runner, operationId) {
+  const initialOperation = runner.getOperation(operationId);
+  res.writeHead(200, {
+    ...securityHeaders(),
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  res.flushHeaders?.();
+  let unsubscribe = () => {};
+  let heartbeat = null;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    if (heartbeat) clearInterval(heartbeat);
+    unsubscribe();
+  };
+  unsubscribe = runner.subscribeOperation(operationId, (event) => {
+    sendSseEvent(res, event);
+    if (event.type === 'done' || (event.operation && OPERATION_TERMINAL.has(event.operation.status))) {
+      res.end();
+      close();
+    }
+  });
+  sendSseEvent(res, { type: 'snapshot', operation: initialOperation });
+  if (OPERATION_TERMINAL.has(initialOperation.status)) {
+    res.end();
+    close();
+  }
+  if (closed) return;
+  heartbeat = setInterval(() => res.write(': ping\n\n'), 15000);
+  heartbeat.unref?.();
+  req.on('close', close);
+  req.on('end', close);
+}
+
+function serveSkillEvents(req, res, runner, ref, operationId = null) {
+  let operation = operationId ? runner.getOperation(operationId) : null;
+  if (!operation) {
+    const active = runner.skillOperations(ref);
+    operation = active.analyze || active.mapping || active.unload || null;
+  }
+  if (!operation) {
+    res.writeHead(200, {
+      ...securityHeaders(),
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+    });
+    sendSseEvent(res, { type: 'snapshot', operation: null });
+    res.end();
+    return;
+  }
+  return serveOperationEvents(req, res, runner, operation.operation_id);
+}
+
+function skillStatus(skill, analysis, operations) {
+  if (operations?.analyze) return 'analyzing';
+  if (!skill.valid) return 'invalid';
+  if (!analysis || analysis.state === 'missing') return 'unanalyzed';
+  if (analysis.state === 'current') return 'ready';
+  if (analysis.state === 'stale') return 'stale';
+  return 'unverified';
+}
+
+function operationData(operation) {
+  return operation || null;
+}
+
+function skillOperations(runner, ref) {
+  const operations = runner.skillOperations(ref);
+  return Object.fromEntries(Object.entries(operations).map(([kind, operation]) => [kind, operationData(operation)]));
 }
 
 function sendApi(req, res, data) {
@@ -255,15 +332,111 @@ async function routeApi(req, res, model, runner, segments) {
   }
 
   if (segments[1] === 'skills') {
-    if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
-    if (segments.length === 2) return sendApi(req, res, model.listSkills());
-    if (segments.length === 3) return sendApi(req, res, model.getSkill(segments[2]));
+    if (req.method === 'POST' && segments.length === 3 && segments[2] === 'load') {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
+      const sourcePath = String(body.source_path || '').trim();
+      if (!sourcePath) {
+        throw new HttpError(400, 'SOURCE_REQUIRED', 'Skill root directory is required', 'Enter the absolute path to a Skill root');
+      }
+      const ref = assertRef(path.basename(path.resolve(sourcePath)));
+      return sendJson(req, res, 202, {
+        ok: true,
+        data: operationData(runner.startTask('load-skill', { ref, source_path: sourcePath }, { lockKeys: [`skill:${ref}`] })),
+        error: null,
+      });
+    }
+
+    if (req.method === 'POST' && segments.length === 4 && segments[3] === 'analyze') {
+      assertSameOrigin(req);
+      const ref = assertRef(segments[2]);
+      return sendJson(req, res, 202, {
+        ok: true,
+        data: operationData(runner.startTask('analyze-skill', { ref }, { lockKeys: [`skill:${ref}`] })),
+        error: null,
+      });
+    }
+
+    const allowedWrite = (segments.length === 4 && segments[3] === 'io-schema' && req.method === 'PUT')
+      || (segments.length === 4 && segments[3] === 'analyze' && req.method === 'POST')
+      || (segments.length === 3 && req.method === 'DELETE');
+    if (!readOnly && !allowedWrite) {
+      throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed', 'Check the request method');
+    }
+    if (segments.length === 2 && readOnly) {
+      const skills = model.listSkills().map((skill) => {
+        const operations = runner.skillOperations(skill.ref);
+        return { ...skill, status: skillStatus(skill, model.getSkill(skill.ref).analysis, operations) };
+      });
+      return sendApi(req, res, skills);
+    }
+    if (segments.length === 3 && readOnly) {
+      const ref = assertRef(segments[2]);
+      const detail = model.getSkill(ref);
+      const operations = skillOperations(runner, ref);
+      return sendApi(req, res, { ...detail, status: skillStatus(detail, detail.analysis, operations), operations });
+    }
+    if (segments.length === 5 && segments[3] === 'operations' && readOnly) {
+      const ref = assertRef(segments[2]);
+      const operation = runner.skillOperation(ref, segments[4]);
+      if (!operation) throw new HttpError(404, 'OPERATION_NOT_FOUND', `Operation not found: ${segments[4]}`, 'Refresh the Skill details');
+      return sendApi(req, res, operationData(operation));
+    }
+
+    if (segments.length === 4 && segments[3] === 'events' && readOnly) {
+      const ref = assertRef(segments[2]);
+      const operationId = new URL(req.url, 'http://localhost').searchParams.get('operation_id');
+      return serveSkillEvents(req, res, runner, ref, operationId);
+    }
+    if (segments.length === 4 && segments[3] === 'analysis' && readOnly) {
+      return sendApi(req, res, model.getSkill(segments[2]).analysis);
+    }
+    if (segments.length === 4 && segments[3] === 'io-schema' && req.method === 'PUT') {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
+      const ref = assertRef(segments[2]);
+      const skill = model.getSkill(ref);
+      const schema = saveSchema(ref, body.schema || body, skill.hash, model.root);
+      return sendApi(req, res, { schema, state: 'current' });
+    }
+    if (segments.length === 3 && req.method === 'DELETE') {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
+      const ref = assertRef(segments[2]);
+      return sendJson(req, res, 202, {
+        ok: true,
+        data: operationData(runner.startTask('unload-skill', {
+          ref,
+          with_runs: body.with_runs !== false,
+        }, { lockKeys: [`skill:${ref}`] })),
+        error: null,
+      });
+    }
+    throw new HttpError(404, 'NOT_FOUND', 'Skill endpoint not found', 'Check the request path');
   }
 
   if (segments[1] === 'templates') {
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
     if (segments.length === 2) return sendApi(req, res, model.listTemplates());
     if (segments.length === 3) return sendApi(req, res, model.getTemplate(segments[2]));
+  }
+
+  if (segments[1] === 'mappings') {
+    if (req.method === 'POST' && segments.length === 2) {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
+      const ref = assertRef(body.ref);
+      const base = body.base || body.base_token;
+      const table = body.table || body.table_id;
+      const lockKeys = [`skill:${ref}`];
+      if (base && table) lockKeys.push(`table:${base}:${table}`);
+      return sendJson(req, res, 202, {
+        ok: true,
+        data: operationData(runner.startTask('map-table', body, { lockKeys })),
+        error: null,
+      });
+    }
+    throw new HttpError(404, 'NOT_FOUND', 'Mapping endpoint not found', 'Check the request path');
   }
 
   if (segments[1] === 'runs') {
@@ -307,7 +480,7 @@ function createRequestHandler(options = {}) {
   const root = path.resolve(options.root || DATA_DIR);
   const token = options.token ? String(options.token) : null;
   const model = new ReadModel(root);
-  const runner = options.jobRunner || new JobRunner({ root, repoRoot: options.repoRoot });
+  const runner = options.taskRunner || new TaskRunner({ root, repoRoot: options.repoRoot });
 
   const handler = async (req, res) => {
     try {
@@ -346,14 +519,14 @@ function createRequestHandler(options = {}) {
       sendError(req, res, err);
     }
   };
-  handler.jobRunner = runner;
+  handler.taskRunner = runner;
   return handler;
 }
 
 function createServer(options = {}) {
   const handler = createRequestHandler(options);
   const server = http.createServer(handler);
-  server.jobRunner = handler.jobRunner;
+  server.taskRunner = handler.taskRunner;
   return server;
 }
 

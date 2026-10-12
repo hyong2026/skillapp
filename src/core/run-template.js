@@ -257,7 +257,7 @@ function upToDate(history, recordId, inputHash, workHash) {
  */
 function preflight(tpl) {
   const ref = path.basename(tpl.skill.path);
-  const reload = `node src/cli/load-skill.js <source-dir> --ref ${ref}`;
+  const reload = `node src/cli/load-skill.js <source-dir>`;
   const skillDir = path.join(DATA_DIR, tpl.skill.path);
 
   if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) {

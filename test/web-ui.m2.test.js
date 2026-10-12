@@ -162,7 +162,7 @@ before(async () => {
 });
 
 after(async () => {
-  server.jobRunner.shutdown();
+  server.taskRunner.shutdown();
   server.closeAllConnections?.();
   await new Promise((resolve) => server.close(resolve));
   delete process.env.SKILLAPP_LARK_MODULE;

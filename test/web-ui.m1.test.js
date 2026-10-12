@@ -30,7 +30,6 @@ function buildFixture() {
     hash: 'sha256:foo',
     loaded_at: '2026-01-01T00:00:00.000Z',
   }, null, 2));
-  write('tmp/foo.io-report.md', '# report\n\n建议采用默认值。\n');
   write('tmp/foo.io-schema.json', JSON.stringify({
     skill: { entry: 'main.js' },
     cmd: 'node {skill.entry}',
@@ -138,7 +137,6 @@ test('Skill 列表与详情返回指纹和分析产物', async () => {
   assert.equal(list.body.data[0].hash, 'sha256:foo');
 
   const detail = await getJson('/api/skills/foo');
-  assert.equal(detail.body.data.analysis.report, '# report\n\n建议采用默认值。\n');
   assert.equal(detail.body.data.analysis.schema.inputs[0].key, 'text');
 });
 
@@ -186,7 +184,9 @@ test('静态控制台可访问', async () => {
 
   const script = await fetch(`${baseUrl}/app.js`, { headers: { authorization: AUTH } });
   assert.equal(script.status, 200);
-  assert.match(await script.text(), /skillsView/);
+  const appScript = await script.text();
+  assert.match(appScript, /skillsView/);
+  assert.match(appScript, /function codeBlock/);
 
   const renderer = await fetch(`${baseUrl}/markdown.js`, { headers: { authorization: AUTH } });
   assert.equal(renderer.status, 200);

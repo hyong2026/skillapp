@@ -7,7 +7,8 @@
 ├── skills/       已装载的 Skill 副本
 ├── templates/    Template 与 Mapping
 ├── runs/         Run、RunItem、日志和产物
-└── tmp/          分析报告与 IO 契约等中间产物
+├── operations/   Load、Analyze、Mapping、Unload 操作状态
+└── tmp/          分析生成的 IO Schema
 ```
 
-四个子目录的具体说明见各自的 `README.md`。除这些说明文件外，内容一律不进 Git。
+各子目录的具体说明见各自的 `README.md`。除这些说明文件外，内容一律不进 Git。

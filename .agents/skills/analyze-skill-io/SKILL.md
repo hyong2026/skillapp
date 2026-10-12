@@ -1,6 +1,6 @@
 ---
 name: analyze-skill-io
-description: 读取一个本地 Agent Skill 的实现，产出结构化的 IO 契约草案与一份分析报告（含风险清单）。当需要把已有 Skill 转成 Template、或要确定某个 Skill 的输入输出时使用。
+description: 读取一个本地 Agent Skill 的实现，产出结构化的 IO Schema。当需要把已有 Skill 转成 Template、或要确定某个 Skill 的输入输出时使用。
 ---
 
 # 分析 Skill 的 IO
@@ -9,12 +9,12 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 IO �
 
 这是第 1 步「装载」的后半。装载 = **复制** + **分析**：复制由 `src/cli/load-skill.js` 管，分析要判断，所以由你来读、来写。
 
-产出是**一份给人评审的报告**。评审通过才进入第 2 步「映射」（契约 → 表格列 + Template，纯机械，交给 `src/cli/map-table.js`）。
+产出是**一份可执行的 IO Schema**。生成后可以进入第 2 步「映射」（Schema → 表格列 + Template，纯机械，交给 `src/cli/map-table.js`）。
 
 | | |
 |---|---|
-| **输入** | Skill 根目录路径（含 `SKILL.md`）；该 Skill 已装载（`node src/cli/load-skill.js`） |
-| **输出** | `.data/tmp/<ref>.io-schema.json`（契约草案）+ `.data/tmp/<ref>.io-report.md`（分析报告，给人评审）|
+| **输入** | Skill 根目录路径（含 `SKILL.md`）；该 Skill 已装载（`node src/cli/load-skill.js <Skill 根目录>`） |
+| **输出** | `.data/tmp/<ref>.io-schema.json` |
 
 文件名带 Skill 名，因为 SkillApp 可以同时装载多个 Skill——`.data/tmp/` 是单槽目录，不区分就会互相覆盖。整个 `.data/tmp/` 已被 Git 忽略。
 
@@ -31,7 +31,7 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 IO �
 3. 对每个参数判定三项属性（见下）
 4. 读实现的输出路径：成功输出什么；失败走 stdout / stderr / 退出码哪一条；错误能否结构化解析
 5. 剔除输入回显——被原样返回的输入不应成为输出列
-6. 写 `.data/tmp/<ref>.io-schema.json` 与 `.data/tmp/<ref>.io-report.md`
+6. 写 `.data/tmp/<ref>.io-schema.json`
 
 ## 参数属性
 
@@ -116,33 +116,32 @@ out: 切片数        ← 输出
 - `from` —— 从 stdout 取值。`stdout.a.b` 取值，`/ 1024` 可换算，段尾 `[]` 表示逐项取值（结果变成数组）
 - `round` —— 保留小数位
 
-## 分析报告
+## 待确认与默认
 
-写成一份能直接给人评审的文件（`.data/tmp/<ref>.io-report.md`），至少包含：
+不单独输出 Markdown 报告。需要用户确认的取舍写进 `io-schema.json` 的可选 `questions` 数组：
 
-1. **契约草案** —— 列名 / 类型 / 必填 / 默认 / 从哪个参数来
-2. **风险清单** —— 逐条列，每条说清**后果**与**处理**。必须覆盖：
-   - 文档与实现不一致之处，附证据
-   - 无法用字段类型表达的约束（数量、长度、正则、**顺序**）
-   - 跨字段副作用（例：改格式会连带改变空白区域外观）
-   - `cmd` 的结构依赖（某个列被删会让命令悬空）
-   - 规模 / 超时这类兜底参数的取值依据
-3. **`row` / `template` 划分**
-4. **实测证据** —— 能跑就跑一遍装载后的副本，把你验证过的事实写进来
-5. **待确认** —— 集中列出需要判断的取舍。每项都要写成可执行的默认，而不是只抛问题：
-   - **建议**：明确推荐哪个方案
-   - **依据**：为什么这样建议，以及证据强弱
-   - **默认**：用户不回复时采用的结果；默认必须是「采纳建议」
+```json
+{
+  "id": "result-format",
+  "question": "输出格式如何选择？",
+  "recommendation": "按输入原格式输出",
+  "rationale": "实现会在未指定格式时沿用原图格式",
+  "default": "原格式",
+  "answer": "原格式"
+}
+```
 
-   用户明确反对时才改；未回复或只说「继续」时，视为采纳全部建议。
+`answer` 必须默认等于 `recommendation`，即使用户没有额外回复，映射和执行也可以直接采用建议。
+
+风险、限制和跨字段影响写进相应字段的 `hint`、`validate` 或 `questions.rationale`，不要重复生成独立报告。
 
 ## 交付前
 
-**交付后停下评审。每项判断都给出建议与默认。**
+**交付物是可直接执行的 Schema，不生成独立报告。**
 
-没有这个停顿，第一个 Template 必然出错——`machine` 类参数就曾险些被建成用户列。`建议 + 默认` 让用户能纠正判断，同时让沉默不再阻塞流程。
+所有需要判断的取舍都必须已经给出建议和默认值，避免后续 Mapping 再引入人工决策。
 
-用户明确确认、提出修改，或未回复但其后要求继续 / 映射时，按明确意见或默认建议交给第 2 步：
+用户要求继续或进入映射时，直接交给第 2 步：
 
 ```bash
 node src/cli/map-table.js --ref <ref> --url '<表格链接>'

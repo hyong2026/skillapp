@@ -44,14 +44,6 @@ const maybeJson = (file) => {
   }
 };
 
-const maybeText = (file) => {
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return null;
-  }
-};
-
 function listFiles(root, predicate = () => true) {
   if (!fs.existsSync(root)) return [];
 
@@ -97,6 +89,7 @@ class ReadModel {
     this.templatesDir = path.join(this.root, 'templates');
     this.runsDir = path.join(this.root, 'runs');
     this.tmpDir = path.join(this.root, 'tmp');
+    this.operationsDir = path.join(this.root, 'operations');
   }
 
   status() {
@@ -122,7 +115,7 @@ class ReadModel {
     return fs.readdirSync(this.skillsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .map((entry) => this.skillSummary(entry.name))
-      .sort((a, b) => a.ref.localeCompare(b.ref));
+      .sort((a, b) => String(b.loaded_at || '').localeCompare(String(a.loaded_at || '')) || a.ref.localeCompare(b.ref));
   }
 
   skillSummary(ref) {
@@ -147,11 +140,21 @@ class ReadModel {
 
   getSkill(ref) {
     const summary = this.skillSummary(ref);
+    const schema = maybeJson(path.join(this.tmpDir, `${ref}.io-schema.json`));
+    const stale = schema?.skill_hash ? schema.skill_hash !== summary.hash : null;
     return {
       ...summary,
       analysis: {
-        report: maybeText(path.join(this.tmpDir, `${ref}.io-report.md`)),
-        schema: maybeJson(path.join(this.tmpDir, `${ref}.io-schema.json`)),
+        schema,
+        state: !schema ? 'missing' : stale === null ? 'unverified' : stale ? 'stale' : 'current',
+        stale,
+        reason: !schema
+          ? 'No IO Schema'
+          : stale === null
+            ? 'Schema has no Skill hash'
+            : stale
+              ? 'Skill changed after this analysis'
+              : 'Analysis matches the loaded Skill',
       },
     };
   }
