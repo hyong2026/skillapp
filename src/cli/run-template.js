@@ -1,34 +1,37 @@
 #!/usr/bin/env node
 'use strict';
 
-const { loadEnv } = require('../core/load-env');
-loadEnv();
 /**
  * run-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
  *
- *   node src/cli/run-template.js <template.json> [--all | --pending | --record-id <id> ...] [--dry-run]
+ *   node src/cli/run-template.js <template.json> [--all | --incremental | --record-id <id> ...] [--dry-run]
  */
 
-const fs = require('fs');
-const path = require('path');
-const { runTemplate } = require('../core/run-template');
-const { ROOT } = require('../core/paths');
+import fs from 'node:fs';
+import path from 'node:path';
+import { loadEnv } from '../core/load-env.js';
+
+loadEnv();
+
+// .env 必须先于路径配置生效，所以业务模块用动态 import 加载。
+const { runTemplate } = await import('../core/run-template.js');
+const { ROOT } = await import('../core/paths.js');
 
 const USAGE = `用法: node src/cli/run-template.js <template.json> [选项]
 
 选项:
   --all               处理表内所有行（默认）
-  --pending           只处理工作版本或输入变化的行
+  --incremental       只处理工作版本或输入变化的行
   --record-id <id>    只处理指定行，可重复传
   --dry-run           只核对，不执行、不回写、不产生 Run 记录
   -h, --help          显示本帮助`;
 
 function parseArgv(argv) {
-  const out = { template: null, recordIds: [], dryRun: false, pending: false, help: false };
+  const out = { template: null, recordIds: [], dryRun: false, incremental: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--dry-run') out.dryRun = true;
-    else if (arg === '--pending') out.pending = true;
+    else if (arg === '--incremental') out.incremental = true;
     else if (arg === '--record-id') out.recordIds.push(argv[++i]);
     else if (arg === '-h' || arg === '--help') out.help = true;
     else if (!out.template) out.template = arg;
@@ -66,7 +69,7 @@ async function main() {
   const { run, workdir } = await runTemplate({
     template,
     options: {
-      trigger: args.pending ? 'pending' : 'all',
+      trigger: args.incremental ? 'incremental' : 'all',
       recordIds: args.recordIds,
       dryRun: args.dryRun,
     },
@@ -87,4 +90,4 @@ const mainPromise = main().catch((err) => {
   process.exit(1);
 });
 
-module.exports = { mainPromise };
+export { mainPromise };

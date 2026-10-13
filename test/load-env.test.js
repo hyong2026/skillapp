@@ -1,11 +1,9 @@
-'use strict';
-
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { parseEnv, loadEnv } = require('../src/core/load-env');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { parseEnv, loadEnv } from '../src/core/load-env.js';
 
 test('.env 解析支持注释、引号和 export', () => {
   const parsed = parseEnv([

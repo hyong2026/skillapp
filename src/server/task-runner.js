@@ -1,21 +1,19 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const { spawn } = require('child_process');
-const {
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import {
   atomicWriteJson,
   generateRunId,
   normalizeOptions,
   TERMINAL_STATUSES,
-} = require('../core/run-template');
-const { HttpError, ReadModel } = require('./read-model');
+} from '../core/run-template.js';
+import { HttpError, ReadModel } from './read-model.js';
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'canceling']);
-const DEFAULT_WORKER = path.join(__dirname, 'run-worker.js');
-const DEFAULT_TASK_WORKER = path.join(__dirname, 'task-worker.js');
-const DEFAULT_REPO_ROOT = path.resolve(__dirname, '..', '..');
-const TASK_KINDS = new Set(['load-skill', 'analyze-skill', 'map-table', 'unload-skill']);
+const DEFAULT_WORKER = path.join(import.meta.dirname, 'run-worker.js');
+const DEFAULT_TASK_WORKER = path.join(import.meta.dirname, 'task-worker.js');
+const DEFAULT_REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
+const TASK_TYPES = new Set(['load-skill', 'analyze-skill', 'map-table', 'unload-skill']);
 const TERMINAL_OPERATION_STATUSES = new Set(['completed', 'failed', 'canceled', 'interrupted']);
 
 function readJson(file) {
@@ -35,7 +33,7 @@ function assertOperationId(operationId) {
 }
 
 function generateOperationId(date = new Date()) {
-  return `op-${generateRunId(date)}`;
+  return generateRunId(date);
 }
 
 function summaryOfRun(run) {
@@ -127,6 +125,47 @@ class TaskRunner {
     }
   }
 
+  /**
+   * Run 的 operation 镜像。
+   *
+   * Run 仍以 `.data/runs/` 为唯一真相；这里只落一份索引，让 Operations 页能把
+   * 所有长期任务（load/analyze/map/unload/run）列在一起——不复制 items、日志和产物。
+   */
+  mirrorRunOperation(job) {
+    const id = job.operationId;
+    if (!id) return null;
+    const run = job.run;
+    const items = Array.isArray(run.items) ? run.items : [];
+    const record = {
+      operation_id: id,
+      type: 'run-template',
+      status: run.status || 'unknown',
+      created_at: job.operationCreatedAt || run.started_at || null,
+      started_at: run.started_at || null,
+      finished_at: run.finished_at || null,
+      progress: run.total ? { completed: run.completed || 0, total: run.total } : null,
+      input: {
+        ref: job.operationRef || null,
+        run_id: run.run_id,
+        template_id: run.template_id || null,
+        trigger: run.trigger || null,
+        record_ids: job.operationRecordIds || [],
+      },
+      result: {
+        run_id: run.run_id,
+        total: run.total ?? items.length,
+        succeeded: run.succeeded ?? items.filter((item) => item.status === 'succeeded').length,
+        failed: run.failed ?? items.filter((item) => item.status === 'failed').length,
+      },
+      error: run.error
+        ? { code: 'RUN_FAILED', message: String(run.error), action: 'Open the Run for per-row details' }
+        : null,
+      lock_keys: job.lockKey ? [job.lockKey] : [],
+    };
+    atomicWriteJson(path.join(this.model.operationsDir, id, 'operation.json'), record);
+    return record;
+  }
+
   acquireLocks(owner, keys, code = 'RESOURCE_LOCKED', message = 'Resource is already in use') {
     const unique = [...new Set((keys || []).filter(Boolean))];
     for (const key of unique) {
@@ -164,13 +203,13 @@ class TaskRunner {
   skillOperations(ref) {
     const active = this.listOperations().filter((job) => job.input?.ref === ref && ACTIVE_STATUSES.has(job.status));
     return {
-      analyze: active.find((job) => job.kind === 'analyze-skill') || null,
-      mapping: active.find((job) => job.kind === 'map-table') || null,
-      unload: active.find((job) => job.kind === 'unload-skill') || null,
+      analyze: active.find((job) => job.type === 'analyze-skill') || null,
+      mapping: active.find((job) => job.type === 'map-table') || null,
+      unload: active.find((job) => job.type === 'unload-skill') || null,
     };
   }
 
-  skillOperation(ref, kind) {
+  skillOperation(ref, alias) {
     const aliases = {
       load: new Set(['load-skill']),
       analyze: new Set(['analyze-skill']),
@@ -178,10 +217,10 @@ class TaskRunner {
       'map-table': new Set(['map-table']),
       unload: new Set(['unload-skill']),
     };
-    const kinds = aliases[kind];
-    if (!kinds) return null;
+    const types = aliases[alias];
+    if (!types) return null;
     return this.listOperations()
-      .filter((job) => job.input?.ref === ref && kinds.has(job.kind))
+      .filter((job) => job.input?.ref === ref && types.has(job.type))
       .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0] || null;
   }
 
@@ -264,18 +303,18 @@ class TaskRunner {
         action: 'Check the server logs and retry',
       });
     });
-    child.stdin.end(JSON.stringify({ kind: job.job.kind, input: job.input }));
+    child.stdin.end(JSON.stringify({ type: job.job.type, input: job.input }));
   }
 
-  startTask(kind, input = {}, options = {}) {
-    if (!TASK_KINDS.has(kind)) {
-      throw new HttpError(400, 'INVALID_OPERATION_KIND', `Unsupported operation kind: ${kind}`, 'Choose a supported operation');
+  startTask(type, input = {}, options = {}) {
+    if (!TASK_TYPES.has(type)) {
+      throw new HttpError(400, 'INVALID_OPERATION_TYPE', `Unsupported operation type: ${type}`, 'Choose a supported operation');
     }
     const jobId = generateOperationId();
     const now = new Date().toISOString();
     const record = {
       operation_id: jobId,
-      kind,
+      type,
       status: 'queued',
       created_at: now,
       started_at: null,
@@ -418,6 +457,7 @@ class TaskRunner {
 
   updateRun(job, run) {
     job.run = run;
+    this.mirrorRunOperation(job);
     this.emit(job, { type: 'snapshot', run });
   }
 
@@ -491,7 +531,7 @@ class TaskRunner {
     if (existing) {
       throw new HttpError(409, 'TEMPLATE_LOCKED', `Template is already running: ${existing}`, 'Wait for the active run to finish or cancel it');
     }
-    const templatePath = path.join(this.model.templatesDir, `${selected.ref}.json`);
+    const templatePath = path.join(this.model.templatesDir, `${selected.ref}.template.json`);
     const runId = generateRunId();
     const runDir = options.dryRun ? null : path.join(this.model.runsDir, runId);
     const now = new Date().toISOString();
@@ -532,8 +572,13 @@ class TaskRunner {
       },
     };
     job.donePromise = new Promise((resolve) => { job.resolveDone = resolve; });
+    job.operationId = options.dryRun ? null : generateOperationId();
+    job.operationCreatedAt = now;
+    job.operationRef = selected.ref;
+    job.operationRecordIds = options.recordIds || [];
     this.jobs.set(runId, job);
     this.locks.set(lockKey, runId);
+    this.mirrorRunOperation(job);
 
     try {
       const child = this.spawn(process.execPath, [this.workerPath], {
@@ -563,6 +608,7 @@ class TaskRunner {
       const runDir = path.join(this.model.runsDir, job.run.run_id);
       atomicWriteJson(path.join(runDir, 'run.json'), job.run);
     }
+    this.mirrorRunOperation(job);
   }
 
   finish(job) {
@@ -682,7 +728,7 @@ class TaskRunner {
     const templateId = String(input.template_id || '').trim();
     if (!templateId) throw new HttpError(400, 'INVALID_RUN', 'Template ID is required', 'Choose a Template and try again');
     const selected = this.model.getTemplate(templateId);
-    const templatePath = path.join(this.model.templatesDir, `${selected.ref}.json`);
+    const templatePath = path.join(this.model.templatesDir, `${selected.ref}.template.json`);
     const options = normalizeOptions({
       trigger: input.trigger,
       recordIds: input.record_ids || input.recordIds,
@@ -733,7 +779,7 @@ class TaskRunner {
   }
 }
 
-module.exports = {
+export {
   TaskRunner,
   ACTIVE_STATUSES,
   normalizePreviewError,

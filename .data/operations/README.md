@@ -6,8 +6,8 @@
 
 ```jsonc
 {
-  "operation_id": "op-20261012-190323-0b54",
-  "kind": "map-table",                // load-skill | analyze-skill | map-table | unload-skill
+  "operation_id": "20261012-190323-0b54",
+  "type": "map-table",              // load-skill | analyze-skill | map-table | unload-skill | run-template
   "status": "completed",            // queued | running | canceling | completed | failed | canceled | interrupted
   "created_at": "…",
   "started_at": "…",
@@ -19,4 +19,5 @@
 }
 ```
 
-Run 仍保存在 `runs/`；这里放 load-skill、analyze-skill、map-table、unload-skill 四类异步操作。
+Run 仍保存在 `runs/`；这里放 load-skill、analyze-skill、map-table、unload-skill 四类异步操作，
+以及 `run-template` 的索引镜像（只有摘要，明细在 `runs/`）。

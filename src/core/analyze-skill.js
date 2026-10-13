@@ -1,12 +1,11 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const { spawn } = require('child_process');
-const { ROOT, DATA_DIR, SKILLS_DIR, TMP_DIR } = require('./paths');
-const { AppError } = require('./errors');
-const { readJson } = require('./json-file');
-const { assertRef, readSchema, saveSchema } = require('./io-schema');
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { ROOT, DATA_DIR, SKILLS_DIR, MAPPINGS_DIR } from './paths.js';
+import { AppError } from './errors.js';
+import { readJson } from './json-file.js';
+import { assertRef } from './ref.js';
+import { readMapping, saveMapping } from './mapping.js';
 
 function analyzerArgs() {
   if (process.env.SKILLAPP_ANALYZE_ARGS) {
@@ -35,7 +34,7 @@ function analyzerArgs() {
   return args;
 }
 
-function promptFor(ref, skillDir, schemaPath) {
+function promptFor(ref, skillDir, mappingPath) {
   return `Use the project skill analyze-skill-io.
 
 Analyze the loaded Skill at:
@@ -45,9 +44,9 @@ Loaded ref: ${ref}
 
 Follow .agents/skills/analyze-skill-io/SKILL.md exactly. Inspect the Skill implementation, not just SKILL.md.
 Write exactly this file and do not modify any other repository file:
-- ${schemaPath}
+- ${mappingPath}
 
-The schema must be the complete io-schema JSON consumed by the mapping step. Pending decisions must already use the recommended defaults.`;
+Write the complete Mapping JSON consumed by the mapping step. Every judgement call must already be applied in it (columns, types, required, defaults, transforms) — there is no separate questions list.`;
 }
 
 function stopChild(child, signal) {
@@ -61,12 +60,12 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
     throw new AppError('SKILL_NOT_FOUND', `Loaded Skill not found: ${ref}`, 'Load the Skill first', 404);
   }
 
-  fs.mkdirSync(TMP_DIR, { recursive: true });
-  const schemaPath = path.join(TMP_DIR, `${ref}.io-schema.json`);
-  fs.rmSync(schemaPath, { force: true });
+  fs.mkdirSync(MAPPINGS_DIR, { recursive: true });
+  const mappingPath = path.join(MAPPINGS_DIR, `${ref}.mapping.json`);
+  fs.rmSync(mappingPath, { force: true });
 
   const command = process.env.SKILLAPP_ANALYZE_COMMAND || 'codex';
-  const args = [...analyzerArgs(), promptFor(ref, skillDir, schemaPath)];
+  const args = [...analyzerArgs(), promptFor(ref, skillDir, mappingPath)];
   const timeoutMs = Number(process.env.SKILLAPP_ANALYZE_TIMEOUT_MS || 15 * 60 * 1000);
   const effectiveTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15 * 60 * 1000;
 
@@ -93,7 +92,7 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
         ...process.env,
         SKILLAPP_ANALYZE_REF: ref,
         SKILLAPP_ANALYZE_SKILL_DIR: skillDir,
-        SKILLAPP_ANALYZE_SCHEMA_PATH: schemaPath,
+        SKILLAPP_ANALYZE_MAPPING_PATH: mappingPath,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -127,13 +126,13 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
         return;
       }
       try {
-        const parsedSchema = readSchema(ref);
-        if (!parsedSchema) {
-          throw new AppError('ANALYZER_INVALID_RESULT', 'Analyzer did not write the IO Schema', 'Retry the analysis', 502);
+        const parsedMapping = readMapping(ref);
+        if (!parsedMapping) {
+          throw new AppError('ANALYZER_INVALID_RESULT', 'Analyzer did not write the Mapping', 'Retry the analysis', 502);
         }
         const hash = readJson(path.join(skillDir, 'source.json')).hash;
-        const schema = saveSchema(ref, parsedSchema, hash);
-        finish(resolve, { ref, schema });
+        const mapping = saveMapping(ref, parsedMapping, hash);
+        finish(resolve, { ref, mapping });
       } catch (err) {
         finish(reject, err);
       }
@@ -141,4 +140,4 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
   });
 }
 
-module.exports = { analyzeSkill, analyzerArgs };
+export { analyzeSkill, analyzerArgs };

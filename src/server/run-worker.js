@@ -1,7 +1,5 @@
-'use strict';
-
-const fs = require('fs');
-const { previewTemplate, runTemplate } = require('../core/run-template');
+import fs from 'node:fs';
+import { previewTemplate, runTemplate } from '../core/run-template.js';
 
 function send(message) {
   if (!process.send) return Promise.resolve();

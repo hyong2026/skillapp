@@ -1,15 +1,15 @@
-# tmp/
+# mappings/
 
-中间产物。**内容不进 Git**，本文件除外。
+Mapping。**内容不进 Git**，本文件除外。
 
-`analyze-skill-io` 在这里生成 IO Schema：
+`analyze-skill-io` 在这里生成 Mapping，`src/cli/map-table.js` 消费它：
 
 | 文件 | 是什么 |
 |---|---|
-| `.data/tmp/<ref>.io-schema.json` | IO Schema，`src/cli/map-table.js` 的输入 |
+| `.data/mappings/<ref>.mapping.json` | Mapping，`src/cli/map-table.js` 的输入 |
 
 ```
-analyze-skill-io  →  .data/tmp/<ref>.io-schema.json  →  map-table.js
+analyze-skill-io  →  .data/mappings/<ref>.mapping.json  →  map-table.js
 ```
 
 文件名带 Skill 名——SkillApp 可以同时装载多个 Skill，不区分就会互相覆盖。

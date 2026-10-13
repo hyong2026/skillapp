@@ -8,7 +8,7 @@
 
 Web UI 是 SkillApp 的控制台，不是第二个执行引擎。CLI、HTTP、测试和 Web 共用 `src/core/` 中的业务逻辑。
 
-分析由 `analyze-skill-io` 完成。Web 在点击 Analyze 后调用本地分析器（默认 `codex exec`）生成 IO Schema；默认使用低推理强度，并可用 `SKILLAPP_ANALYZE_MODEL`、`SKILLAPP_ANALYZE_REASONING_EFFORT` 调整速度。
+分析由 `analyze-skill-io` 完成。Web 在点击 Analyze 后调用本地分析器（默认 `codex exec`）生成 Mapping；默认使用低推理强度，并可用 `SKILLAPP_ANALYZE_MODEL`、`SKILLAPP_ANALYZE_REASONING_EFFORT` 调整速度。
 
 ### 成功标准
 
@@ -23,28 +23,36 @@ Web UI 是 SkillApp 的控制台，不是第二个执行引擎。CLI、HTTP、�
 
 ### 查看
 
-- 读取 Skill、Template、Run、RunItem、stdout/stderr 和 artifacts。
-- IO Schema、stdout、stderr 和 JSON 使用语法高亮。
+- 读取 Skill、Template、Run、RunItem、stdout/stderr 和 artifacts；RunItem 的 Status 与产物合并成一个 Summary 面板。
+- **Operations** 页统一列出所有长期任务：`load-skill / analyze-skill / map-table / unload-skill / run-template`，可点进详情看记录 JSON 并跳到对应 Skill / Template / Run。
+- Mapping、stdout、stderr 和 JSON 使用语法高亮。
 - 支持 Basic Auth / Bearer token。
 - 防止静态资源路径穿越，并将产物访问限制在对应 Run/record 目录。
+
+### 配置
+
+- **Settings** 页目前只读展示运行信息（访问地址、仓库根、Node 版本）；更多可设置参数后续加入。
+- 读写接口已就绪：`GET /api/settings`、`PUT /api/settings`。可改白名单为 `SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`，写入仓库根 `.env`（保留注释与行序）并立即生效；其余配置项只读返回。
+- 重启应用与飞书授权暂未实现。
 
 ### 执行
 
 - `run-template` 由独立 worker 进程执行，不阻塞 HTTP 事件循环。
 - Run 启动时立即以 `queued` 状态落盘，再进入 `running`。
+- Run 同时落一份 `type: run-template` 的 operation 记录（只做索引，不复制 items / 日志 / 产物），历史 Run 在服务启动时补齐。
 - 通过 SSE 推送 Run 快照、RunItem 状态、阶段和 stdout/stderr。
-- 支持 `pending`、`all`、`record-id` 和 dry-run API。
+- 支持 `incremental`、`all`、`record-id` 和 dry-run API。
 - 支持取消运行、失败行重试和 Template 级锁。
-- Template 详情页提供 `Run`，默认执行 `pending`；勾选 `All Rows` 后执行全量。
+- Template 详情页提供 `Run`，默认执行 `incremental`；勾选 `All Rows` 后执行全量。
 
 ### 初始化
 
 - 输入 Skill 根目录装载，并默认导入全部内容，包括 `node_modules`。
-- 装载只复制 Skill 并进入详情页；点击 `Analyze` 后生成 `.data/tmp/<ref>.io-schema.json`。
+- 装载只复制 Skill 并进入详情页；点击 `Analyze` 后生成 `.data/mappings/<ref>.mapping.json`。
 - 检查 `SKILL.md`、Skill ref 和源目标重叠。
-- `io-schema.json` 带版本、Skill hash、完整校验与原子保存。
-- 待确认项包含 `recommendation / rationale / default`；未回答时采用建议。
-- Schema 可在线编辑；Skill 变化后分析结果标记为 `stale`。
+- `mapping.json` 带 Skill hash、完整校验与原子保存。
+- 取舍直接落进 Mapping（列、类型、必填、`default`、`transform`），理由写进 `hint`；没有单独的待确认清单。
+- Mapping 可在线编辑；Skill 变化后分析结果标记为 `stale`。
 - Mapping 操作内部生成 `plan_hash + diff`，覆盖复用列、新增列、类型冲突、必填风险和列顺序。
 - Mapping 在执行前重新校验计划；实时结构变化时拒绝写出。
 - Template JSON 可以导出。
@@ -84,8 +92,9 @@ Task Runner
 | 模块 | 职责 |
 |---|---|
 | `src/core/load-skill.js` | 根目录校验、完整复制、版本固定和原子替换 |
-| `src/core/analyze-skill.js` | 调用本地分析器，校验结果并持久化 IO Schema |
-| `src/core/io-schema.js` | Schema 版本、校验、待确认项和原子保存 |
+| `src/core/analyze-skill.js` | 调用本地分析器，校验结果并持久化 Mapping |
+| `src/core/ref.js` | Skill ref 白名单与校验 |
+| `src/core/mapping.js` | Mapping 校验与原子保存 |
 | `src/core/map-table.js` | Mapping 计划、diff、plan hash、表格结构写出和 Template 生成 |
 | `src/core/unload-skill.js` | 卸载影响清单、plan hash 和受控删除 |
 | `src/core/run-template.js` | Run 预检、选行、执行、回写、进度与状态 |
@@ -94,19 +103,20 @@ Task Runner
 | `src/server/task-worker.js` | 在独立进程中执行装载、Mapping 和卸载任务 |
 | `src/server/read-model.js` | 只读扫描 Skill、Template、Run、Operation、日志和产物 |
 | `src/server/app.js` | HTTP API、SSE、鉴权、同源写保护和静态资源 |
-| `src/web/app.js` | Hash 路由、初始化向导、详情页、任务 SSE 客户端 |
+| `src/core/settings.js` | 设置白名单，读写仓库根 `.env` |
+| `src/web/` | 零依赖 ES 模块：入口 `app.js` + `index.html` / `styles.css`，共用件在 `lib/`（`router` 路由、`components` 面板与表格、`dom/format/links/api/shell/dialogs`），页面在 `views/` |
 
 ## 4. 页面与交互
 
 ### Skills
 
 - 列表展示 `Ref / Status / Loaded / Source`。
-- `Load` 打开弹框，只输入 Skill Root 绝对路径；目录名自动作为 Ref，默认完整导入。
+- `Load` 打开弹框，只输入 Skill Source 绝对路径；目录名自动作为 Ref，默认完整导入。
 - Load 完成后直接进入 Skill 详情页，不自动分析。
 - 详情页右上角提供 `Analyze / Re-analyze`；分析作为持久化任务运行，页面刷新后恢复 Loading。
-- 详情展示 Skill 状态和 IO Schema。
+- 详情展示 Skill 状态和 Mapping。
 - Skill 状态为 `Unanalyzed / Analyzing / Ready / Stale / Unverified / Invalid`。
-- `IO Schema` 默认展示结构化 Inputs/Outputs；`JSON` 开关查看原始 JSON。
+- `Mapping` 默认展示结构化 Inputs/Outputs；`JSON` 开关查看原始 JSON。
 - 详情页右上角 `Mapping` 打开弹框，输入 Feishu Base URL；点击一次即启动持久化 Mapping 任务，页面刷新后仍保持 Loading。
 - 详情页右上角 `Unload` 一键卸载 Skill、Template、分析产物和关联 Run；飞书列不会被删除。
 
@@ -115,7 +125,7 @@ Task Runner
 - 列表展示 `Ref / Template ID / IO / Last Run / Created`。
 - 详情 Summary 展示 Template ID、Skill、Skill Hash、Feishu Base URL 和创建时间。
 - `Template Definition` 展示完整 Inputs/Outputs Mapping；`JSON` 开关展示完整 Template JSON。
-- 页面右上角提供 `Run`；`All Rows` 勾选框决定 `all` 或 `pending`。
+- 页面右上角提供 `Run`；`All Rows` 勾选框决定 `all` 或 `incremental`。
 
 ### Runs
 
@@ -131,7 +141,7 @@ Task Runner
 - 默认路由是 `#skills`，不提供 Home 页面。
 - 列表和 Summary 不展示无意义的统计块。
 - 日期时间统一为 `YYYY-MM-DD HH:mm:ss`。
-- JSON、Markdown、Stdout、Stderr 均使用代码块展示。
+- JSON、Stdout、Stderr 均使用代码块展示。
 
 ## 5. 异步操作与执行模型
 
@@ -169,7 +179,7 @@ Run 额外使用 `partial` 表示部分成功；dry-run 使用 `dry-run` 终态�
 map-table 操作使用纯计划逻辑：
 
 ```text
-当前 Schema + Skill hash + 目标表格结构 + 已有 Template
+当前 Mapping + Skill hash + 目标表格结构 + 已有 Template
   → plan
   → plan_hash
 ```
@@ -228,7 +238,10 @@ GET    /api/runs/:id/events
 GET    /api/runs/:id/items/:recordId
 GET    /api/runs/:id/artifacts/:recordId/:file
 GET    /api/skills/:ref/events
-GET    /api/skills/:ref/operations/:kind
+GET    /api/skills/:ref/operations/:alias
+GET    /api/operations
+GET    /api/operations/:operation_id
+GET    /api/settings
 ```
 
 ### 写入
@@ -236,7 +249,8 @@ GET    /api/skills/:ref/operations/:kind
 ```text
 POST   /api/skills/load
 POST   /api/skills/:ref/analyze
-PUT    /api/skills/:ref/io-schema
+PUT    /api/skills/:ref/mapping
+PUT    /api/settings
 DELETE /api/skills/:ref
 
 POST   /api/mappings
@@ -277,7 +291,7 @@ error
 ├── skills/<ref>/
 │   ├── SKILL.md
 │   └── source.json
-├── templates/<ref>.json
+├── templates/<ref>.template.json
 ├── operations/<operation_id>/
 │   └── operation.json
 ├── runs/<run_id>/
@@ -288,8 +302,8 @@ error
 │       └── logs/
 │           ├── stdout.json
 │           └── stderr.json
-└── tmp/
-    └── <ref>.io-schema.json
+└── mappings/
+    └── <ref>.mapping.json
 ```
 
 ### 约定

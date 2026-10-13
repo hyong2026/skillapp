@@ -1,13 +1,13 @@
-'use strict';
-
-const fs = require('fs');
-const http = require('http');
-const path = require('path');
-const crypto = require('crypto');
-const { ReadModel, HttpError, isWithin } = require('./read-model');
-const { TaskRunner } = require('./task-runner');
-const { DATA_DIR, WEB_DIR } = require('../core/paths');
-const { assertRef, saveSchema } = require('../core/io-schema');
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { DATA_DIR, WEB_DIR } from '../core/paths.js';
+import { assertRef } from '../core/ref.js';
+import { saveMapping } from '../core/mapping.js';
+import { readSettings, saveSettings } from '../core/settings.js';
+import { ReadModel, HttpError, isWithin } from './read-model.js';
+import { TaskRunner } from './task-runner.js';
 const MAX_BODY_BYTES = 1024 * 1024;
 const OPERATION_TERMINAL = new Set(['completed', 'failed', 'canceled', 'interrupted']);
 
@@ -234,7 +234,53 @@ function operationData(operation) {
 
 function skillOperations(runner, ref) {
   const operations = runner.skillOperations(ref);
-  return Object.fromEntries(Object.entries(operations).map(([kind, operation]) => [kind, operationData(operation)]));
+  return Object.fromEntries(Object.entries(operations).map(([alias, operation]) => [alias, operationData(operation)]));
+}
+
+/** Operations 列表用的摘要：不带上 result（map-table 的 plan 有几十 KB）。 */
+function operationSummary(operation) {
+  const input = operation.input || {};
+  const result = operation.result || {};
+  const started = operation.started_at ? Date.parse(operation.started_at) : NaN;
+  const finished = operation.finished_at ? Date.parse(operation.finished_at) : NaN;
+  const templateId = input.template_id || result.template?.template_id || null;
+  let subject = null;
+  if (operation.type === 'run-template') {
+    subject = input.run_id ? { type: 'run', id: input.run_id, label: input.run_id } : null;
+  } else if (operation.type === 'map-table' && templateId) {
+    subject = { type: 'template', id: templateId, label: input.ref || templateId };
+  } else if (input.ref) {
+    subject = { type: 'skill', id: input.ref, label: input.ref };
+  }
+  return {
+    operation_id: operation.operation_id,
+    type: operation.type,
+    status: operation.status || 'unknown',
+    created_at: operation.created_at || null,
+    started_at: operation.started_at || null,
+    finished_at: operation.finished_at || null,
+    duration_ms: Number.isFinite(started) && Number.isFinite(finished) ? finished - started : null,
+    progress: operation.progress || null,
+    subject,
+    counts: operation.type === 'run-template'
+      ? { total: result.total ?? null, succeeded: result.succeeded ?? null, failed: result.failed ?? null }
+      : null,
+    trigger: operation.type === 'run-template' ? input.trigger || null : null,
+    error: operation.error || null,
+  };
+}
+
+function operationDetail(operation) {
+  return { ...operationSummary(operation), operation };
+}
+
+function settingsRuntime(options, model, token) {
+  return {
+    node: process.version,
+    content_root: model.root,
+    repo_root: path.resolve(options.repoRoot || path.join(import.meta.dirname, '..', '..')),
+    token_required: Boolean(token),
+  };
 }
 
 function sendApi(req, res, data) {
@@ -301,20 +347,22 @@ function serveStatic(req, res, pathname) {
   fs.createReadStream(file).pipe(res);
 }
 
+function contentDisposition(filename, type = 'attachment') {
+  const raw = path.basename(String(filename));
+  const fallback = raw.replace(/[^\x20-\x7e]/g, '_').replace(/["\\\r\n]/g, '_');
+  const encoded = encodeURIComponent(raw)
+    .replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${type}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
 function serveArtifact(req, res, file) {
   const stat = fs.statSync(file);
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
-  const rawName = path.basename(file);
-  const fallbackName = rawName
-    .replace(/[^\x20-\x7e]/g, '_')
-    .replace(/["\\\r\n]/g, '_');
-  const encodedName = encodeURIComponent(rawName)
-    .replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
   res.writeHead(200, {
     ...securityHeaders(),
     'content-type': type,
     'cache-control': 'private, max-age=60',
-    'content-disposition': `inline; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
+    'content-disposition': contentDisposition(path.basename(file), 'inline'),
     'content-length': stat.size,
   });
   if (req.method === 'HEAD') {
@@ -324,7 +372,7 @@ function serveArtifact(req, res, file) {
   fs.createReadStream(file).pipe(res);
 }
 
-async function routeApi(req, res, model, runner, segments) {
+async function routeApi(req, res, model, runner, segments, runtime = {}) {
   const readOnly = req.method === 'GET' || req.method === 'HEAD';
 
   if (segments.length === 2 && segments[1] === 'status') {
@@ -357,7 +405,7 @@ async function routeApi(req, res, model, runner, segments) {
       });
     }
 
-    const allowedWrite = (segments.length === 4 && segments[3] === 'io-schema' && req.method === 'PUT')
+    const allowedWrite = (segments.length === 4 && segments[3] === 'mapping' && req.method === 'PUT')
       || (segments.length === 4 && segments[3] === 'analyze' && req.method === 'POST')
       || (segments.length === 3 && req.method === 'DELETE');
     if (!readOnly && !allowedWrite) {
@@ -391,13 +439,13 @@ async function routeApi(req, res, model, runner, segments) {
     if (segments.length === 4 && segments[3] === 'analysis' && readOnly) {
       return sendApi(req, res, model.getSkill(segments[2]).analysis);
     }
-    if (segments.length === 4 && segments[3] === 'io-schema' && req.method === 'PUT') {
+    if (segments.length === 4 && segments[3] === 'mapping' && req.method === 'PUT') {
       assertSameOrigin(req);
       const body = await readJsonBody(req);
       const ref = assertRef(segments[2]);
       const skill = model.getSkill(ref);
-      const schema = saveSchema(ref, body.schema || body, skill.hash, model.root);
-      return sendApi(req, res, { schema, state: 'current' });
+      const mapping = saveMapping(ref, body.mapping || body, skill.hash, model.root);
+      return sendApi(req, res, { mapping, state: 'current' });
     }
     if (segments.length === 3 && req.method === 'DELETE') {
       assertSameOrigin(req);
@@ -437,6 +485,25 @@ async function routeApi(req, res, model, runner, segments) {
       });
     }
     throw new HttpError(404, 'NOT_FOUND', 'Mapping endpoint not found', 'Check the request path');
+  }
+
+  if (segments[1] === 'operations') {
+    if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
+    if (segments.length === 2) return sendApi(req, res, runner.listOperations().map(operationSummary));
+    if (segments.length === 3) return sendApi(req, res, operationDetail(runner.getOperation(segments[2])));
+    throw new HttpError(404, 'NOT_FOUND', 'Operation endpoint not found', 'Check the request path');
+  }
+
+  if (segments[1] === 'settings') {
+    if (segments.length !== 2) throw new HttpError(404, 'NOT_FOUND', 'Settings endpoint not found', 'Check the request path');
+    if (readOnly) return sendApi(req, res, readSettings(runtime));
+    if (req.method === 'PUT') {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
+      saveSettings(body.values || {});
+      return sendApi(req, res, readSettings(runtime));
+    }
+    throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD / PUT are supported', 'Check the request method');
   }
 
   if (segments[1] === 'runs') {
@@ -503,7 +570,7 @@ function createRequestHandler(options = {}) {
 
       const segments = url.pathname.split('/').filter(Boolean).map((part, i) => decodeSegment(part, i ? 'Path segment' : 'Path'));
       if (segments[0] === 'api') {
-        await routeApi(req, res, model, runner, segments);
+        await routeApi(req, res, model, runner, segments, settingsRuntime(options, model, token));
         return;
       }
 
@@ -530,7 +597,7 @@ function createServer(options = {}) {
   return server;
 }
 
-module.exports = {
+export {
   createServer,
   createRequestHandler,
   isAuthorized,

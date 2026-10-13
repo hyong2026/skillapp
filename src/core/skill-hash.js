@@ -7,9 +7,9 @@
  * 与绝对路径无关，可跨机器复现；skill 内容改动任一字节，指纹即变。
  */
 
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const IGNORE = new Set(['node_modules', '.git', '.DS_Store', 'source.json']);
 
@@ -34,4 +34,4 @@ function skillHash(skillDir) {
   return 'sha256:' + outer.digest('hex');
 }
 
-module.exports = { skillHash, definitionFiles };
+export { skillHash, definitionFiles };

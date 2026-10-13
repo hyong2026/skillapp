@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 'use strict';
 
-const { loadEnv } = require('../core/load-env');
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { loadEnv } from '../core/load-env.js';
+
 loadEnv();
 
-const path = require('path');
-const { spawnSync } = require('child_process');
-const { ROOT } = require('../core/paths');
-const { planMapping, applyMapping } = require('../core/map-table');
+// .env 必须先于路径配置生效，所以业务模块用动态 import 加载。
+const { ROOT } = await import('../core/paths.js');
+const { planMapping, applyMapping } = await import('../core/map-table.js');
 
 const USAGE = `用法: node src/cli/map-table.js --ref <ref> --url <链接> [选项]
 
@@ -61,7 +63,7 @@ function main() {
   console.log(`Template  ${path.relative(ROOT, templatePath)}`
     + `${result.plan.prior_hash ? `（沿用 template_id ${result.template.template_id.slice(0, 8)}）` : `（新 template_id ${result.template.template_id.slice(0, 8)}）`}`);
 
-  const check = spawnSync('node', [path.join(__dirname, 'run-template.js'), templatePath, '--dry-run'], {
+  const check = spawnSync('node', [path.join(import.meta.dirname, 'run-template.js'), templatePath, '--dry-run'], {
     encoding: 'utf8',
     cwd: ROOT,
   });

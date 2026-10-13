@@ -7,14 +7,14 @@
  * 测试用临时内容根跑真进程，避免碰到当前仓库的 .data/skills/。
  */
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawnSync } = require('child_process');
-const { test } = require('node:test');
-const assert = require('node:assert');
+import assert from 'node:assert';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(import.meta.dirname, '..');
 
 function makeRepo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-load-safety-'));

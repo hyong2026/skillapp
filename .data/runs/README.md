@@ -28,10 +28,10 @@
 ```jsonc
 {
   "run_id": "20260930-194727-86bc",
-  "template_id": "c62d75ba-…",     // 指向 .data/templates/<ref>.json
+  "template_id": "c62d75ba-…",     // 指向 .data/templates/<ref>.template.json
   "skill_hash": "sha256:a19b…",    // 本次使用的 Skill 版本
   "work_hash": "sha256:7c31…",     // Skill + 命令 + 目标 + 生效映射的版本
-  "trigger": "pending",            // all | pending | record-id
+  "trigger": "incremental",        // all | incremental | record-id
   "started_at": "…",
   "finished_at": "…",
   "status": "completed",           // completed | partial | failed
@@ -54,10 +54,10 @@
 
 `stdout.json` / `stderr.json` 里的 `data` 始终是 JSON 值：合法 JSON 原样保留（标量会包成 `{ "value": ... }`），非 JSON 文本包成 `{ "raw": "..." }`。
 
-`--pending` 读这里的历史，判断该行的**最近一次成功运行**是否使用同一工作版本且输入一致。旧 Run 没有 `work_hash` 时会重跑一次。
+`--incremental` 读这里的历史，判断该行的**最近一次成功运行**是否使用同一工作版本且输入一致。旧 Run 没有 `work_hash` 时会重跑一次。
 
 只看最近一次：若改用「历史上任意一次成功」，把输入改回旧值会被误判为已完成，而表里的输出其实是另一组输入产生的。
 
 **本目录为空 = 从未运行过。**
 
-注意：本目录只增不减，且失败行会被 `--pending` 反复捞出（它就是「最近一次没成功」）。目前没有清理策略。
+注意：本目录只增不减，且失败行会被 `--incremental` 反复捞出（它就是「最近一次没成功」）。目前没有清理策略。

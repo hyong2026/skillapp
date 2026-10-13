@@ -1,14 +1,11 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const { skillHash } = require('./skill-hash');
-const { SKILLS_DIR } = require('./paths');
-const { AppError } = require('./errors');
-const { assertRef } = require('./io-schema');
+import fs from 'node:fs';
+import path from 'node:path';
+import { skillHash } from './skill-hash.js';
+import { SKILLS_DIR } from './paths.js';
+import { AppError } from './errors.js';
+import { assertRef } from './ref.js';
 
 const SKIP = new Set(['.DS_Store', '.git']);
-const SAFE_REF = /^[A-Za-z0-9._-]+$/;
 
 function isWithin(parent, child) {
   const rel = path.relative(parent, child);
@@ -71,4 +68,4 @@ function loadSkill(input = {}) {
   }
 }
 
-module.exports = { SAFE_REF, isWithin, loadSkill };
+export { isWithin, loadSkill };

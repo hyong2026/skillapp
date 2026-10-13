@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-const { loadEnv } = require('../core/load-env');
+import { loadEnv } from '../core/load-env.js';
+
 loadEnv();
 
-const { planUnload, applyUnload } = require('../core/unload-skill');
+// .env 必须先于路径配置生效，所以业务模块用动态 import 加载。
+const { planUnload, applyUnload } = await import('../core/unload-skill.js');
 
 const USAGE = `用法: node src/cli/unload-skill.js <ref> [选项]
       node src/cli/unload-skill.js --all --yes [选项]

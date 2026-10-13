@@ -1,9 +1,7 @@
-'use strict';
-
-const { loadSkill } = require('../core/load-skill');
-const { analyzeSkill } = require('../core/analyze-skill');
-const { planMapping, applyMapping } = require('../core/map-table');
-const { planUnload, applyUnload } = require('../core/unload-skill');
+import { loadSkill } from '../core/load-skill.js';
+import { analyzeSkill } from '../core/analyze-skill.js';
+import { planMapping, applyMapping } from '../core/map-table.js';
+import { planUnload, applyUnload } from '../core/unload-skill.js';
 
 function send(message) {
   if (!process.send) return Promise.resolve();
@@ -29,23 +27,23 @@ function readInput() {
 
 async function execute(input) {
   const payload = input.input || {};
-  if (input.kind === 'load-skill') {
+  if (input.type === 'load-skill') {
     return loadSkill({ sourcePath: payload.source_path });
   }
-  if (input.kind === 'analyze-skill') {
+  if (input.type === 'analyze-skill') {
     return analyzeSkill({
       ref: payload.ref,
       onProgress: (progress) => send({ type: 'operation-progress', progress }),
     });
   }
-  if (input.kind === 'map-table') {
+  if (input.type === 'map-table') {
     const plan = planMapping(payload);
     return applyMapping({ ...payload, planHash: plan.plan_hash }, plan);
   }
-  if (input.kind === 'unload-skill') {
+  if (input.type === 'unload-skill') {
     return applyUnload(payload, planUnload(payload));
   }
-  throw new Error(`Unsupported task: ${input.kind}`);
+  throw new Error(`Unsupported task: ${input.type}`);
 }
 
 async function main() {

@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-const { loadEnv } = require('../core/load-env');
+import { loadEnv } from '../core/load-env.js';
+
 loadEnv();
 
-const { loadSkill } = require('../core/load-skill');
+// .env 必须先于路径配置生效，所以业务模块用动态 import 加载。
+const { loadSkill } = await import('../core/load-skill.js');
 
 const USAGE = `用法: node src/cli/load-skill.js <Skill 根目录>
 

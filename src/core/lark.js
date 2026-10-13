@@ -5,8 +5,11 @@
  * 而下载目录位于 .data/runs/ 之下——固定 cwd 才能保证它在白名单内。
  */
 
-const { spawnSync } = require('child_process');
-const { ROOT } = require('./paths');
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { ROOT } from './paths.js';
+
+const require = createRequire(import.meta.url);
 
 function defaultLark(args) {
   const r = spawnSync('lark-cli', args, { encoding: 'utf8', cwd: ROOT });
@@ -40,4 +43,4 @@ function lark(args) {
   return implementation(args);
 }
 
-module.exports = { ROOT, lark };
+export { ROOT, lark };

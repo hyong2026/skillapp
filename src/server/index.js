@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-'use strict';
+import { loadEnv } from '../core/load-env.js';
 
-const { loadEnv } = require('../core/load-env');
 loadEnv();
 
-const { createServer } = require('./app');
-const { DATA_DIR } = require('../core/paths');
+// .env 必须先于路径配置生效，所以业务模块用动态 import 加载。
+const { createServer } = await import('./app.js');
+const { DATA_DIR } = await import('../core/paths.js');
+
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
 
 const USAGE = `用法: node src/server/index.js [选项]

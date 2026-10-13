@@ -1,17 +1,15 @@
-'use strict';
-
-const assert = require('node:assert');
-const fs = require('node:fs');
-const http = require('node:http');
-const os = require('node:os');
-const path = require('node:path');
-const { after, before, test } = require('node:test');
-const { createServer } = require('../src/server/app');
-const { skillHash } = require('../src/core/skill-hash');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { after, before, test } from 'node:test';
+import { skillHash } from '../src/core/skill-hash.js';
+import { createServer } from '../src/server/app.js';
 
 const TOKEN = 'test-token';
 const AUTH = `Basic ${Buffer.from(`skillapp:${TOKEN}`).toString('base64')}`;
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(import.meta.dirname, '..');
 
 let root;
 let server;
@@ -52,15 +50,15 @@ function buildFixture() {
   write('skills/bad/SKILL.md', '# bad\n');
   write('skills/bad/entry.js', 'process.stdout.write("not json\\n");\n');
 
-  write('templates/ok.json', JSON.stringify(templateFor(
+  write('templates/ok.template.json', JSON.stringify(templateFor(
     'tpl-ok', 'ok', 'node {skill.entry} -o {outdir}',
     [{ key: 'result', type: 'text', from: 'stdout.value', field_id: 'fldOut' }],
   ), null, 2));
-  write('templates/slow.json', JSON.stringify(templateFor(
+  write('templates/slow.template.json', JSON.stringify(templateFor(
     'tpl-slow', 'slow', 'node {skill.entry} -o {outdir}',
     [{ key: 'result', type: 'text', from: 'stdout.value', field_id: 'fldOut' }],
   ), null, 2));
-  write('templates/bad.json', JSON.stringify(templateFor(
+  write('templates/bad.template.json', JSON.stringify(templateFor(
     'tpl-bad', 'bad', 'node {skill.entry} -o {outdir}',
     [{ key: 'result', type: 'text', from: 'stdout.value', field_id: 'fldOut' }],
   ), null, 2));
@@ -172,7 +170,7 @@ after(async () => {
 test('M2 预览并异步执行 Run，最终写入日志与状态', async () => {
   const preview = await requestJson('/api/runs/preview', {
     method: 'POST',
-    body: { template_id: 'tpl-ok', trigger: 'pending' },
+    body: { template_id: 'tpl-ok', trigger: 'incremental' },
   });
   assert.equal(preview.response.status, 200);
   assert.equal(preview.body.data.total, 1);
@@ -180,7 +178,7 @@ test('M2 预览并异步执行 Run，最终写入日志与状态', async () => {
 
   const started = await requestJson('/api/runs', {
     method: 'POST',
-    body: { template_id: 'tpl-ok', trigger: 'pending' },
+    body: { template_id: 'tpl-ok', trigger: 'incremental' },
   });
   assert.equal(started.response.status, 202);
   const runId = started.body.data.run_id;
@@ -194,6 +192,20 @@ test('M2 预览并异步执行 Run，最终写入日志与状态', async () => {
 
   const events = await readEvents(`/api/runs/${runId}/events`, (frame) => frame.includes('event: done'));
   assert.ok(events.some((frame) => frame.includes('event: snapshot')));
+
+  // Run 同时落一份 operation 镜像，Operations 页才能统一列出所有长期任务
+  const operations = await requestJson('/api/operations');
+  assert.equal(operations.response.status, 200);
+  const runOperation = operations.body.data.find((item) => item.type === 'run-template' && item.subject?.id === runId);
+  assert.ok(runOperation, 'Run 应该有对应的 operation 记录');
+  assert.equal(runOperation.status, 'completed');
+  assert.equal(runOperation.trigger, 'incremental');
+
+  const operation = await requestJson(`/api/operations/${runOperation.operation_id}`);
+  assert.equal(operation.response.status, 200);
+  assert.equal(operation.body.data.operation.type, 'run-template');
+  assert.equal(operation.body.data.operation.input.run_id, runId);
+  assert.equal(operation.body.data.operation.result.total, 1);
 });
 
 test('M2 同一 Template 加锁，取消会终止执行且不会继续写表', async () => {
@@ -249,7 +261,7 @@ test('M2 Preview 会返回可操作的 Lark 授权提示', async () => {
   try {
     const preview = await requestJson('/api/runs/preview', {
       method: 'POST',
-      body: { template_id: 'tpl-ok', trigger: 'pending' },
+      body: { template_id: 'tpl-ok', trigger: 'incremental' },
     });
     assert.equal(preview.response.status, 424);
     assert.equal(preview.body.error.code, 'LARK_AUTH_REQUIRED');
@@ -258,3 +270,42 @@ test('M2 Preview 会返回可操作的 Lark 授权提示', async () => {
     delete process.env.SKILLAPP_FAKE_LARK_AUTH_ERROR;
   }
 });
+
+test('M2 Settings 只开放白名单环境变量，写入 .env 并即时生效', async () => {
+  const previousRoot = process.env.SKILLAPP_ROOT;
+  const previousModel = process.env.SKILLAPP_ANALYZE_MODEL;
+  process.env.SKILLAPP_ROOT = root;
+  delete process.env.SKILLAPP_ANALYZE_MODEL;
+  try {
+    const initial = await requestJson('/api/settings');
+    assert.equal(initial.response.status, 200);
+    assert.ok(initial.body.data.editable.some((field) => field.key === 'SKILLAPP_ANALYZE_MODEL'));
+    assert.ok(initial.body.data.readonly.some((field) => field.key === 'SKILLAPP_WEB_TOKEN'));
+    assert.equal(initial.body.data.runtime.token_required, true);
+
+    const saved = await requestJson('/api/settings', {
+      method: 'PUT',
+      body: { values: { SKILLAPP_ANALYZE_MODEL: 'test/model', SKILLAPP_ANALYZE_REASONING_EFFORT: 'high' } },
+    });
+    assert.equal(saved.response.status, 200);
+    assert.equal(saved.body.data.editable.find((field) => field.key === 'SKILLAPP_ANALYZE_MODEL').value, 'test/model');
+    assert.equal(process.env.SKILLAPP_ANALYZE_MODEL, 'test/model', '白名单变量应即时生效');
+
+    const envFile = fs.readFileSync(path.join(root, '.env'), 'utf8');
+    assert.match(envFile, /SKILLAPP_ANALYZE_MODEL=test\/model/);
+    assert.match(envFile, /SKILLAPP_ANALYZE_REASONING_EFFORT=high/);
+
+    const rejected = await requestJson('/api/settings', {
+      method: 'PUT',
+      body: { values: { SKILLAPP_WEB_TOKEN: 'nope' } },
+    });
+    assert.equal(rejected.response.status, 400);
+    assert.equal(rejected.body.error.code, 'INVALID_SETTINGS');
+  } finally {
+    if (previousRoot === undefined) delete process.env.SKILLAPP_ROOT;
+    else process.env.SKILLAPP_ROOT = previousRoot;
+    if (previousModel === undefined) delete process.env.SKILLAPP_ANALYZE_MODEL;
+    else process.env.SKILLAPP_ANALYZE_MODEL = previousModel;
+  }
+});
+

@@ -1,7 +1,7 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { analysisStatus } from '../core/mapping.js';
+import { TEMPLATE_SUFFIX } from '../core/paths.js';
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const IGNORED = new Set(['README.md', '.DS_Store']);
@@ -88,7 +88,7 @@ class ReadModel {
     this.skillsDir = path.join(this.root, 'skills');
     this.templatesDir = path.join(this.root, 'templates');
     this.runsDir = path.join(this.root, 'runs');
-    this.tmpDir = path.join(this.root, 'tmp');
+    this.mappingsDir = path.join(this.root, 'mappings');
     this.operationsDir = path.join(this.root, 'operations');
   }
 
@@ -140,29 +140,17 @@ class ReadModel {
 
   getSkill(ref) {
     const summary = this.skillSummary(ref);
-    const schema = maybeJson(path.join(this.tmpDir, `${ref}.io-schema.json`));
-    const stale = schema?.skill_hash ? schema.skill_hash !== summary.hash : null;
+    const mapping = maybeJson(path.join(this.mappingsDir, `${ref}.mapping.json`));
     return {
       ...summary,
-      analysis: {
-        schema,
-        state: !schema ? 'missing' : stale === null ? 'unverified' : stale ? 'stale' : 'current',
-        stale,
-        reason: !schema
-          ? 'No IO Schema'
-          : stale === null
-            ? 'Schema has no Skill hash'
-            : stale
-              ? 'Skill changed after this analysis'
-              : 'Analysis matches the loaded Skill',
-      },
+      analysis: { mapping, ...analysisStatus(summary.hash, mapping) },
     };
   }
 
   templateFiles() {
     if (!fs.existsSync(this.templatesDir)) return [];
     return fs.readdirSync(this.templatesDir)
-      .filter((name) => name.endsWith('.json') && !name.startsWith('.'))
+      .filter((name) => name.endsWith(TEMPLATE_SUFFIX) && !name.startsWith('.'))
       .map((name) => path.join(this.templatesDir, name))
       .sort();
   }
@@ -176,7 +164,7 @@ class ReadModel {
 
     return this.templateFiles().map((file) => {
       const tpl = readJson(file, `Template ${path.basename(file)}`);
-      const ref = path.basename(file, '.json');
+      const ref = path.basename(file, TEMPLATE_SUFFIX);
       return {
         ref,
         template_id: tpl.template_id || null,
@@ -193,7 +181,7 @@ class ReadModel {
   getTemplate(id) {
     assertSegment(id, 'Template id');
     const file = this.templateFiles().find((candidate) => {
-      if (path.basename(candidate, '.json') === id) return true;
+      if (path.basename(candidate, TEMPLATE_SUFFIX) === id) return true;
       try {
         return JSON.parse(fs.readFileSync(candidate, 'utf8')).template_id === id;
       } catch {
@@ -207,7 +195,7 @@ class ReadModel {
 
     const template = readJson(file, `Template ${path.basename(file)}`);
     return {
-      ref: path.basename(file, '.json'),
+      ref: path.basename(file, TEMPLATE_SUFFIX),
       template,
     };
   }
@@ -294,7 +282,7 @@ class ReadModel {
   }
 }
 
-module.exports = {
+export {
   ReadModel,
   HttpError,
   isWithin,

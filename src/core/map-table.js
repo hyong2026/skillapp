@@ -1,14 +1,13 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { spawnSync } = require('child_process');
-const { lark } = require('./lark');
-const { ROOT, SKILLS_DIR, TEMPLATES_DIR } = require('./paths');
-const { AppError } = require('./errors');
-const { readJson, atomicWriteJson } = require('./json-file');
-const { assertRef, readSchema, validateSchema, analysisStatus } = require('./io-schema');
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { lark } from './lark.js';
+import { SKILLS_DIR, TEMPLATES_DIR, TEMPLATE_SUFFIX } from './paths.js';
+import { AppError } from './errors.js';
+import { readJson, atomicWriteJson } from './json-file.js';
+import { assertRef } from './ref.js';
+import { readMapping, validateMapping, analysisStatus } from './mapping.js';
 
 const INPUT_PREFIX = 'in: ';
 const OUTPUT_PREFIX = 'out: ';
@@ -45,14 +44,14 @@ function fieldJson(spec) {
         ...(spec.default === undefined ? {} : { default_value: [spec.default] }),
       };
     default:
-      throw new AppError('UNSUPPORTED_FIELD_TYPE', `Unsupported field type: ${spec.type}`, 'Use a supported IO Schema type');
+      throw new AppError('UNSUPPORTED_FIELD_TYPE', `Unsupported field type: ${spec.type}`, 'Use a supported Mapping type');
   }
 }
 
 const columnName = (spec, prefix) => (spec.required ? REQUIRED_MARK : '') + prefix + spec.label;
 
 function checkCmd(cmd, io) {
-  if (!cmd) throw new AppError('INVALID_IO_SCHEMA', 'IO Schema is missing cmd', 'Set the command template');
+  if (!cmd) throw new AppError('INVALID_MAPPING', 'Mapping is missing cmd', 'Set the command template');
   const known = new Set(['skill.entry', 'outdir', ...io.inputs.map((item) => item.key)]);
   const bad = [];
   for (const [, group] of cmd.matchAll(/\{([^{}]*)\}/g)) {
@@ -60,7 +59,7 @@ function checkCmd(cmd, io) {
     for (const key of keys) if (!known.has(key)) bad.push(key);
   }
   if (bad.length) {
-    throw new AppError('INVALID_IO_SCHEMA', `cmd references unknown variables: ${[...new Set(bad)].join(', ')}`, 'Fix the command template');
+    throw new AppError('INVALID_MAPPING', `cmd references unknown variables: ${[...new Set(bad)].join(', ')}`, 'Fix the command template');
   }
 }
 
@@ -86,7 +85,7 @@ function primaryField(target) {
 }
 
 function priorTemplate(ref) {
-  const file = path.join(TEMPLATES_DIR, `${assertRef(ref)}.json`);
+  const file = path.join(TEMPLATES_DIR, `${assertRef(ref)}${TEMPLATE_SUFFIX}`);
   return fs.existsSync(file) ? { file, template: readJson(file) } : { file, template: null };
 }
 
@@ -131,7 +130,7 @@ function alignColumns(target, io, prior) {
         live_name: live.name,
         live_type: live.type,
         action: 'conflict',
-        reason: `Existing type is ${live.type}; schema requires ${wantedType}`,
+        reason: `Existing type is ${live.type}; mapping requires ${wantedType}`,
       };
     }
     return {
@@ -203,16 +202,16 @@ function buildTemplate({ io, ref, skillHashValue, target, primaryId, columns, pr
 
 function planMapping(input = {}) {
   const ref = assertRef(input.ref);
-  const io = validateSchema(input.schema || readSchema(ref));
+  const io = validateMapping(input.mapping || readMapping(ref));
   checkCmd(io.cmd, io);
   const sourceFile = path.join(SKILLS_DIR, ref, 'source.json');
   if (!fs.existsSync(sourceFile)) {
     throw new AppError('SKILL_NOT_LOADED', `Skill is not loaded: ${ref}`, 'Load the Skill before mapping', 404);
   }
   const skillHashValue = readJson(sourceFile).hash;
-  const status = analysisStatus(ref, skillHashValue, io);
+  const status = analysisStatus(skillHashValue, io);
   if (status.stale) {
-    throw new AppError('ANALYSIS_STALE', 'The IO Schema was generated for a different Skill version', 'Re-analyze the Skill and save the IO Schema again', 409);
+    throw new AppError('ANALYSIS_STALE', 'The Mapping was generated for a different Skill version', 'Re-analyze the Skill and save the Mapping again', 409);
   }
 
   const target = resolveTarget(input);
@@ -240,19 +239,10 @@ function planMapping(input = {}) {
     primary: primary.id,
   });
   const priorHash = prior.template ? hash(prior.template) : null;
-  const decisions = (io.questions || []).map((question) => ({
-    id: question.id,
-    question: question.question,
-    recommendation: question.recommendation,
-    rationale: question.rationale,
-    default: question.default,
-    answer: question.answer ?? question.recommendation ?? question.default ?? null,
-  }));
   const core = {
-    version: 1,
     ref,
     skill_hash: skillHashValue,
-    schema_hash: hash(io),
+    mapping_hash: hash(io),
     live_fingerprint: liveFingerprint,
     prior_hash: priorHash,
     target,
@@ -263,7 +253,6 @@ function planMapping(input = {}) {
     })),
     create: columns.filter((column) => column.action === 'create').map((column) => column.name),
     reuse: columns.filter((column) => column.action === 'reuse').map((column) => column.name),
-    decisions,
     order,
   };
   const planHash = hash(core);
@@ -290,7 +279,7 @@ function planMapping(input = {}) {
     type_conflicts: typeConflicts,
     required_risks: requiredRisks,
     template,
-    schema: io,
+    mapping: io,
   };
 }
 
@@ -319,7 +308,7 @@ function applyMapping(input = {}, planned = null) {
 
   const create = plan.columns.filter((column) => column.action === 'create');
   if (create.length) {
-    const ioByKey = new Map([...plan.schema.inputs, ...plan.schema.outputs].map((spec) => [spec.key, spec]));
+    const ioByKey = new Map([...plan.mapping.inputs, ...plan.mapping.outputs].map((spec) => [spec.key, spec]));
     const payload = create.map((column) => {
       const spec = ioByKey.get(column.key);
       return {
@@ -364,7 +353,7 @@ function applyMapping(input = {}, planned = null) {
     }
   }
 
-  const io = plan.schema;
+  const io = plan.mapping;
   const prior = priorTemplate(plan.ref).template;
   const template = buildTemplate({
     io,
@@ -376,12 +365,12 @@ function applyMapping(input = {}, planned = null) {
     prior,
     createId: true,
   });
-  const templatePath = path.join(TEMPLATES_DIR, `${plan.ref}.json`);
+  const templatePath = path.join(TEMPLATES_DIR, `${plan.ref}${TEMPLATE_SUFFIX}`);
   atomicWriteJson(templatePath, template);
   return { plan, template, template_path: templatePath, order: ordered };
 }
 
-module.exports = {
+export {
   INPUT_PREFIX,
   OUTPUT_PREFIX,
   REQUIRED_MARK,

@@ -1,13 +1,13 @@
-'use strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  ROOT, SKILLS_DIR, TEMPLATES_DIR, RUNS_DIR, OPERATIONS_DIR, MAPPINGS_DIR, TEMPLATE_SUFFIX, MAPPING_SUFFIX,
+} from './paths.js';
+import { AppError } from './errors.js';
+import { assertRef } from './ref.js';
 
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { ROOT, SKILLS_DIR, TEMPLATES_DIR, RUNS_DIR, OPERATIONS_DIR, TMP_DIR } = require('./paths');
-const { AppError } = require('./errors');
-const { assertRef } = require('./io-schema');
-
-const CONTENT_DIRS = [SKILLS_DIR, TEMPLATES_DIR, RUNS_DIR, OPERATIONS_DIR, TMP_DIR];
+const CONTENT_DIRS = [SKILLS_DIR, TEMPLATES_DIR, RUNS_DIR, OPERATIONS_DIR, MAPPINGS_DIR];
 
 function readJson(file) {
   try {
@@ -25,7 +25,9 @@ function entries(dir) {
 }
 
 function templatesOf(ref) {
-  return entries(TEMPLATES_DIR).filter((file) => readJson(file)?.skill?.path === `skills/${ref}`);
+  return entries(TEMPLATES_DIR)
+    .filter((file) => file.endsWith(TEMPLATE_SUFFIX))
+    .filter((file) => readJson(file)?.skill?.path === `skills/${ref}`);
 }
 
 function runsOf(templateIds) {
@@ -58,15 +60,13 @@ function planUnload(input = {}) {
       throw new AppError('SKILL_NOT_FOUND', `Skill not found: ${ref}`, 'Refresh the Skills list', 404);
     }
     targets.push({ path: skillDir, kind: 'skill' });
-    for (const suffix of ['io-schema.json']) {
-      const file = path.join(TMP_DIR, `${ref}.${suffix}`);
-      if (fs.existsSync(file)) targets.push({ path: file, kind: 'analysis' });
-    }
+    const mappingFile = path.join(MAPPINGS_DIR, `${ref}${MAPPING_SUFFIX}`);
+    if (fs.existsSync(mappingFile)) targets.push({ path: mappingFile, kind: 'mapping' });
 
     for (const templateFile of templatesOf(ref)) {
       const template = readJson(templateFile);
       templates.push({
-        ref: path.basename(templateFile, '.json'),
+        ref: path.basename(templateFile, TEMPLATE_SUFFIX),
         template_id: template?.template_id || null,
         table_id: template?.target?.table_id || null,
         inputs: template?.mapping?.inputs?.length || 0,
@@ -85,7 +85,6 @@ function planUnload(input = {}) {
     .sort((a, b) => relative(a.path).localeCompare(relative(b.path)));
   const removePaths = unique.map((item) => relative(item.path));
   const plan = {
-    version: 1,
     mode: input.all ? 'all' : 'skill',
     ref: input.all ? null : assertRef(input.ref),
     with_runs: withRuns,
@@ -119,4 +118,4 @@ function applyUnload(input = {}, planned = null) {
   return fresh;
 }
 
-module.exports = { CONTENT_DIRS, planUnload, applyUnload };
+export { CONTENT_DIRS, planUnload, applyUnload };

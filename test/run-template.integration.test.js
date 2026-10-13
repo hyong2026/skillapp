@@ -5,16 +5,20 @@
  * 覆盖：
  *   - record-list 必须翻完所有页，而不是只拿默认的前 100 行
  *   - 已经读到本页 cells 后，不再逐行 record-get
- *   - --pending 必须感知 Skill / Mapping 版本变化
+ *   - --incremental 必须感知 Skill / Mapping 版本变化
  *   - stdout / stderr 日志必须是 JSON 文件
  */
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawnSync } = require('child_process');
+import assert from 'node:assert';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { skillHash } from '../src/core/skill-hash.js';
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(import.meta.dirname, '..');
 const RUN_TEMPLATE = path.join(ROOT, 'src', 'cli', 'run-template.js');
 const MARKER = '__RESULT__ ';
 
@@ -39,7 +43,6 @@ function makeFixture(mode) {
     'process.stdout.write(JSON.stringify({ value: "ok" }) + "\\n");\n'
     + 'process.stderr.write("warn-line\\n");\n');
 
-  const { skillHash } = require(path.join(ROOT, 'src', 'core', 'skill-hash'));
   const template = {
     template_id: 'tpl-test',
     created_at: '2026-01-01T00:00:00+08:00',
@@ -56,10 +59,10 @@ function makeFixture(mode) {
     },
     limits: { timeout_s: 5 },
   };
-  const templatePath = path.join(root, '.data', 'templates', 'ref.json');
+  const templatePath = path.join(root, '.data', 'templates', 'ref.template.json');
   fs.writeFileSync(templatePath, JSON.stringify(template, null, 2));
 
-  if (mode === 'pending') {
+  if (mode === 'incremental') {
     fs.mkdirSync(path.join(root, '.data', 'runs', 'old-run'), { recursive: true });
     fs.writeFileSync(path.join(root, '.data', 'runs', 'old-run', 'run.json'), JSON.stringify({
       run_id: 'old-run',
@@ -77,45 +80,52 @@ function makeFixture(mode) {
   return { root, templatePath, rows };
 }
 
+/** 假的多维表格：内存表，记下每次调用的分页参数与回读次数。 */
+function fakeLarkSource(rows) {
+  return `'use strict';
+
+const FIELDS = ${JSON.stringify(FIELDS)};
+const rows = ${JSON.stringify(rows)};
+const state = { rows, listCalls: [], getCalls: 0 };
+
+exports.state = state;
+exports.lark = (args) => {
+  const cmd = args[1];
+  const flag = (name) => { const i = args.indexOf(name); return i < 0 ? null : args[i + 1]; };
+
+  if (cmd === '+field-list') return { ok: true, data: { fields: FIELDS } };
+  if (cmd === '+record-list') {
+    const limit = Number(flag('--limit') ?? 100);
+    const offset = Number(flag('--offset') ?? 0);
+    const projection = args.flatMap((arg, i) => (arg === '--field-id' ? [args[i + 1]] : []));
+    state.listCalls.push({ limit, offset, projection });
+    return {
+      ok: true,
+      data: {
+        field_id_list: FIELDS.map((f) => f.id),
+        record_id_list: rows.slice(offset, offset + limit).map((r) => r.record_id),
+        data: rows.slice(offset, offset + limit).map((r) => r.values),
+      },
+    };
+  }
+  if (cmd === '+record-get') {
+    state.getCalls += 1;
+    const row = rows.find((r) => r.record_id === flag('--record-id'));
+    return { ok: true, data: { field_id_list: FIELDS.map((f) => f.id), data: [row.values] } };
+  }
+  if (cmd === '+record-batch-update') return { ok: true, data: {} };
+  throw new Error('未打桩的 lark 调用: ' + args.join(' '));
+};
+`;
+}
+
 async function runWorker(mode) {
   const { root, templatePath, rows } = makeFixture(mode);
   process.env.SKILLAPP_ROOT = root;
   process.env.SKILLAPP_DATA_DIR = path.join(root, '.data');
-  const table = { rows, listCalls: [], getCalls: 0 };
-
-  const fakeLark = (args) => {
-    const cmd = args[1];
-    if (cmd === '+field-list') return { ok: true, data: { fields: FIELDS } };
-    if (cmd === '+record-list') {
-      const limit = Number(flag(args, '--limit') ?? 100);
-      const offset = Number(flag(args, '--offset') ?? 0);
-      const projection = args.flatMap((arg, i) => (arg === '--field-id' ? [args[i + 1]] : []));
-      table.listCalls.push({ limit, offset, projection });
-      return {
-        ok: true,
-        data: {
-          field_id_list: FIELDS.map((f) => f.id),
-          record_id_list: rows.slice(offset, offset + limit).map((r) => r.record_id),
-          data: rows.slice(offset, offset + limit).map((r) => r.values),
-        },
-      };
-    }
-    if (cmd === '+record-get') {
-      table.getCalls += 1;
-      const row = rows.find((r) => r.record_id === flag(args, '--record-id'));
-      return { ok: true, data: { field_id_list: FIELDS.map((f) => f.id), data: [row.values] } };
-    }
-    if (cmd === '+record-batch-update') return { ok: true, data: {} };
-    throw new Error(`未打桩的 lark 调用: ${args.join(' ')}`);
-  };
-
-  const larkPath = require.resolve(path.join(ROOT, 'src', 'core', 'lark.js'));
-  require.cache[larkPath] = {
-    id: larkPath,
-    filename: larkPath,
-    loaded: true,
-    exports: { ROOT: root, lark: fakeLark },
-  };
+  const fakePath = path.join(root, 'fake-lark.cjs');
+  fs.writeFileSync(fakePath, fakeLarkSource(rows));
+  process.env.SKILLAPP_LARK_MODULE = fakePath;
 
   const stdout = [];
   const errors = [];
@@ -129,12 +139,12 @@ async function runWorker(mode) {
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
   process.argv = ['node', RUN_TEMPLATE, templatePath];
   if (mode !== 'logs') process.argv.push('--dry-run');
-  if (mode === 'pending') process.argv.push('--pending');
+  if (mode === 'incremental') process.argv.push('--incremental');
 
   let exitCode = null;
   let harnessError = null;
   try {
-    const cli = require(RUN_TEMPLATE);
+    const cli = await import(pathToFileURL(RUN_TEMPLATE).href);
     await cli.mainPromise;
   } catch (err) {
     if (err instanceof ExitCalled) exitCode = err.code;
@@ -144,6 +154,8 @@ async function runWorker(mode) {
   process.exit = realExit;
   console.log = realLog;
   console.error = realError;
+
+  const table = createRequire(import.meta.url)(fakePath).state;
 
   let logs = null;
   let logReadError = null;
@@ -169,8 +181,8 @@ async function runWorker(mode) {
     errors,
     listCalls: table.listCalls,
     getCalls: table.getCalls,
-    dryRows: stdout.filter((l) => l.includes('→ rec')).length,
-    noRows: stdout.some((l) => l.includes('没有符合条件的行')),
+    dryRows: stdout.filter((line) => line.includes('→ rec')).length,
+    noRows: stdout.some((line) => line.includes('没有符合条件的行')),
     logs,
     logReadError,
   }) + '\n');
@@ -182,32 +194,31 @@ if (process.argv.includes('--worker')) {
     process.exit(1);
   });
 } else {
-  const { test } = require('node:test');
-  const assert = require('node:assert');
+  const { test } = await import('node:test');
 
-  function scenario(mode) {
-    const r = spawnSync(process.execPath, [__filename, '--worker', '--mode', mode], {
+  const scenario = (mode) => {
+    const r = spawnSync(process.execPath, [import.meta.filename, '--worker', '--mode', mode], {
       encoding: 'utf8',
       timeout: 120000,
     });
-    const line = (r.stdout || '').split('\n').find((l) => l.startsWith(MARKER));
+    const line = (r.stdout || '').split('\n').find((candidate) => candidate.startsWith(MARKER));
     assert.ok(line, `worker 没有给出结果（exit=${r.status}）:\n${r.stdout}\n${r.stderr}`);
     const out = JSON.parse(line.slice(MARKER.length));
     assert.equal(out.harnessError, null, `worker 自己抛了异常:\n${out.harnessError}`);
     return out;
-  }
+  };
 
   test('record-list 会翻完所有页，且不再逐行 record-get', () => {
     const out = scenario('pagination');
     assert.equal(out.exitCode, null);
     assert.equal(out.dryRows, 201);
     assert.equal(out.getCalls, 0, '已经拿到列表 cells，不应再逐行 record-get');
-    assert.deepEqual(out.listCalls.map((c) => [c.limit, c.offset]), [[200, 0], [200, 200]]);
+    assert.deepEqual(out.listCalls.map((call) => [call.limit, call.offset]), [[200, 0], [200, 200]]);
     assert.deepEqual(out.listCalls[0].projection, ['fldIn']);
   });
 
-  test('--pending 会因 Skill / Mapping 版本变化而重跑', () => {
-    const out = scenario('pending');
+  test('--incremental 会因 Skill / Mapping 版本变化而重跑', () => {
+    const out = scenario('incremental');
     assert.equal(out.exitCode, null);
     assert.equal(out.noRows, false);
     assert.equal(out.dryRows, 1);

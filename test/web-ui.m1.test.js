@@ -1,12 +1,10 @@
-'use strict';
-
-const assert = require('node:assert');
-const fs = require('node:fs');
-const http = require('node:http');
-const os = require('node:os');
-const path = require('node:path');
-const { after, before, test } = require('node:test');
-const { createServer } = require('../src/server/app');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { after, before, test } from 'node:test';
+import { createServer } from '../src/server/app.js';
 
 const TOKEN = 'test-token';
 const AUTH = `Basic ${Buffer.from(`skillapp:${TOKEN}`).toString('base64')}`;
@@ -30,14 +28,14 @@ function buildFixture() {
     hash: 'sha256:foo',
     loaded_at: '2026-01-01T00:00:00.000Z',
   }, null, 2));
-  write('tmp/foo.io-schema.json', JSON.stringify({
+  write('mappings/foo.mapping.json', JSON.stringify({
     skill: { entry: 'main.js' },
     cmd: 'node {skill.entry}',
     inputs: [{ key: 'text', label: '文本', type: 'text', required: true }],
     outputs: [{ key: 'result', label: '结果', type: 'text', from: 'stdout.value' }],
   }, null, 2));
 
-  write('templates/foo.json', JSON.stringify({
+  write('templates/foo.template.json', JSON.stringify({
     template_id: 'template-1',
     created_at: '2026-01-01T00:00:00+08:00',
     skill: { path: 'skills/foo', hash: 'sha256:foo', entry: 'main.js' },
@@ -49,7 +47,7 @@ function buildFixture() {
     run_id: 'run-1',
     template_id: 'template-1',
     status: 'completed',
-    trigger: 'pending',
+    trigger: 'incremental',
     started_at: '2026-01-02T00:00:00.000Z',
     finished_at: '2026-01-02T00:00:01.000Z',
     succeeded: 1,
@@ -137,7 +135,7 @@ test('Skill 列表与详情返回指纹和分析产物', async () => {
   assert.equal(list.body.data[0].hash, 'sha256:foo');
 
   const detail = await getJson('/api/skills/foo');
-  assert.equal(detail.body.data.analysis.schema.inputs[0].key, 'text');
+  assert.equal(detail.body.data.analysis.mapping.inputs[0].key, 'text');
 });
 
 test('Template 列表与详情可按 template_id 查询', async () => {
@@ -182,15 +180,20 @@ test('静态控制台可访问', async () => {
   assert.equal(page.status, 200);
   assert.match(await page.text(), /SkillApp/);
 
+  // 控制台是一组 ES 模块：入口与它 import 的模块都要能取到
   const script = await fetch(`${baseUrl}/app.js`, { headers: { authorization: AUTH } });
   assert.equal(script.status, 200);
-  const appScript = await script.text();
-  assert.match(appScript, /skillsView/);
-  assert.match(appScript, /function codeBlock/);
+  assert.match(await script.text(), /from '\.\/lib\/router\.js'/);
 
-  const renderer = await fetch(`${baseUrl}/markdown.js`, { headers: { authorization: AUTH } });
-  assert.equal(renderer.status, 200);
-  assert.match(await renderer.text(), /renderMarkdown/);
+  for (const asset of [
+    '/lib/router.js', '/lib/components.js', '/lib/dialogs.js', '/lib/dom.js', '/lib/format.js',
+    '/lib/links.js', '/lib/api.js', '/lib/shell.js', '/lib/highlight.js',
+    '/views/skills.js', '/views/templates.js', '/views/runs.js',
+    '/views/run-item.js', '/views/operations.js', '/views/settings.js',
+  ]) {
+    const response = await fetch(`${baseUrl}${asset}`, { headers: { authorization: AUTH } });
+    assert.equal(response.status, 200, `${asset} 应可访问`);
+  }
 });
 
 test('未开放的写接口仍会被拒绝', async () => {

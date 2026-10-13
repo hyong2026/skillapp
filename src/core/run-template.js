@@ -5,13 +5,13 @@
  *       Run 与其中的 RunItem 都记在 .data/runs/<run_id>/run.json。
  */
 
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { spawn } = require('child_process');
-const { lark } = require('./lark');
-const { skillHash } = require('./skill-hash');
-const { DATA_DIR, RUNS_DIR } = require('./paths');
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { lark } from './lark.js';
+import { skillHash } from './skill-hash.js';
+import { DATA_DIR, RUNS_DIR } from './paths.js';
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
 const RECORD_PAGE_SIZE = 200; // JSON 模式 record-list 的上限
 
@@ -202,7 +202,7 @@ const fingerprintOf = (inputs, cells) =>
 
 const withoutLiveName = ({ field_name, ...field }) => field;
 
-/** Skill、命令、目标与生效映射共同组成一次“工作版本”。任一变化都应让 --pending 重跑。 */
+/** Skill、命令、目标与生效映射共同组成一次“工作版本”。任一变化都应让 --incremental 重跑。 */
 function workHashOf(tpl, inputs, outputs) {
   return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify({
     skill_hash: tpl.skill.hash,
@@ -492,10 +492,11 @@ function normalizeOptions(options = {}) {
   const recordIds = Array.isArray(options.recordIds)
     ? options.recordIds.map((id) => String(id)).filter(Boolean)
     : [];
+  const incremental = options.trigger === 'incremental';
   const trigger = recordIds.length
     ? 'record-id'
-    : options.trigger === 'pending'
-      ? 'pending'
+    : incremental
+      ? 'incremental'
       : options.trigger === 'record-id' ? 'record-id' : 'all';
   return { trigger, recordIds, dryRun: Boolean(options.dryRun) };
 }
@@ -513,7 +514,7 @@ function selectRows(tpl, options) {
   let rows = all;
   if (normalized.trigger === 'record-id') {
     rows = all.filter((row) => normalized.recordIds.includes(row.record_id));
-  } else if (normalized.trigger === 'pending') {
+  } else if (normalized.trigger === 'incremental') {
     rows = all.filter((row) => !upToDate(
       history,
       row.record_id,
@@ -634,7 +635,7 @@ async function runTemplate({ template, options = {}, runId = generateRunId(), ru
   return { run, workdir };
 }
 
-module.exports = {
+export {
   generateRunId,
   normalizeOptions,
   previewTemplate,

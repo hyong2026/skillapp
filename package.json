@@ -1,0 +1,13 @@
+{
+  "name": "skillapp",
+  "version": "0.3.3",
+  "private": true,
+  "description": "把 Skill 装载、映射到飞书多维表格并批量执行的本地控制台",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server/index.js",
+    "test": "node --test"
+  }
+}

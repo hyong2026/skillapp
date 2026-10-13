@@ -1,12 +1,10 @@
-'use strict';
-
-const assert = require('node:assert');
-const fs = require('node:fs');
-const http = require('node:http');
-const os = require('node:os');
-const path = require('node:path');
-const { after, before, test } = require('node:test');
-const { createServer } = require('../src/server/app');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { after, before, test } from 'node:test';
+import { createServer } from '../src/server/app.js';
 
 const TOKEN = 'test-token';
 const AUTH = `Basic ${Buffer.from(`skillapp:${TOKEN}`).toString('base64')}`;
@@ -33,9 +31,8 @@ function buildFixture() {
     "  cmd: 'node {skill.entry} -o {outdir}',",
     "  inputs: [{ key: 'title', label: 'Title', type: 'text', required: true }],",
     "  outputs: [{ key: 'result', label: 'Result', type: 'text', from: 'stdout.value' }],",
-    "  questions: [],",
     "};",
-    "fs.writeFileSync(process.env.SKILLAPP_ANALYZE_SCHEMA_PATH, JSON.stringify(schema));",
+    "fs.writeFileSync(process.env.SKILLAPP_ANALYZE_MAPPING_PATH, JSON.stringify(schema));",
   ].join('\n'));
   write('fake-lark.js', [
     "'use strict';",
@@ -96,16 +93,16 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForOperation(ref, kind) {
+async function waitForOperation(ref, alias) {
   const deadline = Date.now() + 8000;
   let result;
   while (Date.now() < deadline) {
-    result = await requestJson(`/api/skills/${ref}/operations/${kind}`);
+    result = await requestJson(`/api/skills/${ref}/operations/${alias}`);
     if (!result.response.ok) throw new Error(JSON.stringify(result.body));
     if (['completed', 'failed', 'canceled', 'interrupted'].includes(result.body.data.status)) return result.body.data;
     await sleep(50);
   }
-  throw new Error(`Timed out waiting for ${kind} on ${ref}`);
+  throw new Error(`Timed out waiting for ${alias} on ${ref}`);
 }
 
 before(async () => {
@@ -127,7 +124,7 @@ after(async () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('M3 可以通过 Web API 装载 Skill、保存 Schema 并生成 Template', async () => {
+test('M3 可以通过 Web API 装载 Skill、保存 Mapping 并生成 Template', async () => {
   const load = await requestJson('/api/skills/load', {
     method: 'POST',
     body: { source_path: path.join(root, 'demo') },
@@ -154,22 +151,13 @@ test('M3 可以通过 Web API 装载 Skill、保存 Schema 并生成 Template', 
     cmd: 'node {skill.entry} -o {outdir}',
     inputs: [{ key: 'title', label: 'Title', type: 'text', required: true }],
     outputs: [{ key: 'result', label: 'Result', type: 'text', from: 'stdout.value' }],
-    questions: [{
-      id: 'result-type',
-      question: 'Should Result be text?',
-      recommendation: 'Keep it as text',
-      rationale: 'The Skill returns a string.',
-      default: 'text',
-    }],
   };
-  const saved = await requestJson('/api/skills/demo/io-schema', {
+  const saved = await requestJson('/api/skills/demo/mapping', {
     method: 'PUT',
-    body: { schema },
+    body: { mapping: schema },
   });
   assert.equal(saved.response.status, 200);
-  assert.equal(saved.body.data.schema.version, 1);
-  assert.match(saved.body.data.schema.skill_hash, /^sha256:/);
-  assert.equal(saved.body.data.schema.questions[0].answer, 'Keep it as text');
+  assert.match(saved.body.data.mapping.skill_hash, /^sha256:/);
 
   const apply = await requestJson('/api/mappings', {
     method: 'POST',
@@ -202,7 +190,7 @@ test('M3 分析结果能标记 Skill 指纹过期，卸载会删除关联 Run', 
   assert.equal(detail.body.data.analysis.state, 'stale');
   assert.equal(detail.body.data.analysis.stale, true);
 
-  const templateFile = path.join(root, 'templates', 'demo.json');
+  const templateFile = path.join(root, 'templates', 'demo.template.json');
   const template = JSON.parse(fs.readFileSync(templateFile, 'utf8'));
   write('runs/run-demo/run.json', JSON.stringify({ run_id: 'run-demo', template_id: template.template_id, items: [] }));
 

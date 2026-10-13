@@ -1,9 +1,7 @@
-'use strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const fs = require('fs');
-const path = require('path');
-
-const ROOT = path.resolve(__dirname, '..', '..');
+const ROOT = path.resolve(import.meta.dirname, '..', '..');
 
 function parseEnv(text) {
   const values = {};
@@ -31,4 +29,4 @@ function loadEnv(file = path.join(ROOT, '.env')) {
   return values;
 }
 
-module.exports = { ROOT, parseEnv, loadEnv };
+export { ROOT, parseEnv, loadEnv };

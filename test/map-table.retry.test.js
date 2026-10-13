@@ -3,27 +3,28 @@
  * map-table.js 的「建列后回读」回归测试。
  *
  * 被测的是真代码：真跑 src/cli/map-table.js，只替换两处外部依赖——
- *   - src/core/lark → 假的多维表格（可让新建的列延迟 N 次 field-list 才可见 = 飞书字段传播延迟）
- *   - spawnSync → sleep 空转、node 自检直接成功
+ *   - src/core/lark → 假的多维表格（经 SKILLAPP_LARK_MODULE 注入；能让新建的列延迟 N 次 field-list 才可见）
+ *   - PATH 上的 sleep / node → 空转替身（退避不耗时、自检直接成功，只记调用次数）
  * 契约夹具内嵌在下面，写操作全落在 os.tmpdir() 下的临时 ROOT 里，不碰真表、不碰 .data/templates/。
  *
- *   node --test                     # 在仓库根跑全部（Node 默认的测试文件匹配规则）
- *   node test/map-table.retry.test.js --worker --hidden-reads 2   # 单跑一个场景（调试用）
+ *   node --test                                                   # 在仓库根跑全部（Node 默认的测试文件匹配规则）
+ *   node test/map-table.retry.test.js --worker --hidden-reads 2    # 单跑一个场景（调试用）
  *
  * 这个 bug 的由来：第一次把 image-split 映射到真实表格时，8 列建完后立刻回读却没读到，
  * 于是报「新建后仍找不到列『out: 每格高 (px)』」中断。旧代码的回读只试一次，
  * 而同一个文件里的 setColumnOrder 对同样的延迟已经重试了 3 次。
- *
- * 修复前后都验证过：摘掉补丁（`git stash push src/cli/map-table.js`）后跑 `node --test`，
- * 5 个用例里 4 个失败（零延迟那个仍会过——它一次回读就命中）；恢复补丁后 5/5 通过。
  */
 
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const { spawnSync } = require('child_process');
+import assert from 'node:assert';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(import.meta.dirname, '..');
 const MAP_TABLE = path.join(ROOT, 'src', 'cli', 'map-table.js');
 const REF = 'testref';
 const MARKER = '__RESULT__ ';
@@ -47,99 +48,111 @@ const FIXTURE = {
 const EXPECTED_ORDER = ['任务名称', '＊in: 待切图片', '＊in: 网格数', 'out: 切片', 'out: 切片数'];
 const EXPECTED_CREATED = FIXTURE.inputs.length + FIXTURE.outputs.length;
 
-// ─── worker：打桩跑一次 map-table ─────────────────────────────────────────
+// ─── worker：在临时 ROOT 里真跑一次 map-table ─────────────────────────────
 
-function runWorker(hiddenReads) {
-  const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-retry-'));
-  process.env.SKILLAPP_ROOT = fake;
-  process.env.SKILLAPP_DATA_DIR = path.join(fake, '.data');
+/**
+ * 假的多维表格：内存表 + 可配置的字段可见延迟。
+ * 写成文件是因为 src/core/lark 只接受「模块路径」这一种注入方式。
+ */
+function fakeLarkSource(hiddenReads) {
+  return `'use strict';
 
-  // 1) 打桩 child_process.spawnSync —— 必须早于 require（两端都在 require 时解构）
-  const cp = require('child_process');
-  const realSpawnSync = cp.spawnSync;
-  const calls = { sleep: 0, selfCheck: 0 };
-  cp.spawnSync = (cmd, args = []) => {
-    if (cmd === 'sleep') { calls.sleep += 1; return { status: 0, stdout: '', stderr: '' }; }
-    if (cmd === 'node') { calls.selfCheck += 1; return { status: 0, stdout: '  [stub] 自检已跳过\n', stderr: '' }; }
-    return realSpawnSync(cmd, args);
-  };
+const table = {
+  fields: [{ id: 'fldP', name: '文本', type: 'text' }],
+  visible: ['文本'],
+  fresh: [],
+  delay: ${hiddenReads}, // 建列之后还要过几次 field-list 才可见（传播延迟按时间算，故从建列那刻才开始）
+  pendingReads: 0,
+  createdPayload: null,
+  finalOrder: null,
+  primaryRenamedTo: null,
+};
+let newId = 0;
 
-  // 2) 临时 ROOT：已装 Skill + 契约副本
-  fs.mkdirSync(path.join(fake, '.data', 'skills', REF), { recursive: true });
-  fs.mkdirSync(path.join(fake, '.data', 'tmp'), { recursive: true });
-  fs.writeFileSync(path.join(fake, '.data', 'skills', REF, 'SKILL.md'), '# stub\n');
-  fs.writeFileSync(path.join(fake, '.data', 'skills', REF, 'source.json'),
-    JSON.stringify({ source: '/tmp/stub', hash: 'sha256:stub', loaded_at: '' }));
-  fs.writeFileSync(path.join(fake, '.data', 'tmp', `${REF}.io-schema.json`), JSON.stringify(FIXTURE, null, 2));
+exports.state = table;
+exports.lark = (args) => {
+  const cmd = args[1];
+  const flag = (f) => { const i = args.indexOf(f); return i < 0 ? null : args[i + 1]; };
+  const jsonArg = () => JSON.parse(flag('--json'));
 
-  // 3) 打桩 src/core/lark
-  const table = {
-    fields: [{ id: 'fldP', name: '文本', type: 'text' }],
-    visible: ['文本'],
-    hiddenReads: 0, // 建列之后还要过几次 field-list 才可见（传播延迟按时间算，故从建列那刻才开始）
-    fresh: [],
-    createdPayload: null,
-    finalOrder: null,
-    primaryRenamedTo: null,
-  };
-  let newId = 0;
-
-  const fakeLark = (args) => {
-    const [, cmd] = args;
-    const flag = (f) => { const i = args.indexOf(f); return i < 0 ? null : args[i + 1]; };
-    const jsonArg = () => JSON.parse(flag('--json'));
-
-    switch (cmd) {
-      case '+url-resolve':
-        return { ok: true, data: { base_token: 'basStub', table_id: 'tblStub', view_id: 'vewStub' } };
-
-      case '+field-list': {
-        const hiding = table.hiddenReads > 0;
-        if (hiding) table.hiddenReads -= 1;
-        const fields = hiding ? table.fields.filter((f) => !table.fresh.includes(f)) : table.fields;
-        return { ok: true, data: { fields } };
-      }
-
-      case '+view-get-visible-fields':
-        return { ok: true, data: { visible_fields: table.visible } };
-
-      case '+field-create': {
-        table.createdPayload = jsonArg();
-        table.hiddenReads = hiddenReads;
-        for (const spec of table.createdPayload) {
-          const f = { id: `fldNew${newId += 1}`, name: spec.name, type: spec.type };
-          table.fields.push(f);
-          table.fresh.push(f);
-        }
-        return { ok: true, data: {} };
-      }
-
-      case '+field-update': {
-        const spec = jsonArg();
-        const f = table.fields.find((x) => x.id === flag('--field-id'));
-        if (f) { f.name = spec.name; table.primaryRenamedTo = spec.name; }
-        return { ok: true, data: {} };
-      }
-
-      case '+view-set-visible-fields':
-        table.finalOrder = jsonArg().visible_fields;
-        return { ok: true, data: {} };
-
-      default:
-        throw new Error(`打桩未覆盖的调用: ${args.join(' ')}`);
+  switch (cmd) {
+    case '+url-resolve':
+      return { ok: true, data: { base_token: 'basStub', table_id: 'tblStub', view_id: 'vewStub' } };
+    case '+field-list': {
+      const hiding = table.pendingReads > 0;
+      if (hiding) table.pendingReads -= 1;
+      const fields = hiding ? table.fields.filter((f) => !table.fresh.includes(f)) : table.fields;
+      return { ok: true, data: { fields } };
     }
-  };
+    case '+view-get-visible-fields':
+      return { ok: true, data: { visible_fields: table.visible } };
+    case '+field-create': {
+      table.createdPayload = jsonArg();
+      table.pendingReads = table.delay;
+      for (const spec of table.createdPayload) {
+        const field = { id: 'fldNew' + (newId += 1), name: spec.name, type: spec.type };
+        table.fields.push(field);
+        table.fresh.push(field);
+      }
+      return { ok: true, data: {} };
+    }
+    case '+field-update': {
+      const spec = jsonArg();
+      const field = table.fields.find((item) => item.id === flag('--field-id'));
+      if (field) { field.name = spec.name; table.primaryRenamedTo = spec.name; }
+      return { ok: true, data: {} };
+    }
+    case '+view-set-visible-fields':
+      table.finalOrder = jsonArg().visible_fields;
+      return { ok: true, data: {} };
+    default:
+      throw new Error('打桩未覆盖的调用: ' + args.join(' '));
+  }
+};
+`;
+}
 
-  const larkPath = require.resolve(path.join(ROOT, 'src', 'core', 'lark.js'));
-  require.cache[larkPath] = {
-    id: larkPath, filename: larkPath, loaded: true,
-    exports: { ROOT: fake, lark: fakeLark },
+/** PATH 上的 sleep / node 替身：每次调用往日志里记一笔，便于断言退避次数与自检次数。 */
+function makeStubBin(root) {
+  const bin = path.join(root, 'bin');
+  const calls = path.join(root, 'calls.log');
+  fs.mkdirSync(bin, { recursive: true });
+  const write = (name, body) => {
+    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho ${name} >> "${calls}"\n${body}\n`);
+    fs.chmodSync(path.join(bin, name), 0o755);
   };
+  write('sleep', 'exit 0');
+  write('node', "echo '  [stub] 自检已跳过'");
+  return { bin, calls };
+}
+
+async function runWorker(hiddenReads) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-retry-'));
+  process.env.SKILLAPP_ROOT = root;
+  process.env.SKILLAPP_DATA_DIR = path.join(root, '.data');
+
+  // 1) 注入假 lark，替代 lark-cli
+  const fakePath = path.join(root, 'fake-lark.cjs');
+  fs.writeFileSync(fakePath, fakeLarkSource(hiddenReads));
+  process.env.SKILLAPP_LARK_MODULE = fakePath;
+
+  // 2) 把 PATH 上的 sleep / node 换成空转替身
+  const { bin, calls } = makeStubBin(root);
+  const realPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${realPath}`;
+
+  // 3) 临时 ROOT：已装 Skill + 契约副本
+  fs.mkdirSync(path.join(root, '.data', 'skills', REF), { recursive: true });
+  fs.mkdirSync(path.join(root, '.data', 'mappings'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.data', 'skills', REF, 'SKILL.md'), '# stub\n');
+  fs.writeFileSync(path.join(root, '.data', 'skills', REF, 'source.json'),
+    JSON.stringify({ source: '/tmp/stub', hash: 'sha256:stub', loaded_at: '' }));
+  fs.writeFileSync(path.join(root, '.data', 'mappings', `${REF}.mapping.json`), JSON.stringify(FIXTURE, null, 2));
 
   // 4) 真跑 map-table.js：它的 catch 会 process.exit(1)，这里换成可捕获的异常
   const errors = [];
   const realError = console.error;
-  console.error = (...a) => { errors.push(a.join(' ')); realError(...a); };
+  console.error = (...args) => { errors.push(args.join(' ')); realError(...args); };
   class ExitCalled extends Error {}
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
@@ -149,27 +162,31 @@ function runWorker(hiddenReads) {
   let exitCode = null;
   let harnessError = null;
   try {
-    require(MAP_TABLE);
+    await import(pathToFileURL(MAP_TABLE).href);
   } catch (err) {
     if (err instanceof ExitCalled) exitCode = err.code;
     else harnessError = err.stack || String(err);
   }
   process.exit = realExit;
   console.error = realError;
+  process.env.PATH = realPath;
 
-  const templatePath = path.join(fake, '.data', 'templates', `${REF}.json`);
+  // 假 lark 与实际执行共用同一个模块实例，直接读它的表状态即可
+  const state = createRequire(import.meta.url)(fakePath).state;
+  const templatePath = path.join(root, '.data', 'templates', `${REF}.template.json`);
   const template = fs.existsSync(templatePath) ? JSON.parse(fs.readFileSync(templatePath, 'utf8')) : null;
+  const callLog = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean) : [];
 
   process.stdout.write(MARKER + JSON.stringify({
     hiddenReads,
     exitCode,
     harnessError,
-    sleeps: calls.sleep,
-    selfChecks: calls.selfCheck,
-    created: table.createdPayload?.length ?? 0,
-    described: table.createdPayload?.filter((f) => f.description).length ?? 0,
-    order: table.finalOrder,
-    primaryRenamedTo: table.primaryRenamedTo,
+    sleeps: callLog.filter((line) => line === 'sleep').length,
+    selfChecks: callLog.filter((line) => line === 'node').length,
+    created: state.createdPayload ? state.createdPayload.length : 0,
+    described: state.createdPayload ? state.createdPayload.filter((field) => field.description).length : 0,
+    order: state.finalOrder,
+    primaryRenamedTo: state.primaryRenamedTo,
     templateWritten: Boolean(template),
     template,
     errorText: errors.join('\n'),
@@ -179,16 +196,16 @@ function runWorker(hiddenReads) {
 // ─── driver：node:test ────────────────────────────────────────────────────
 
 if (process.argv.includes('--worker')) {
-  const i = process.argv.indexOf('--hidden-reads');
-  runWorker(Number(process.argv[i + 1] ?? 0));
+  const index = process.argv.indexOf('--hidden-reads');
+  runWorker(Number(process.argv[index + 1] ?? 0)).catch((err) => {
+    console.error(err.stack || String(err));
+    process.exit(1);
+  });
 } else {
-  const { test } = require('node:test');
-  const assert = require('node:assert');
-
   const scenario = (hiddenReads) => {
-    const r = spawnSync(process.execPath, [__filename, '--worker', '--hidden-reads', String(hiddenReads)],
+    const r = spawnSync(process.execPath, [import.meta.filename, '--worker', '--hidden-reads', String(hiddenReads)],
       { encoding: 'utf8', timeout: 120000 });
-    const line = (r.stdout || '').split('\n').find((l) => l.startsWith(MARKER));
+    const line = (r.stdout || '').split('\n').find((candidate) => candidate.startsWith(MARKER));
     assert.ok(line, `worker 没有给出结果（exit=${r.status}）:\n${r.stdout}\n${r.stderr}`);
     const out = JSON.parse(line.slice(MARKER.length));
     assert.equal(out.harnessError, null, `worker 自己抛了异常:\n${out.harnessError}`);
@@ -209,7 +226,7 @@ if (process.argv.includes('--worker')) {
     const tpl = out.template;
     const entries = [...tpl.mapping.inputs, ...tpl.mapping.outputs];
     assert.equal(entries.length, EXPECTED_CREATED);
-    assert.ok(entries.every((e) => typeof e.field_id === 'string' && e.field_id.startsWith('fldNew')),
+    assert.ok(entries.every((entry) => typeof entry.field_id === 'string' && entry.field_id.startsWith('fldNew')),
       '每个映射条目都要拿到 field_id');
     assert.equal(tpl.skill.hash, 'sha256:stub', 'Skill 指纹应原样带上');
     assert.equal(tpl.target.table_id, 'tblStub', '目标表格应原样带上');
@@ -225,7 +242,7 @@ if (process.argv.includes('--worker')) {
       assert.deepEqual(out.order, EXPECTED_ORDER, '列序应与契约一致');
       assert.equal(out.templateWritten, true, 'Template 应写出');
       assert.ok([...out.template.mapping.inputs, ...out.template.mapping.outputs]
-        .every((e) => typeof e.field_id === 'string' && e.field_id), '每个映射条目都要拿到 field_id');
+        .every((entry) => typeof entry.field_id === 'string' && entry.field_id), '每个映射条目都要拿到 field_id');
     });
   }
 
