@@ -44,6 +44,18 @@ const maybeJson = (file) => {
   }
 };
 
+/** 日志按文本读；早期 Run 存的是 JSON 包装，读旧格式时把里面的文本取出来。 */
+function readLog(recordDir, stream) {
+  const file = path.join(recordDir, 'logs', `${stream}.log`);
+  if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8');
+
+  const legacy = maybeJson(path.join(recordDir, 'logs', `${stream}.json`));
+  if (legacy === null) return null;
+  const data = legacy.data;
+  if (data && typeof data === 'object' && 'raw' in data) return String(data.raw);
+  return JSON.stringify(data, null, 2);
+}
+
 function listFiles(root, predicate = () => true) {
   if (!fs.existsSync(root)) return [];
 
@@ -250,8 +262,8 @@ class ReadModel {
     return {
       ...item,
       logs: {
-        stdout: maybeJson(path.join(recordDir, 'logs', 'stdout.json')),
-        stderr: maybeJson(path.join(recordDir, 'logs', 'stderr.json')),
+        stdout: readLog(recordDir, 'stdout'),
+        stderr: readLog(recordDir, 'stderr'),
       },
       artifacts: walkArtifacts(path.join(recordDir, 'artifacts')),
     };

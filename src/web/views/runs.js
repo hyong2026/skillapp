@@ -1,7 +1,7 @@
 import { api, watchRun } from '../lib/api.js';
-import { dataPanel, dataTable, empty, head, kv, panel, viewTitle } from '../lib/components.js';
+import { dataPanel, dataTable, head, kv, panel, viewTitle } from '../lib/components.js';
 import { actionButton, fragment, h, setNotice } from '../lib/dom.js';
-import { codeBlock, encoded, formatDate, statusBadge, triggerLabel } from '../lib/format.js';
+import { encoded, formatDate, statusBadge, textBlock, triggerLabel } from '../lib/format.js';
 import { hashLink, templateLink } from '../lib/links.js';
 import { renderViewContent } from '../lib/shell.js';
 
@@ -76,8 +76,8 @@ function runContent(runId, run, liveLogs) {
     logPanel.append(h('section', { className: 'live-log' }, [
       h('h3', { textContent: recordId }),
       h('div', { className: 'detail-grid' }, [
-        panel('Stdout', h('div', { className: 'panel-body' }, streams.stdout ? codeBlock(streams.stdout) : empty('No output'))),
-        panel('Stderr', h('div', { className: 'panel-body' }, streams.stderr ? codeBlock(streams.stderr) : empty('No output'))),
+        panel('Stdout', h('div', { className: 'panel-body' }, textBlock(streams.stdout))),
+        panel('Stderr', h('div', { className: 'panel-body' }, textBlock(streams.stderr))),
       ]),
     ]));
   }
@@ -96,6 +96,7 @@ function runContent(runId, run, liveLogs) {
       ['Started', formatDate(run.started_at)],
       ['Finished', formatDate(run.finished_at)],
       ['Succeeded / Failed', `${run.succeeded ?? '—'} / ${run.failed ?? '—'}`],
+      ['Error', run.error || '—'],
       ['Work Hash', h('span', { className: 'mono', textContent: run.work_hash || '—' })],
     ]))),
     panel('Run Items', h('div', { className: 'panel-body flush' }, dataTable(

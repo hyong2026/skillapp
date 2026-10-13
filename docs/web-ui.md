@@ -130,7 +130,7 @@ Task Runner
 ### Runs
 
 - 列表展示状态、Template、触发方式、成功/失败数和开始时间。
-- Run 详情展示摘要、进度条、RunItem 状态、Stdout、Stderr 和 Live Output。
+- Run 详情展示摘要（含 Run 级 `error`）、进度条、RunItem 状态、Stdout、Stderr 和 Live Output。
 - RunItem 详情展示状态、阶段、耗时、错误、输入 Hash、Artifacts 和两种日志。
 - 运行中的 Run 支持取消；终态 Run 存在失败行时，可以创建只包含失败行的新 Run。
 
@@ -300,8 +300,8 @@ error
 │       ├── downloads/
 │       ├── artifacts/
 │       └── logs/
-│           ├── stdout.json
-│           └── stderr.json
+│           ├── stdout.log
+│           └── stderr.log
 └── mappings/
     └── <ref>.mapping.json
 ```
@@ -312,7 +312,9 @@ error
 - JSON 状态文件使用临时文件 + rename 原子更新。
 - `run.json` 在 Run 启动时创建，并在状态或 RunItem 变化时更新。
 - `operation.json` 记录 Load、Analyze、Mapping、Unload 的状态、输入、结果和错误。
-- stdout/stderr 以 JSON 文件保存，内容可以是对象、数组、标量或原始文本。
+- stdout/stderr 以 `.log` 文本原样保存；早期 Run 的 JSON 包装仍可读（自动取出文本）。
+- 输入归一：文本列里被飞书存成 `[标题](URL)` 的链接，执行前还原成裸 URL 再传给 Skill。
+- 执行环境：Skill 子进程的 cwd 是内容层根，`{skill.entry}` / `{outdir}` 都是绝对路径——lark-cli 只允许写 cwd / `/tmp` / `~/files`，产物必须先落在白名单内。
 - Artifacts 只能通过 Run、record 和相对路径定位。
 - 服务启动时扫描活动 Run/Operation，并标记为 `interrupted`。
 

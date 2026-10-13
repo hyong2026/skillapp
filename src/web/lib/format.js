@@ -90,6 +90,12 @@ function codeBlock(value) {
   return h('pre', { className: 'code-block' }, code);
 }
 
+/** 日志是纯文本：原样展示，不做 JSON 高亮。 */
+function textBlock(value) {
+  if (!value) return h('span', { className: 'muted', textContent: 'No output' });
+  return h('pre', { className: 'code-block' }, h('code', { textContent: String(value) }));
+}
+
 export {
   encoded,
   formatDate,
@@ -100,4 +106,5 @@ export {
   formatMeta,
   specMeta,
   codeBlock,
+  textBlock,
 };

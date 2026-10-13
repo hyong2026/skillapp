@@ -11,8 +11,8 @@
     ├── downloads/
     ├── artifacts/
     └── logs/
-        ├── stdout.json
-        └── stderr.json
+        ├── stdout.log
+        └── stderr.log
 ```
 
 | 路径 | 是什么 |
@@ -20,8 +20,8 @@
 | `run.json` | **整个 Run**：摘要 + `items`（逐行明细） |
 | `<record_id>/downloads/` | 输入快照，可据此复跑 |
 | `<record_id>/artifacts/` | 该行的产物 |
-| `<record_id>/logs/stdout.json` | stdout 日志：`{ record_id, stream, data }` |
-| `<record_id>/logs/stderr.json` | stderr 日志：`{ record_id, stream, data }` |
+| `<record_id>/logs/stdout.log` | stdout 原文 |
+| `<record_id>/logs/stderr.log` | stderr 原文 |
 
 **这里是 SkillApp 唯一的状态层** —— 飞书多维表格里不存任何运行状态。一个 Run 一个文件，不再另存逐行明细。
 
@@ -52,7 +52,8 @@
 
 `stage` 取值 `validate` / `exec` / `upload` / `writeback`。区分它是因为**重试价值不同**：`validate` 失败是输入不合规，重试没有意义；后三者才值得重试。
 
-`stdout.json` / `stderr.json` 里的 `data` 始终是 JSON 值：合法 JSON 原样保留（标量会包成 `{ "value": ... }`），非 JSON 文本包成 `{ "raw": "..." }`。
+日志**原样落盘**，不做 JSON 包装——它首先是给人看的；WebUI 直接展示这两份文本。
+（早期 Run 存的是 `stdout.json` / `stderr.json` 包装，读取时会自动取出其中的文本。）
 
 `--incremental` 读这里的历史，判断该行的**最近一次成功运行**是否使用同一工作版本且输入一致。旧 Run 没有 `work_hash` 时会重跑一次。
 

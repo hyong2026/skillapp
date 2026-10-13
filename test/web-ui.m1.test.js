@@ -55,7 +55,8 @@ function buildFixture() {
     work_hash: 'sha256:work',
     items: [{ record_id: 'rec-1', status: 'succeeded', stage: null, ms: 12, error: null, input_hash: 'input-1' }],
   }, null, 2));
-  write('runs/run-1/rec-1/logs/stdout.json', JSON.stringify({ record_id: 'rec-1', stream: 'stdout', data: { value: 'ok' } }, null, 2));
+  write('runs/run-1/rec-1/logs/stdout.log', 'ok\n');
+  // 早期 Run 的日志是 JSON 包装，读旧格式时应取出其中的文本
   write('runs/run-1/rec-1/logs/stderr.json', JSON.stringify({ record_id: 'rec-1', stream: 'stderr', data: { raw: 'warn' } }, null, 2));
   write('runs/run-1/rec-1/artifacts/result.txt', 'artifact-ok\n');
   write('runs/run-1/rec-1/artifacts/nested/image.svg', '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n');
@@ -158,8 +159,8 @@ test('Run 列表、RunItem、日志和产物可读取', async () => {
   assert.equal(run.body.data.items[0].record_id, 'rec-1');
 
   const item = await getJson('/api/runs/run-1/items/rec-1');
-  assert.equal(item.body.data.logs.stdout.data.value, 'ok');
-  assert.equal(item.body.data.logs.stderr.data.raw, 'warn');
+  assert.equal(item.body.data.logs.stdout, 'ok\n');
+  assert.equal(item.body.data.logs.stderr, 'warn');
   assert.equal(item.body.data.artifacts.length, 2);
   assert.ok(item.body.data.artifacts.some((artifact) => artifact.path === 'nested/image.svg'));
 });

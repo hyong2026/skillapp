@@ -45,7 +45,7 @@ function buildFixture() {
   write('skills/slow/entry.js', [
     "const fs = require('fs');",
     "const path = require('path');",
-    "setTimeout(() => { fs.writeFileSync(path.join(process.cwd(), 'cancel-marker.txt'), 'done'); process.stdout.write(JSON.stringify({ value: 'slow' })); }, 1200);",
+    "setTimeout(() => { fs.writeFileSync(path.join(__dirname, 'cancel-marker.txt'), 'done'); process.stdout.write(JSON.stringify({ value: 'slow' })); }, 1200);",
   ].join('\n'));
   write('skills/bad/SKILL.md', '# bad\n');
   write('skills/bad/entry.js', 'process.stdout.write("not json\\n");\n');

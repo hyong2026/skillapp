@@ -6,7 +6,8 @@
  *   - record-list 必须翻完所有页，而不是只拿默认的前 100 行
  *   - 已经读到本页 cells 后，不再逐行 record-get
  *   - --incremental 必须感知 Skill / Mapping 版本变化
- *   - stdout / stderr 日志必须是 JSON 文件
+ *   - 飞书文本列里的 Markdown 链接会归一成裸 URL
+ *   - stdout / stderr 原样落成 .log 文本
  */
 
 import assert from 'node:assert';
@@ -28,6 +29,9 @@ const FIELDS = [
   { id: 'fldOut', name: 'out: 结果', type: 'text' },
 ];
 
+/** 飞书文本列里的链接长这样：`[标题](URL)` */
+const LINK_CELL = '[外包负责需求单](https://stub.feishu.cn/wiki/Tok?table=t&view=v)';
+
 function flag(args, name) {
   const i = args.indexOf(name);
   return i < 0 ? null : args[i + 1];
@@ -39,9 +43,14 @@ function makeFixture(mode) {
   fs.mkdirSync(skillDir, { recursive: true });
   fs.mkdirSync(path.join(root, '.data', 'templates'), { recursive: true });
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# stub\n');
-  fs.writeFileSync(path.join(skillDir, 'entry.js'),
-    'process.stdout.write(JSON.stringify({ value: "ok" }) + "\\n");\n'
-    + 'process.stderr.write("warn-line\\n");\n');
+  fs.writeFileSync(path.join(skillDir, 'entry.js'), mode === 'no-writeback'
+    // 结果落在别处（例如输入里给的表格）的 Skill：不吐 JSON、也没有输出列
+    ? 'process.stdout.write("done — the result is in the linked sheet\\n");\n'
+    // 报告自己看到的 cwd：用来钉住「Skill 子进程的 cwd = 内容层根」
+    : mode === 'cwd'
+      ? 'process.stdout.write(JSON.stringify({ value: process.cwd() }) + "\\n");\n'
+    : 'process.stdout.write(JSON.stringify({ value: "ok" }) + "\\n");\n'
+      + 'process.stderr.write("warn-line\\n");\n');
 
   const template = {
     template_id: 'tpl-test',
@@ -51,11 +60,17 @@ function makeFixture(mode) {
     mapping: {
       cmd: mode === 'pagination'
         ? 'node {skill.entry} {text} -o {outdir}'
-        : 'node {skill.entry} -o {outdir}',
+        : mode === 'link-cell'
+          ? 'node {skill.entry} {target_url} -o {outdir}'
+          : 'node {skill.entry} -o {outdir}',
       inputs: mode === 'pagination'
         ? [{ key: 'text', field_id: 'fldIn', type: 'text', default: 'x' }]
-        : [],
-      outputs: [{ key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' }],
+        : mode === 'link-cell'
+          ? [{ key: 'target_url', field_id: 'fldIn', type: 'text', required: true }]
+          : [],
+      outputs: mode === 'no-writeback'
+        ? []
+        : [{ key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' }],
     },
     limits: { timeout_s: 5 },
   };
@@ -75,7 +90,7 @@ function makeFixture(mode) {
 
   const rows = mode === 'pagination'
     ? Array.from({ length: 201 }, (_, i) => ({ record_id: `rec${i + 1}`, values: ['', '', ''] }))
-    : [{ record_id: 'rec1', values: ['', '', ''] }];
+    : [{ record_id: 'rec1', values: ['', LINK_CELL, ''] }];
 
   return { root, templatePath, rows };
 }
@@ -86,7 +101,7 @@ function fakeLarkSource(rows) {
 
 const FIELDS = ${JSON.stringify(FIELDS)};
 const rows = ${JSON.stringify(rows)};
-const state = { rows, listCalls: [], getCalls: 0 };
+const state = { rows, listCalls: [], getCalls: 0, batchUpdates: 0, updates: [] };
 
 exports.state = state;
 exports.lark = (args) => {
@@ -113,7 +128,11 @@ exports.lark = (args) => {
     const row = rows.find((r) => r.record_id === flag('--record-id'));
     return { ok: true, data: { field_id_list: FIELDS.map((f) => f.id), data: [row.values] } };
   }
-  if (cmd === '+record-batch-update') return { ok: true, data: {} };
+  if (cmd === '+record-batch-update') {
+    state.batchUpdates += 1;
+    state.updates.push(JSON.parse(flag('--json')));
+    return { ok: true, data: {} };
+  }
   throw new Error('未打桩的 lark 调用: ' + args.join(' '));
 };
 `;
@@ -138,7 +157,7 @@ async function runWorker(mode) {
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
   process.argv = ['node', RUN_TEMPLATE, templatePath];
-  if (mode !== 'logs') process.argv.push('--dry-run');
+  if (!['logs', 'no-writeback', 'cwd'].includes(mode)) process.argv.push('--dry-run');
   if (mode === 'incremental') process.argv.push('--incremental');
 
   let exitCode = null;
@@ -157,6 +176,18 @@ async function runWorker(mode) {
 
   const table = createRequire(import.meta.url)(fakePath).state;
 
+  let runItems = null;
+  let runStatus = null;
+  const runsDir = path.join(root, '.data', 'runs');
+  if (fs.existsSync(runsDir)) {
+    const runId = fs.readdirSync(runsDir).find((name) => name !== 'old-run');
+    if (runId) {
+      const run = JSON.parse(fs.readFileSync(path.join(runsDir, runId, 'run.json'), 'utf8'));
+      runStatus = run.status;
+      runItems = (run.items || []).map((item) => ({ status: item.status, stage: item.stage, error: item.error }));
+    }
+  }
+
   let logs = null;
   let logReadError = null;
   if (mode === 'logs') {
@@ -166,8 +197,8 @@ async function runWorker(mode) {
       logs = {
         recordFiles: fs.readdirSync(recordDir).sort(),
         logFiles: fs.readdirSync(path.join(recordDir, 'logs')).sort(),
-        stdout: JSON.parse(fs.readFileSync(path.join(recordDir, 'logs', 'stdout.json'), 'utf8')),
-        stderr: JSON.parse(fs.readFileSync(path.join(recordDir, 'logs', 'stderr.json'), 'utf8')),
+        stdout: fs.readFileSync(path.join(recordDir, 'logs', 'stdout.log'), 'utf8'),
+        stderr: fs.readFileSync(path.join(recordDir, 'logs', 'stderr.log'), 'utf8'),
       };
     } catch (err) {
       logReadError = err.message;
@@ -181,8 +212,15 @@ async function runWorker(mode) {
     errors,
     listCalls: table.listCalls,
     getCalls: table.getCalls,
+    batchUpdates: table.batchUpdates,
+    updates: table.updates,
+    dataDir: process.env.SKILLAPP_DATA_DIR,
+    runStatus,
+    runItems,
     dryRows: stdout.filter((line) => line.includes('→ rec')).length,
+    dryArgv: (stdout.find((line) => line.includes('argv: ')) || '').split('argv: ')[1] || null,
     noRows: stdout.some((line) => line.includes('没有符合条件的行')),
+    finished: stdout.some((line) => line.includes('完成: 1 成功 / 0 失败')),
     logs,
     logReadError,
   }) + '\n');
@@ -225,21 +263,39 @@ if (process.argv.includes('--worker')) {
     assert.equal(out.getCalls, 0);
   });
 
-  test('stdout / stderr 日志写成 JSON 文件', () => {
+  test('零输出列：照样读输入、执行 Skill，不回写也不算失败', () => {
+    const out = scenario('no-writeback');
+    assert.equal(out.exitCode, null);
+    assert.equal(out.finished, true, 'CLI 应报「完成: 1 成功 / 0 失败」');
+    assert.equal(out.batchUpdates, 0, '没有输出列时一次回写都不该发生');
+    assert.equal(out.runStatus, 'completed');
+    assert.deepEqual(out.runItems, [{ status: 'succeeded', stage: null, error: null }]);
+  });
+
+  test('飞书文本列里的 Markdown 链接会归一成裸 URL', () => {
+    const out = scenario('link-cell');
+    assert.equal(out.exitCode, null);
+    const argv = JSON.parse(out.dryArgv);
+    assert.ok(argv.includes('https://stub.feishu.cn/wiki/Tok?table=t&view=v'),
+      `argv 里应是裸 URL：${out.dryArgv}`);
+    assert.ok(!out.dryArgv.includes('外包负责需求单'), '标题不该传给 Skill');
+  });
+
+  test('Skill 子进程的 cwd 是内容层根（lark-cli 的写盘白名单要它做祖先）', () => {
+    const out = scenario('cwd');
+    assert.equal(out.exitCode, null);
+    assert.equal(out.updates.length, 1, '应回写一次');
+    // 进程里拿到的是解析过符号链接的真实路径（macOS 上 /var → /private/var）
+    assert.equal(out.updates[0].update_records.rec1.fldOut, fs.realpathSync(out.dataDir));
+  });
+
+  test('stdout / stderr 原样落成 .log 文本', () => {
     const out = scenario('logs');
     assert.equal(out.exitCode, null);
     assert.equal(out.logReadError, null);
     assert.deepEqual(out.logs.recordFiles, ['artifacts', 'logs']);
-    assert.deepEqual(out.logs.logFiles, ['stderr.json', 'stdout.json']);
-    assert.deepEqual(out.logs.stdout, {
-      record_id: 'rec1',
-      stream: 'stdout',
-      data: { value: 'ok' },
-    });
-    assert.deepEqual(out.logs.stderr, {
-      record_id: 'rec1',
-      stream: 'stderr',
-      data: { raw: 'warn-line\n' },
-    });
+    assert.deepEqual(out.logs.logFiles, ['stderr.log', 'stdout.log']);
+    assert.equal(out.logs.stdout, '{"value":"ok"}\n', 'stdout 原样落盘');
+    assert.equal(out.logs.stderr, 'warn-line\n', 'stderr 原样落盘');
   });
 }

@@ -56,6 +56,8 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mappi
 | 产物为一组文件 | `attachment` | 同一格可容纳多个；单次上传上限 50 个，超出由执行器分批追加 |
 | 产物为标量 | `number` / `text` | 数值列必须可强制转换；转不了标失败，不得写脏数据 |
 
+文本列里带链接的格子，飞书会存成 `[标题](URL)`；**SkillApp 在执行前会把整格就是一个 Markdown 链接的值还原成裸 URL**，所以映射里不用为它写 `transform`，也不必要求用户把链接改成纯文本。
+
 ## cmd 模板语法
 
 `cmd` 描述怎么调用这个 Skill，支持三种 token：
@@ -67,6 +69,8 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mappi
 | `{--flag key}` | **成对参数**：值空或该列已被删除时整对省略——**可选参数**必须用这种，否则会留下悬空的 flag |
 
 执行器固定提供的变量：`{skill.entry}`、`{outdir}`。
+
+执行时的约定：`{skill.entry}` 会展开成**绝对路径**，`{outdir}` 是该行 `artifacts/` 的绝对路径；**进程 cwd 是内容层根（`.data/`）**，不是 Skill 目录。所以 `cmd` 里的路径一律用这两个变量，不要依赖相对路径；Skill 要写文件就写 `{outdir}` 或 `/tmp`（lark-cli 只允许写 cwd / `/tmp` / `~/files`）。
 
 ## label 命名
 

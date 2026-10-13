@@ -176,11 +176,21 @@ skillapp/
 | 情形 | 行为 |
 |---|---|
 | 删掉非必填输入列 | 从映射中剔除；对应参数**整对省略**（如 `-f` 一起消失），Skill 用它自己的默认行为 |
-| 删掉输出列 | 不再回写该列 |
+| 删掉输出列 | 不再回写该列；**全删也一样**——照常读输入、执行 Skill，只是不回写 |
 | 删掉必填输入列 | **拒绝运行**，报明确的错 |
 | 列还在但类型变了 | **拒绝运行** |
 
 副作用：删掉某个输入列会改变输入指纹，相关行会在下次 `--incremental` 时**重跑一次**。
+
+**链接列的归一**：飞书会把文本列里的 URL 存成 `[标题](URL)`。执行器在解析输入时会把整格就是一个 Markdown 链接的值还原成裸 URL 再传给 Skill，所以映射里不必为它写 `transform`，Skill 收到的永远是裸 URL。
+
+## 执行环境
+
+每行都在**独立子进程**里跑 `mapping.cmd`，约定三条：
+
+- `{skill.entry}` 展开成**绝对路径**；`{outdir}` 是该行在 Run 目录里的 `artifacts/`（同样是绝对路径）。
+- **子进程的 cwd 是内容层根**（`.data/`），不是 Skill 目录。这样 Skill 自己调用 `lark-cli` 时，写进 `.data/runs/...` 的文件才落在它的写盘白名单里（lark-cli 只允许写 cwd / `/tmp` / `~/files`）。
+- Skill 需要临时文件就写 `{outdir}` 或 `/tmp`，别依赖相对路径。
 
 ## 三条不变量
 
@@ -198,7 +208,7 @@ skillapp/
 - **`--incremental` 每次读取全部历史文件。** 内存只保留每行最近状态；行数上万后仍需建索引。
 - **一个 Skill 只能映射到一张表。** `.data/templates/<ref>.template.json` 只按 Skill 名命名，所以把同一个 Skill 映射到第二张表会**直接覆盖**第一份，连 `template_id` 都会沿用它。要支持多表，需把表格标识写进文件名（`<ref>.<table_id>.template.json`）——现在不做。
 - **Template 不可恢复。** 它不进 Git，克隆后无法还原；需要多人共享同一份 Template 时应把它放回 Git。
-- **只支持 JSON stdout 的 Skill。** 执行器直接 `JSON.parse` 标准输出；输出散文或非 JSON 的 Skill 需要先补一层解析。
+- **只支持 JSON stdout 的 Skill。** 执行器直接 `JSON.parse` 标准输出；输出散文或非 JSON 的 Skill 需要先补一层解析。没有输出列的 Template 例外，它不解析 stdout。
 - **Skill 必须有可执行入口。** 执行器需要 spawn 一个命令行进程；纯方法论型 Skill（只有 `SKILL.md`，没有脚本）无法执行——那需要另一套执行模型。
 
 ## 什么时候该再分层

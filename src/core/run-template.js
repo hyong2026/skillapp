@@ -47,24 +47,11 @@ function updateRow(tpl, recordId, patch) {
     '--json', JSON.stringify({ update_records: { [recordId]: patch } }))]);
 }
 
-function jsonData(text) {
-  const raw = text || '';
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed !== null && typeof parsed === 'object' ? parsed : { value: parsed };
-  } catch {
-    return { raw };
-  }
-}
-
-function writeStreamLog(recordDir, recordId, stream, text) {
+/** stdout / stderr 按原样落成 .log：它是给人（和 WebUI）看的文本，不做 JSON 包装。 */
+function writeStreamLog(recordDir, stream, text) {
   const logsDir = path.join(recordDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
-  fs.writeFileSync(path.join(logsDir, `${stream}.json`), JSON.stringify({
-    record_id: recordId,
-    stream,
-    data: jsonData(text),
-  }, null, 2) + '\n');
+  fs.writeFileSync(path.join(logsDir, `${stream}.log`), text || '');
 }
 
 /** 记录列表 → [{ record_id, cells }]，cells 是 field_id → 值 */
@@ -289,7 +276,6 @@ function preflight(tpl) {
     if (f.required && !byId.has(f.field_id)) problems.push(`Required input is missing: ${named(f).field_name} (${f.field_id})`);
   }
   if (!byId.has(tpl.target.primary_field_id)) problems.push(`Primary field is missing: ${tpl.target.primary_field_id}`);
-  if (!outputs.length) problems.push('No output columns are available for writeback');
   if (problems.length) throw new Error(`Template does not match the current table; run refused:\n  - ${problems.join('\n  - ')}`);
 
   const dropped = [...tpl.mapping.inputs, ...tpl.mapping.outputs]
@@ -300,10 +286,20 @@ function preflight(tpl) {
 
 // ─── 单行执行 ─────────────────────────────────────────────────────────────
 
+/**
+ * 飞书文本列里的链接会被存成 `[标题](URL)`，而 Skill 要的是裸 URL。
+ * 只在整个单元格就是一个 Markdown 链接时解开——其余原样透传。
+ */
+function unwrapLinkMarkup(value) {
+  const match = /^\s*\[[^\]]*\]\((\S+)\)\s*$/.exec(String(value ?? ''));
+  return match ? match[1] : value;
+}
+
 /** 校验输入、下载附件、组装命令。返回 cmd 变量；校验不过则返回错误信息。 */
 function prepareInputs(ctx, recordId, recordDir, cells) {
-  const { tpl } = ctx;
-  const vars = { skill: tpl.skill };
+  const { tpl, skillDir } = ctx;
+  // 入口给绝对路径：Skill 进程的 cwd 是内容层根，不是 Skill 目录（见 spawnSkill 的说明）。
+  const vars = { skill: { ...tpl.skill, entry: path.resolve(skillDir, tpl.skill.entry) } };
 
   for (const inp of ctx.inputs) {
     const value = cells[inp.field_id];
@@ -341,6 +337,7 @@ function prepareInputs(ctx, recordId, recordDir, cells) {
       if (inp.required && inp.default === undefined) return { error: `${inp.field_name} is required` };
       v = inp.default;
     }
+    if (inp.type === 'text') v = unwrapLinkMarkup(v);
     if (rule.enum && !rule.enum.includes(v)) {
       return { error: `${inp.field_name} value ${JSON.stringify(v)} is not in ${JSON.stringify(rule.enum)}` };
     }
@@ -458,23 +455,30 @@ async function runRow(ctx, row) {
   const [bin, ...binArgs] = argv; // cmd 是完整命令行，首个 token 即可执行文件
   const t0 = Date.now();
   const res = await spawnSkill(bin, binArgs, {
-    cwd: skillDir,
+    // cwd 不能用 Skill 目录：lark-cli 只允许把文件写到 cwd / /tmp / ~/files，
+    // 而 Skill 的产物目录在 .data/runs/ 之下——cwd 必须是它的祖先，Skill 自己的
+    // lark-cli 调用（例如 --output 写 ndjson）才不会被白名单拒绝。
+    cwd: DATA_DIR,
     timeoutMs: (tpl.limits?.timeout_s || 60) * 1000,
     onStdout: (chunk) => ctx.emit({ type: 'item-log', record_id: recordId, stream: 'stdout', chunk }),
     onStderr: (chunk) => ctx.emit({ type: 'item-log', record_id: recordId, stream: 'stderr', chunk }),
   });
   item.ms = Date.now() - t0;
-  writeStreamLog(recordDir, recordId, 'stdout', res.stdout);
-  writeStreamLog(recordDir, recordId, 'stderr', res.stderr);
+  writeStreamLog(recordDir, 'stdout', res.stdout);
+  writeStreamLog(recordDir, 'stderr', res.stderr);
   if (res.timedOut) return fail(`Skill timed out after ${tpl.limits?.timeout_s || 60}s`);
   if (res.error) return fail(`Skill failed to start: ${res.error.message}`);
   if (res.status !== 0) return fail(`Skill exited with code ${res.status}: ${(res.stderr || '').trim().split('\n').pop()}`);
 
-  let stdout;
-  try {
-    stdout = JSON.parse(res.stdout);
-  } catch {
-    return fail('Skill output is not valid JSON');
+  // 没有输出列的 Template 不回写：这类 Skill 的结果落在别处（例如输入里给的另一张表），
+  // 所以也不必解析 stdout —— 它不需要吐 JSON。
+  let stdout = null;
+  if (ctx.outputs.length) {
+    try {
+      stdout = JSON.parse(res.stdout);
+    } catch {
+      return fail('Skill output is not valid JSON');
+    }
   }
 
   // 4) 回写

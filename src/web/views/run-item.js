@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { empty, kv, panel, viewTitle } from '../lib/components.js';
 import { fragment, h } from '../lib/dom.js';
-import { codeBlock, encoded, formatBytes, statusBadge } from '../lib/format.js';
+import { encoded, formatBytes, statusBadge, textBlock } from '../lib/format.js';
 import { artifactUrl, isImage } from '../lib/links.js';
 
 async function runItemView(runId, recordId) {
@@ -36,8 +36,8 @@ async function runItemView(runId, recordId) {
     ]))),
     panel(`Artifacts (${(item.artifacts || []).length})`, h('div', { className: 'panel-body' }, artifacts)),
     h('div', { className: 'detail-grid' }, [
-      panel('Stdout', h('div', { className: 'panel-body' }, codeBlock(item.logs?.stdout))),
-      panel('Stderr', h('div', { className: 'panel-body' }, codeBlock(item.logs?.stderr))),
+      panel('Stdout', h('div', { className: 'panel-body' }, textBlock(item.logs?.stdout))),
+      panel('Stderr', h('div', { className: 'panel-body' }, textBlock(item.logs?.stderr))),
     ]),
   );
 }
