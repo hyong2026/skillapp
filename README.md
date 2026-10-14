@@ -6,11 +6,11 @@
 
 | # | 步骤 | 用户给什么 | 得到什么 |
 |---|---|---|---|
-| 1 | **装载** | Skill 路径 | 复制进 SkillApp + 一份 **Mapping** |
-| 2 | **映射** | 表格链接 | 表格列 + Template |
-| 3 | **执行** | —— | 回写的结果 |
+| 1 | **装载 Load** | Skill 路径 | 复制进 SkillApp + 一份 **Mapping** |
+| 2 | **映射 Map** | 表格链接 | 表格列 + Template |
+| 3 | **执行 Run** | —— | 回写的结果 |
 
-前两步合称「**初始化**」——把一个 Skill 变成可运行的 Template。
+前两步合称「**初始化**」——把一个 Skill 变成可运行的 Template。（图形界面把第一步拆成 `Load` 与 `Analyze` 两个按钮。）
 
 **闸门在装载与映射之间**：装载只复制并生成 Mapping，不碰表格；映射会改表格结构，按 Mapping 中的默认建议执行。
 
@@ -32,15 +32,15 @@ node src/server/index.js --port 4173         # 本机访问可省略 --token
 **2. 命令行**
 
 ```bash
-# 装载 = 复制（目录名就是 ref）
+# 装载 = 复制（目录名就是 Skill Name）
 node src/cli/load-skill.js /path/to/skill
-# 分析：由 Agent 用 analyze-skill-io 完成 → .data/mappings/<ref>.mapping.json
+# 分析：由 Agent 用 analyze-skill-io 完成 → .data/mappings/<Skill Name>.mapping.json
 
 # 映射：对齐列、设列顺序、写 Template，并自动自检
 node src/cli/map-table.js --ref <ref> --url '<表格链接>'
 
 # 执行：读行 → 跑 Skill → 回写
-node src/cli/run-template.js .data/templates/<ref>-<目标指纹>.template.json --incremental
+node src/cli/run-template.js .data/templates/<Skill Name>-<目标指纹>.template.json --incremental
 ```
 
 `--incremental` 只跑**工作版本或当前输入与最近一次成功运行不一致**的行（没跑过、上次失败、Skill/Mapping/目标变过、或输入变了），可安全重复执行。
@@ -60,23 +60,26 @@ node src/cli/run-template.js .data/templates/<ref>-<目标指纹>.template.json 
 
 | 词 | 含义 | 落在哪 |
 |---|---|---|
-| **Skill** | 带 `SKILL.md` 和可执行入口的目录，可能是 Node、也可能是 Python | `.data/skills/<ref>/` |
-| **ref** | 装载后的 Skill 名，取源目录最后一段；Template / Mapping / Run 都用它引用 | 到处 |
-| **装载** | 复制进内容层 + 固定内容指纹 | `src/core/load-skill.js` |
-| **分析** | 读实现产出 Mapping，由 `analyze-skill-io` 完成 | `src/core/analyze-skill.js` |
-| **Mapping** | Skill 的 IO 契约：输入 / 输出 / 命令模板 | `.data/mappings/<ref>.mapping.json` |
-| **映射** | 把 Mapping 对到某张表的列上，建列、排序、写 Template | `src/core/map-table.js` |
-| **Template** | 可运行的定义：Skill + hash + 目标表 + Mapping 绑定 + limits；可归档（冻结，解冻前不能跑） | `.data/templates/<ref>-<目标指纹>.template.json` |
-| **Run** | 一次批量执行，`run.json` 里含逐行 RunItem | `.data/runs/<run_id>/` |
-| **Artifact** | 回写进表格的产物文件，本机也留一份 | `runs/<run_id>/<record_id>/artifacts/` |
-| **Operation** | 异步任务状态（Run 只在这里留一份索引） | `.data/operations/<operation_id>/operation.json` |
+| **Skill** | 带 `SKILL.md` 和可执行入口的目录，可能是 Node、也可能是 Python | `.data/skills/<Skill Name>/` |
+| **Skill Name** | 装载后的 Skill 名，取源目录最后一段；CLI 参数与 API 路径里写作 `ref` | 到处 |
+| **装载 Load** | 复制进内容层 + 固定内容指纹，**不碰表格** | `.data/skills/<Skill Name>/` |
+| **分析 Analyze** | 读实现产出 Mapping 草案，由 `analyze-skill-io` 完成 | `.data/mappings/<Skill Name>.mapping.json` |
+| **Mapping** | Skill 的 IO 契约：输入 / 输出 / 命令模板（名词；动作是「映射 Map」） | `.data/mappings/<Skill Name>.mapping.json`（草案；生效的那份在 Template 内） |
+| **映射 Map** | 把 Mapping 对到某张表的列上：建列、排序、写 Template | `.data/templates/<Skill Name>-<目标指纹>.template.json` |
+| **Template** | 可运行的定义：Skill + 内容 hash + 目标表 + 生效 Mapping + limits；可归档（冻结，解冻前不能跑） | 同上 |
+| **执行 Run** | 动作：跑一次 Template——读行 → 跑 Skill → 回写（界面按钮 `Run`） | 结果记成一次 Run |
+| **Run** | 一次执行的结果记录：`run.json` 里有状态、计数与逐行 Run Item | `.data/runs/<run_id>/` |
+| **Run Item** | Run 里的一行（一条记录）的一次执行 | `.data/runs/<run_id>/<record_id>/` |
+| **Artifact** | Skill 产出的文件：`attachment` 类型的输出列会回写进表格，本机也留一份 | `runs/<run_id>/<record_id>/artifacts/` |
+| **目标指纹** | 目标表（base + table + view）的 sha256 前 8 位，用来区分同名 Skill 的不同目标表 | Template 文件名末尾 |
+| **Operation** | 异步操作的记录（Run 也在其中留一份索引） | `.data/operations/<operation_id>/operation.json` |
 
 ## 状态
 
 ```text
 Operation: queued → running → completed | failed | canceled | interrupted
 Run:       queued → running → completed | partial | failed | canceled | interrupted
-RunItem:   queued → running | succeeded | failed          （dry-run 用 dry-run）
+Run Item:  queued → running | succeeded | failed          （dry-run 用 dry-run）
 ```
 
 服务启动时扫描活动记录，把遗留的 `running` 标成 `interrupted`——不自动续跑。
@@ -90,21 +93,21 @@ RunItem:   queued → running | succeeded | failed          （dry-run 用 dry-r
 
 > **表格里只存 IO 数据。**
 > 映射的目标是飞书多维表格中的**某张表格**（连同它的**视图**，视图决定列顺序与可见性）——不是整个多维表格。
-> 表里只有输入列、输出列，外加一个文本主字段作行名。运行状态、Run、RunItem 一律不进表，它们记在 `.data/runs/`。
+> 表里只有输入列、输出列，外加一个文本主字段作行名。运行状态、Run、Run Item 一律不进表，它们记在 `.data/runs/`。
 
 | 谁管 | 存什么 |
 |---|---|
 | 某张表格 + 视图 | 用户的输入与输出 |
 | `.data/templates/` | Template（内含 Mapping） |
-| `.data/runs/` | Run + RunItem + 产物（状态） |
+| `.data/runs/` | Run + Run Item + 产物（状态） |
 
-三个词的含义：**Template** 是可运行的定义，它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；`.data/mappings/<ref>.mapping.json` 是 Mapping 的草案，两个步骤之间的中间物。
+三个词的含义：**Template** 是可运行的定义，它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；`.data/mappings/<Skill Name>.mapping.json` 是 Mapping 的草案，两个步骤之间的中间物。
 
 Mapping 的每个输入 / 输出都可以标 `mapped: false`：**不建列、不读取、不回写**，缺省即参与映射。必填输入不允许未映射——读不到值只能逐行失败。
 
 三条不变量：
 
-1. **Template 里不出现绝对路径。** 只写相对 `.data/` 的 `skills/<ref>` 路径 + 内容 `hash`。
+1. **Template 里不出现绝对路径。** 只写相对 `.data/` 的 `skills/<Skill Name>` 路径 + 内容 `hash`。
 2. **绑定一律用 `field_id`，不用字段名。** 名字随时会被改。
 3. **加载时核对，不靠自觉。** 启动时校验 Skill 内容指纹、每个 `field_id` 的存在与类型。
 
@@ -127,11 +130,11 @@ skillapp/
 │   ├── server/                HTTP API、SSE、任务执行器与 worker
 │   └── web/                   零依赖静态控制台（app.js + index.html/styles.css，lib/ + views/）
 ├── .data/                     内容层 —— 除各目录 README 外不进 Git（见 .data/README.md）
-│   ├── skills/<ref>/          装载进来的 Skill
-│   ├── templates/<ref>-<目标指纹>.template.json   Template（内含 Mapping）
-│   ├── mappings/<ref>.mapping.json                Mapping 草案（分析产物）
+│   ├── skills/<Skill Name>/                      装载进来的 Skill
+│   ├── templates/<Skill Name>-<目标指纹>.template.json   Template（内含 Mapping）
+│   ├── mappings/<Skill Name>.mapping.json       Mapping 草案（分析产物）
 │   ├── operations/<operation_id>/operation.json   异步任务状态
-│   └── runs/<run_id>/         Run、RunItem、日志与产物
+│   └── runs/<run_id>/         Run、Run Item、日志与产物
 ├── test/                      引擎回归测试（node --test，零依赖）
 ├── .agents/skills/            项目级 Skill：SkillApp 自己的操作手册
 │   ├── skillapp/              操作入口：装载 / 映射 / 执行
