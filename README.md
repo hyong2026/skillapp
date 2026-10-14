@@ -35,7 +35,7 @@ node src/cli/load-skill.js /path/to/skill             # 目录名就是 ref
 node src/cli/map-table.js --ref <ref> --url '<表格链接>'  # 契约默认读 .data/mappings/<ref>.mapping.json
 
 # 3. 执行
-node src/cli/run-template.js .data/templates/<ref>.template.json --incremental
+node src/cli/run-template.js .data/templates/<ref>-<目标指纹>.template.json --incremental
 ```
 
 `--incremental` 只跑**工作版本或当前输入与最近一次成功运行不一致**的行（没跑过、上次失败、Skill/Mapping/目标变过、或输入变了），可安全重复执行。
@@ -56,7 +56,9 @@ node src/cli/run-template.js .data/templates/<ref>.template.json --incremental
 | `.data/templates/` | Template（内含 Mapping） |
 | `.data/runs/` | Run + RunItem + 产物（状态） |
 
-三个词的含义：**Template** 是可运行的定义（`.data/templates/<ref>.template.json`），它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；`.data/mappings/<ref>.mapping.json` 是 Mapping 的草案，两个步骤之间的中间物。
+三个词的含义：**Template** 是可运行的定义（`.data/templates/<ref>-<目标指纹>.template.json`），它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；`.data/mappings/<ref>.mapping.json` 是 Mapping 的草案，两个步骤之间的中间物。
+
+Mapping 的每个输入 / 输出都可以标 `mapped: false`：**不建列、不读取、不回写**，缺省即参与映射。必填输入不允许未映射——读不到值只能逐行失败。
 
 ## 术语
 
@@ -68,7 +70,7 @@ node src/cli/run-template.js .data/templates/<ref>.template.json --incremental
 | **分析** | 读实现产出 Mapping，由 `analyze-skill-io` 完成 | `src/core/analyze-skill.js` |
 | **Mapping** | Skill 的 IO 契约：输入 / 输出 / 命令模板 | `.data/mappings/<ref>.mapping.json` |
 | **映射** | 把 Mapping 对到某张表的列上，建列、排序、写 Template | `src/core/map-table.js` |
-| **Template** | 可运行的定义：Skill + hash + 目标表 + Mapping 绑定 + limits | `.data/templates/<ref>.template.json` |
+| **Template** | 可运行的定义：Skill + hash + 目标表 + Mapping 绑定 + limits；可归档（冻结，解冻前不能跑） | `.data/templates/<ref>-<目标指纹>.template.json` |
 | **Run** | 一次批量执行，`run.json` 里含逐行 RunItem | `.data/runs/<run_id>/` |
 | **Artifact** | 回写进表格的产物文件，本机也留一份 | `runs/<run_id>/<record_id>/artifacts/` |
 | **Operation** | 异步任务状态（Run 只在这里留一份索引） | `.data/operations/<operation_id>/operation.json` |
@@ -87,7 +89,6 @@ RunItem:   queued → running → succeeded | failed          （dry-run 用 dry
 |---|---|
 | `incremental`（默认） | 没跑过、上次失败、或工作版本 / 输入与最近一次成功运行不一致 |
 | `all` | 全表重跑 |
-| `record-id` | 只跑指定行 |
 
 ## 目录
 
@@ -117,7 +118,7 @@ skillapp/
 │   └── web/                   Web 控制台：app.js 入口 + index.html/styles.css，共用件在 lib/，页在 views/
 ├── .data/                      内容层 —— 除 README 外不进 Git
 │   ├── skills/<ref>/          装载进来的 Skill
-│   ├── templates/<ref>.template.json   Template（内含 Mapping）
+│   ├── templates/<ref>-<目标指纹>.template.json   Template（内含 Mapping）
 │   ├── operations/             Load、Analyze、Mapping、Unload、Run 操作状态
 │   ├── runs/<run_id>/         Run、RunItem、日志与产物
 │   └── mappings/<ref>.mapping.json  Mapping 草案（分析产物）
@@ -203,10 +204,10 @@ skillapp/
 刻意留着的缺口，不是遗漏：
 
 - **串行执行，没有并发。** 逐行处理，也没有租约机制。多机或并行要先解决"谁拥有这一行"。
-- **失败行会被 `--incremental` 反复捞出**（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入或用 `--record-id`。
+- **失败行会被 `--incremental` 反复捞出**（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入。
 - **`.data/runs/` 只增不减**，产物、日志都在里面，目前没有清理策略。
 - **`--incremental` 每次读取全部历史文件。** 内存只保留每行最近状态；行数上万后仍需建索引。
-- **一个 Skill 只能映射到一张表。** `.data/templates/<ref>.template.json` 只按 Skill 名命名，所以把同一个 Skill 映射到第二张表会**直接覆盖**第一份，连 `template_id` 都会沿用它。要支持多表，需把表格标识写进文件名（`<ref>.<table_id>.template.json`）——现在不做。
+- **一张表（含视图）一份 Template。** 同一个 Skill 映射到不同的 base / table / **view** 会各生成一份 `.data/templates/<ref>-<目标指纹>.template.json`；只有三元组完全一致时才更新原来那份——视图算数，换视图就是另一份。
 - **Template 不可恢复。** 它不进 Git，克隆后无法还原；需要多人共享同一份 Template 时应把它放回 Git。
 - **只支持 JSON stdout 的 Skill。** 执行器直接 `JSON.parse` 标准输出；输出散文或非 JSON 的 Skill 需要先补一层解析。没有输出列的 Template 例外，它不解析 stdout。
 - **Skill 必须有可执行入口。** 执行器需要 spawn 一个命令行进程；纯方法论型 Skill（只有 `SKILL.md`，没有脚本）无法执行——那需要另一套执行模型。
@@ -222,7 +223,7 @@ skillapp/
 
 ## Web UI
 
-初始化与执行控制台已经实现：浏览器可以输入 Skill 根目录完成装载（默认完整导入）并进入详情页，点击 Analyze 生成 Mapping，输入 Feishu Base URL 后点击 Mapping 生成 Template；也可以启动增量/全量 Run、实时查看每行阶段与 stdout/stderr、取消运行、重试失败行，并查看 RunItem、日志和产物。
+初始化与执行控制台已经实现：浏览器可以输入 Skill 根目录完成装载（默认完整导入）并进入详情页，点击 Analyze 生成 Mapping，输入 Feishu Base URL 后点击 Mapping 生成 Template；也可以 Preview（dry-run）或启动增量/全量 Run、实时查看每行阶段与 stdout/stderr、取消运行、重试失败行，并查看 RunItem、日志和产物。Template 可按目标表分份、可归档（列表默认只列可用的，右上角可连归档一起看）；侧边栏底部有任务区，所有异步操作都能看状态、取消、跑完点进详情或手工关掉。
 
 前端是一组零依赖 ES 模块（`src/web/`）：入口 `app.js`，共用件在 `lib/`（`router` 管 Hash 路由、`components` 放面板与表格、`dom`/`format`/`links`/`api` 放基础工具），`views/` 一个页面一个文件。
 

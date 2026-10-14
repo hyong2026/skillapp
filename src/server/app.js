@@ -246,9 +246,14 @@ function operationSummary(operation) {
   const templateId = input.template_id || result.template?.template_id || null;
   let subject = null;
   if (operation.type === 'run-template') {
-    subject = input.run_id ? { type: 'run', id: input.run_id, label: input.run_id } : null;
+    // 名字优先：任务区里显示 Template Name，比 Run ID 有意义。
+    subject = input.run_id
+      ? { type: 'run', id: input.run_id, label: input.template_name || input.run_id }
+      : null;
   } else if (operation.type === 'map-table' && templateId) {
     subject = { type: 'template', id: templateId, label: input.ref || templateId };
+  } else if ((operation.type === 'archive-template' || operation.type === 'unarchive-template') && templateId) {
+    subject = { type: 'template', id: templateId, label: input.template_name || templateId };
   } else if (input.ref) {
     subject = { type: 'skill', id: input.ref, label: input.ref };
   }
@@ -464,8 +469,28 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
   }
 
   if (segments[1] === 'templates') {
+    if (segments.length === 4 && (segments[3] === 'archive' || segments[3] === 'unarchive') && req.method === 'POST') {
+      assertSameOrigin(req);
+      const templateId = segments[2];
+      // 先校验 id 与存在性：找不到就没必要起任务。ref 用来把进度挂在同一个 Skill 的事件流上。
+      const selected = model.getTemplate(templateId);
+      const ref = path.basename(String(selected.template.skill?.path || '')) || null;
+      const type = segments[3] === 'archive' ? 'archive-template' : 'unarchive-template';
+      return sendJson(req, res, 202, {
+        ok: true,
+        data: operationData(runner.startTask(
+          type,
+          { template_id: templateId, template_name: selected.name || null, ref },
+          { lockKeys: [`template:${templateId}`] },
+        )),
+        error: null,
+      });
+    }
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
-    if (segments.length === 2) return sendApi(req, res, model.listTemplates());
+    if (segments.length === 2) {
+      const includeArchived = new URL(req.url, 'http://localhost').searchParams.get('scope') === 'all';
+      return sendApi(req, res, model.listTemplates(null, { includeArchived }));
+    }
     if (segments.length === 3) return sendApi(req, res, model.getTemplate(segments[2]));
   }
 
@@ -488,6 +513,10 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
   }
 
   if (segments[1] === 'operations') {
+    if (segments.length === 4 && segments[3] === 'cancel' && req.method === 'POST') {
+      assertSameOrigin(req);
+      return sendApi(req, res, await runner.cancelOperation(segments[2]));
+    }
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
     if (segments.length === 2) return sendApi(req, res, runner.listOperations().map(operationSummary));
     if (segments.length === 3) return sendApi(req, res, operationDetail(runner.getOperation(segments[2])));
@@ -529,7 +558,9 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
       return serveEvents(req, res, runner, segments[2]);
     }
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
-    if (segments.length === 3) return sendApi(req, res, runner.getRun(segments[2]));
+    if (segments.length === 3) {
+      return sendApi(req, res, runner.getRun(segments[2]));
+    }
     if (segments.length === 5 && segments[3] === 'items') {
       return sendApi(req, res, model.getRunItem(segments[2], segments[4]));
     }

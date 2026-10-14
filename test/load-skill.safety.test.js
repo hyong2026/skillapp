@@ -59,11 +59,12 @@ test('普通装载仍然可用', () => {
   const root = makeRepo();
   const source = path.join(root, 'safe');
   fs.mkdirSync(source, { recursive: true });
-  fs.writeFileSync(path.join(source, 'SKILL.md'), '# source\n');
+  fs.writeFileSync(path.join(source, 'SKILL.md'), '---\nname: safe\ndescription: "一句话说明"\n---\n\n# source\n');
 
   const r = runLoad(root, source);
 
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(fs.readFileSync(path.join(root, '.data', 'skills', 'safe', 'SKILL.md'), 'utf8'), '# source\n');
-  assert.equal(fs.existsSync(path.join(root, '.data', 'skills', 'safe', 'source.json')), true);
+  const dest = path.join(root, '.data', 'skills', 'safe');
+  assert.match(fs.readFileSync(path.join(dest, 'SKILL.md'), 'utf8'), /# source/);
+  assert.match(fs.readFileSync(path.join(dest, 'source.json'), 'utf8'), /"description": "一句话说明"/);
 });

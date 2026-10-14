@@ -53,6 +53,29 @@ function stopChild(child, signal) {
   try { child.kill(signal); } catch { /* already exited */ }
 }
 
+/**
+ * 重分析会重写整份 Mapping，但「未映射」是用户在面板上做的选择，按 key 保留。
+ * 新分析若把某个输入标成必填，以必填为准（必填输入不能未映射）。
+ */
+function keepUnmappedFlags(next, prior) {
+  const wasUnmapped = new Set([...(prior?.inputs || []), ...(prior?.outputs || [])]
+    .filter((spec) => spec.mapped === false)
+    .map((spec) => spec.key));
+  for (const spec of [...next.inputs, ...next.outputs]) {
+    if (wasUnmapped.has(spec.key) && spec.required !== true) spec.mapped = false;
+  }
+  return next;
+}
+
+/** 旧 Mapping 可能已经损坏——读不出来就当没有，分析结果才是事实。 */
+function priorMappingOrNull(ref) {
+  try {
+    return readMapping(ref);
+  } catch {
+    return null;
+  }
+}
+
 function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
   const ref = assertRef(rawRef);
   const skillDir = path.join(SKILLS_DIR, ref);
@@ -62,6 +85,7 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
 
   fs.mkdirSync(MAPPINGS_DIR, { recursive: true });
   const mappingPath = path.join(MAPPINGS_DIR, `${ref}.mapping.json`);
+  const priorMapping = priorMappingOrNull(ref);
   fs.rmSync(mappingPath, { force: true });
 
   const command = process.env.SKILLAPP_ANALYZE_COMMAND || 'codex';
@@ -131,7 +155,7 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
           throw new AppError('ANALYZER_INVALID_RESULT', 'Analyzer did not write the Mapping', 'Retry the analysis', 502);
         }
         const hash = readJson(path.join(skillDir, 'source.json')).hash;
-        const mapping = saveMapping(ref, parsedMapping, hash);
+        const mapping = saveMapping(ref, keepUnmappedFlags(parsedMapping, priorMapping), hash);
         finish(resolve, { ref, mapping });
       } catch (err) {
         finish(reject, err);

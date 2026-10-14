@@ -7,6 +7,11 @@ import { assertRef } from './ref.js';
 
 const FIELD_TYPES = new Set(['text', 'number', 'datetime', 'checkbox', 'attachment', 'select']);
 
+/** 是否参与映射：缺省即映射；`mapped: false` 表示该项不建列、不读取、不回写。 */
+function isMapped(spec) {
+  return spec.mapped !== false;
+}
+
 function mappingPath(ref, dataDir = null) {
   const dir = dataDir ? path.join(dataDir, 'mappings') : MAPPINGS_DIR;
   return path.join(dir, `${assertRef(ref)}${MAPPING_SUFFIX}`);
@@ -28,6 +33,12 @@ function assertSpec(spec, role, index) {
   }
   if (spec.required !== undefined && typeof spec.required !== 'boolean') {
     throw new AppError('INVALID_MAPPING', `${label}.required must be a boolean`, 'Set required to true or false');
+  }
+  if (spec.mapped !== undefined && typeof spec.mapped !== 'boolean') {
+    throw new AppError('INVALID_MAPPING', `${label}.mapped must be a boolean`, 'Set mapped to true or false');
+  }
+  if (role === 'input' && spec.required === true && spec.mapped === false) {
+    throw new AppError('INVALID_MAPPING', `${label} is required and cannot be unmapped`, 'Required inputs must stay mapped');
   }
   if (role === 'output' && (!spec.from || typeof spec.from !== 'string')) {
     throw new AppError('INVALID_MAPPING', `${label} is missing from`, 'Set from to a stdout expression');
@@ -102,6 +113,7 @@ function analysisStatus(skillHashValue, mapping) {
 
 export {
   FIELD_TYPES,
+  isMapped,
   mappingPath,
   validateMapping,
   readMapping,

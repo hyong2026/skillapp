@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { dataPanel, dataTable, head, kv, panel, viewTitle } from '../lib/components.js';
+import { dataPanel, head, kv, pagedTable, panel, viewTitle } from '../lib/components.js';
 import { fragment, h } from '../lib/dom.js';
 import { codeBlock, encoded, formatDate, formatDuration, statusBadge } from '../lib/format.js';
 import { hashLink, subjectLink } from '../lib/links.js';
@@ -16,9 +16,10 @@ async function operationsView() {
   ]);
   return fragment(
     head('Operations'),
-    dataPanel(h('div', { className: 'panel-body flush' }, dataTable(
-      ['Operation', 'Status', 'Type', 'Subject', 'Started', 'Duration'],
+    dataPanel(h('div', { className: 'panel-body flush' }, pagedTable(
+      ['Operation ID', 'Status', 'Type', 'Subject', 'Started', 'Duration'],
       rows,
+      { label: 'Operations' },
     ))),
   );
 }

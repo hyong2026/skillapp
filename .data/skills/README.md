@@ -8,8 +8,8 @@
 node src/cli/load-skill.js /path/to/skill --ref <name>
 ```
 
-- 每次装载写入 `.data/skills/<name>/source.json`（来源路径、内容指纹、装载时间；同样不进 Git）。
-- 版本锚点在 `.data/templates/<ref>.template.json` 的 `skill.hash`，不在本目录。
+- 每次装载写入 `.data/skills/<name>/source.json`（来源路径、内容指纹、SKILL.md frontmatter 里的 `description`、装载时间；同样不进 Git）。
+- 版本锚点在 `.data/templates/<ref>-<目标指纹>.template.json` 的 `skill.hash`，不在本目录。
 - `node_modules/` 由导入一并复制（Skill 的运行契约），但不进 Git。
 
 **本目录为空 = 尚未导入任何 Skill，`src/cli/run-template.js` 会拒绝运行。**

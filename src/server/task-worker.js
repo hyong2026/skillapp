@@ -2,6 +2,7 @@ import { loadSkill } from '../core/load-skill.js';
 import { analyzeSkill } from '../core/analyze-skill.js';
 import { planMapping, applyMapping } from '../core/map-table.js';
 import { planUnload, applyUnload } from '../core/unload-skill.js';
+import { setTemplateArchived } from '../core/template.js';
 
 function send(message) {
   if (!process.send) return Promise.resolve();
@@ -42,6 +43,12 @@ async function execute(input) {
   }
   if (input.type === 'unload-skill') {
     return applyUnload(payload, planUnload(payload));
+  }
+  if (input.type === 'archive-template' || input.type === 'unarchive-template') {
+    return setTemplateArchived({
+      templateId: payload.template_id,
+      archived: input.type === 'archive-template',
+    });
   }
   throw new Error(`Unsupported task: ${input.type}`);
 }

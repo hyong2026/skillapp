@@ -4,7 +4,7 @@
 /**
  * run-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
  *
- *   node src/cli/run-template.js <template.json> [--all | --incremental | --record-id <id> ...] [--dry-run]
+ *   node src/cli/run-template.js <template.json> [--all | --incremental] [--dry-run]
  */
 
 import fs from 'node:fs';
@@ -22,17 +22,15 @@ const USAGE = `用法: node src/cli/run-template.js <template.json> [选项]
 选项:
   --all               处理表内所有行（默认）
   --incremental       只处理工作版本或输入变化的行
-  --record-id <id>    只处理指定行，可重复传
   --dry-run           只核对，不执行、不回写、不产生 Run 记录
   -h, --help          显示本帮助`;
 
 function parseArgv(argv) {
-  const out = { template: null, recordIds: [], dryRun: false, incremental: false, help: false };
+  const out = { template: null, dryRun: false, incremental: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--dry-run') out.dryRun = true;
     else if (arg === '--incremental') out.incremental = true;
-    else if (arg === '--record-id') out.recordIds.push(argv[++i]);
     else if (arg === '-h' || arg === '--help') out.help = true;
     else if (!out.template) out.template = arg;
   }
@@ -68,9 +66,10 @@ async function main() {
   const template = JSON.parse(fs.readFileSync(args.template, 'utf8'));
   const { run, workdir } = await runTemplate({
     template,
+    // Template Name 就是文件名（run.json 里固定下来，之后不再查表）。
+    templateName: path.basename(args.template, '.template.json'),
     options: {
       trigger: args.incremental ? 'incremental' : 'all',
-      recordIds: args.recordIds,
       dryRun: args.dryRun,
     },
     onEvent: logEvent,

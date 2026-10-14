@@ -66,7 +66,7 @@ function planUnload(input = {}) {
     for (const templateFile of templatesOf(ref)) {
       const template = readJson(templateFile);
       templates.push({
-        ref: path.basename(templateFile, TEMPLATE_SUFFIX),
+        ref: path.basename(String(template?.skill?.path || '')) || path.basename(templateFile, TEMPLATE_SUFFIX),
         template_id: template?.template_id || null,
         table_id: template?.target?.table_id || null,
         inputs: template?.mapping?.inputs?.length || 0,

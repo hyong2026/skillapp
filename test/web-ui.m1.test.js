@@ -46,6 +46,7 @@ function buildFixture() {
   write('runs/run-1/run.json', JSON.stringify({
     run_id: 'run-1',
     template_id: 'template-1',
+    template_name: 'foo',
     status: 'completed',
     trigger: 'incremental',
     started_at: '2026-01-02T00:00:00.000Z',
@@ -154,6 +155,7 @@ test('Run 列表、RunItem、日志和产物可读取', async () => {
   const list = await getJson('/api/runs');
   assert.equal(list.body.data.length, 1);
   assert.equal(list.body.data[0].run_id, 'run-1');
+  assert.equal(list.body.data[0].template_name, 'foo', 'Run 列表要能反查到 Template Name');
 
   const run = await getJson('/api/runs/run-1');
   assert.equal(run.body.data.items[0].record_id, 'rec-1');

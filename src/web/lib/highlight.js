@@ -12,23 +12,24 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
 }
 
-function highlightJson(value) {
-  let text;
+/** 取「好看的 JSON 文本」；传进来的字符串不是 JSON 时返回 null（调用方决定怎么兜底）。 */
+function jsonText(value) {
   if (typeof value === 'string') {
     try {
-      text = JSON.stringify(JSON.parse(value), null, 2);
+      return JSON.stringify(JSON.parse(value), null, 2);
     } catch {
-      return `<span class="json-raw">${escapeHtml(value)}</span>`;
-    }
-  } else {
-    try {
-      text = JSON.stringify(value, null, 2);
-    } catch {
-      text = String(value ?? '');
+      return null;
     }
   }
-  if (text === undefined) text = '';
+  try {
+    return JSON.stringify(value, null, 2) ?? '';
+  } catch {
+    return null;
+  }
+}
 
+/** 按 JSON 词法给任意文本上色——不需要每行都是合法 JSON（逐行高亮要用它）。 */
+function highlightText(text) {
   const pattern = /("(?:\\.|[^"\\])*"\s*:)|("(?:\\.|[^"\\])*")|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
   let html = '';
   let last = 0;
@@ -44,4 +45,4 @@ function highlightJson(value) {
   return html + escapeHtml(text.slice(last));
 }
 
-export { escapeHtml, highlightJson };
+export { escapeHtml, highlightText, jsonText };

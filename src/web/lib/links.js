@@ -13,12 +13,12 @@ function skillRefFromPath(value) {
 function skillLink(path) {
   if (!path) return '—';
   const ref = skillRefFromPath(path);
-  return ref ? hashLink(path, `#skills/${encoded(ref)}`) : String(path);
+  return ref ? hashLink(ref, `#skills/${encoded(ref)}`) : String(path);
 }
 
-function templateLink(templateId) {
+function templateLink(templateId, label = null) {
   if (!templateId) return '—';
-  return hashLink(templateId, `#templates/${encoded(templateId)}`);
+  return hashLink(label || templateId, `#templates/${encoded(templateId)}`);
 }
 
 const SUBJECT_META = {

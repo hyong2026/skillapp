@@ -97,17 +97,21 @@ button { cursor: pointer; }
   border-right: 1px solid var(--line);
   background: var(--bg-elevated);
 }
+/* Lives in the header only below the fold-to-top-bar breakpoint. */
+.nav-toggle { display: none; }
 .brand {
   display: flex;
   align-items: center;
+  /* Never let the nav squeeze the logo or the title. */
+  flex: 0 0 auto;
   gap: 10px;
   min-width: 0;
   color: var(--text-strong);
   text-decoration: none;
 }
 .brand:hover { color: var(--text-strong); text-decoration: none; }
-.brand-logo { display: block; width: 30px; height: 30px; }
-.brand strong { color: var(--text-strong); font-size: var(--text-md); line-height: 1; }
+.brand-logo { display: block; flex: 0 0 auto; width: 30px; height: 30px; }
+.brand strong { color: var(--text-strong); font-size: var(--text-md); line-height: 1; white-space: nowrap; }
 .nav { display: flex; flex-direction: column; align-items: stretch; gap: 4px; flex: 1 1 auto; }
 .nav a {
   display: flex;
@@ -124,6 +128,39 @@ button { cursor: pointer; }
 .nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .nav a.active { background: var(--accent-soft); color: var(--text-strong); }
 .nav-icon { width: 16px; height: 16px; }
+
+/* 侧边栏底部的消息区：所有异步操作都在这儿，能看状态、取消、跑完点进去、关掉。 */
+.messages {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 6px;
+  max-height: 44vh;
+  padding-top: 12px;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+.messages[hidden] { display: none; }
+.messages-head { color: var(--muted-2); font: 600 var(--text-2xs)/1.4 var(--font-mono); letter-spacing: .08em; text-transform: capitalize; }
+.message {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.message-main { display: grid; gap: 4px; min-width: 0; }
+.message.is-clickable { cursor: pointer; }
+.message.is-clickable:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.message-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.message-type { color: var(--text); font-size: var(--text-xs); font-weight: 600; }
+.message-subject { color: var(--muted-2); font-size: var(--text-2xs); }
+.message-actions { display: flex; align-items: center; gap: 2px; }
+.message .icon-button { width: 26px; height: 26px; }
+.message .icon-button .icon { width: 14px; height: 14px; }
+.message .badge { min-height: 18px; padding: 0 6px; font-size: var(--text-2xs); }
 
 /* The shell never scrolls. `.page` is a column: the view head sits outside the
    scroll area (so it is genuinely fixed) and `.page-body` scrolls the panels. */
@@ -212,6 +249,7 @@ h3 { color: var(--text-strong); font-size: var(--text-md); font-weight: 600; }
 .muted { color: var(--muted); }
 .mono { font-family: var(--font-mono); }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-inline { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 
 .panel {
   margin-bottom: 18px;
@@ -278,7 +316,7 @@ tr.drag-over td { box-shadow: inset 0 2px 0 var(--accent); }
 tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 .mapping-table { width: 100%; table-layout: fixed; }
 .mapping-table th { white-space: normal; overflow: hidden; }
-.mapping-table-inputs col:nth-child(1), .mapping-table-outputs col:nth-child(1) { width: 42px; }
+.mapping-table-inputs col:nth-child(1), .mapping-table-outputs col:nth-child(1) { width: 64px; }
 .mapping-table-inputs col:nth-child(2), .mapping-table-outputs col:nth-child(2) { width: 19%; }
 .mapping-table-inputs col:nth-child(3), .mapping-table-outputs col:nth-child(3) { width: 16%; }
 .mapping-table-inputs col:nth-child(4), .mapping-table-outputs col:nth-child(4) { width: 12%; }
@@ -288,7 +326,14 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 .mapping-table-outputs col:nth-child(5) { width: 22%; }
 .mapping-table-outputs col:nth-child(6) { width: auto; }
 .mapping-table td { overflow: hidden; vertical-align: middle; }
-.drag-cell { width: 42px; padding: 10px 6px !important; text-align: center; }
+.drag-cell { width: 64px; padding: 10px 6px !important; text-align: center; }
+.drag-cell-inner { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.map-check { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.map-check:disabled { cursor: default; opacity: .55; }
+/* 未映射的列不参与表读写，整行（含列名）都退成次要色。 */
+.mapping-table tr.is-unmapped td,
+.mapping-table tr.is-unmapped .inline-edit { color: var(--muted-2); }
+.mapping-table tr.is-unmapped .inline-edit { cursor: default; }
 .drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-2); cursor: grab; touch-action: none; }
 .drag-handle:hover { background: var(--surface-3); color: var(--text); }
 .drag-handle:active { cursor: grabbing; }
@@ -344,19 +389,43 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 
 .table-wrap {
   max-width: 100%;
+  /* 自己负责纵向滚动，表头才能贴住不跟着滚（见 th 的 sticky）。 */
+  max-height: 70vh;
+  overflow-y: auto;
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scrollbar-color: var(--line-strong) transparent;
 }
-table { width: 100%; min-width: 720px; border-collapse: collapse; }
+.table-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+}
+.table-pager-actions { display: flex; gap: 8px; }
+.table-pager .button { min-width: 64px; min-height: 32px; }
+.table-pager .button .icon { width: 14px; height: 14px; }
+/* separate 才能让 th 的 position: sticky 生效（collapse 下 Chromium 不支持）。 */
+table { width: 100%; min-width: 720px; border-collapse: separate; border-spacing: 0; }
 th, td { padding: 12px 16px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th {
-  color: var(--muted-2);
-  background: rgba(15, 24, 41, .5);
-  font: 600 var(--text-2xs)/1.4 var(--font-mono);
-  letter-spacing: .08em;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* 不透明：否则贴住时下面的行会透出来。 */
+  background: #0f1829;
   text-transform: capitalize;
   white-space: nowrap;
+}
+/* 字段名 / 表头 / 弹框字段标签统一：同一字号（10px）、字重、字距与颜色；大小写各自保持原样。 */
+th,
+.kv dt,
+.modal-field > span:first-child {
+  color: var(--muted-2);
+  font: 600 var(--text-2xs)/1.4 var(--font-mono);
+  letter-spacing: .08em;
 }
 td { color: var(--text); font-size: var(--text-xs); }
 tbody tr:last-child td { border-bottom: 0; }
@@ -384,6 +453,7 @@ td.actions { text-align: right; white-space: nowrap; }
 .badge.ready { border-color: rgba(34, 197, 94, .28); color: #86efac; background: var(--accent-soft); }
 .badge.analyzing { border-color: rgba(251, 191, 36, .28); color: #fcd34d; background: var(--warning-soft); }
 .badge.stale { border-color: rgba(248, 113, 113, .28); color: #fca5a5; background: var(--danger-soft); }
+.badge.archived { border-color: rgba(148, 163, 184, .28); color: var(--muted); background: var(--surface-2); }
 .badge.unknown, .badge.unanalyzed { color: var(--muted); }
 
 pre {
@@ -395,12 +465,34 @@ pre {
   border-radius: 10px;
   background: #080e19;
   color: #dbeafe;
-  font: var(--text-xs)/1.6 var(--font-mono);
-  white-space: pre-wrap;
-  word-break: break-word;
+  /* 行高必须是整数像素：19.2px 这类小数会让相邻两行的选中底色之间留下 1px 缝隙（黑线）。 */
+  font: var(--text-xs)/20px var(--font-mono);
+  white-space: normal;
   tab-size: 2;
 }
 .code-block code { font: inherit; }
+.code-lines { display: block; }
+/*
+ * 行号写在行首（`cat -n` 式）：一个逻辑行只有一个行号，而且紧贴这行；
+ * 长行换行时续行悬挂缩进到代码起点，所以行号永远不会错位，也不需要横向滚动。
+ */
+.code-line {
+  display: block;
+  padding-left: var(--gutter-w, 4ch);
+  text-indent: calc(-1 * var(--gutter-w, 4ch));
+  white-space: pre-wrap;
+}
+.code-line-no {
+  display: inline-block;
+  box-sizing: border-box;
+  width: var(--gutter-w, 4ch);
+  padding-right: 2ch;
+  text-align: right;
+  text-indent: 0;
+  color: var(--muted-2);
+  user-select: none;
+}
+.code-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .json-key { color: #7dd3fc; }
 .json-string { color: #86efac; }
 .json-number { color: #fca5a5; }
@@ -408,7 +500,7 @@ pre {
 .json-raw { color: #dbeafe; }
 .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .kv { display: grid; grid-template-columns: 132px minmax(0, 1fr); align-items: center; gap: 8px 14px; margin: 0; }
-.kv dt { align-self: center; color: var(--muted-2); font: 500 var(--text-xs)/1.5 var(--font-mono); text-transform: capitalize; }
+.kv dt { align-self: center; text-transform: capitalize; }
 .kv dd { align-self: center; margin: 0; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
 /* 产物卡片等宽排列，随面板宽度自动换行（auto-fill 保证最后一行宽度也一致）。 */
 .artifact-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
@@ -518,7 +610,6 @@ pre {
 .modal-head h2 { margin: 0; font-size: var(--text-lg); }
 .modal-form { padding: 16px; }
 .modal-field { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: 12px; }
-.modal-field span { color: var(--muted); font-size: var(--text-xs); }
 .modal-field input {
   width: 100%;
   min-height: 40px;
@@ -530,7 +621,21 @@ pre {
 }
 .modal-field input:focus { border-color: var(--accent); outline: none; }
 .modal-error { min-height: 18px; margin: 8px 0 0; color: #fca5a5; font-size: var(--text-xs); }
+.modal-value { color: var(--text); overflow-wrap: anywhere; }
+.modal-text { margin: 0; color: var(--text); font-size: var(--text-xs); line-height: 1.6; }
 .modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.modal-hint {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+  margin-right: 12px;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+}
+.modal-hint .icon { flex: 0 0 auto; width: 14px; height: 14px; }
 .loading-state { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 96px; color: var(--muted); }
 .spinner { width: 18px; height: 18px; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -552,11 +657,12 @@ pre {
   .detail-grid { grid-template-columns: 1fr; }
 }
 
-/* Below this width the sidebar would squeeze the content too much, so the menu
-   folds back into a top bar. */
+/* Below this width the sidebar would squeeze the content too much: the header
+   becomes a single row (brand + menu button) and the menu floats above the page. */
 @media (max-width: 720px) {
   body { flex-direction: column; }
   .topbar {
+    position: relative;
     flex-direction: row;
     align-items: center;
     gap: 12px;
@@ -567,7 +673,43 @@ pre {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .nav { flex-direction: row; gap: 2px; }
+  .nav-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+    margin-left: auto;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .nav-toggle:hover { background: var(--surface-3); }
+  .nav-toggle[aria-expanded="true"] { border-color: rgba(34, 197, 94, .4); background: var(--accent-soft); color: var(--text-strong); }
+  .nav-toggle[aria-expanded="true"] .nav-toggle-open { display: none; }
+  .nav-toggle .nav-toggle-close { display: none; }
+  .nav-toggle[aria-expanded="true"] .nav-toggle-close { display: block; }
+  /* The menu floats above the page: opening it never moves the header or content. */
+  .nav {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 14px;
+    z-index: 20;
+    display: none;
+    min-width: 200px;
+    padding: 6px;
+    gap: 2px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .nav.open { display: flex; animation: enter 160ms ease-out both; }
+  /* 窄屏顶栏只有一行位置，消息区先不挤进来。 */
+  .messages { display: none; }
   .view-head { flex-wrap: wrap; row-gap: 10px; }
 }
 

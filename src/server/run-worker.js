@@ -39,6 +39,7 @@ async function main() {
     options: input.options || {},
     runId: input.run_id,
     runDir: input.run_dir,
+    templateName: input.template_name || null,
     onEvent: send,
   });
   process.disconnect?.();

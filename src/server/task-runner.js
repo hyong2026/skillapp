@@ -13,7 +13,14 @@ const ACTIVE_STATUSES = new Set(['queued', 'running', 'canceling']);
 const DEFAULT_WORKER = path.join(import.meta.dirname, 'run-worker.js');
 const DEFAULT_TASK_WORKER = path.join(import.meta.dirname, 'task-worker.js');
 const DEFAULT_REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
-const TASK_TYPES = new Set(['load-skill', 'analyze-skill', 'map-table', 'unload-skill']);
+const TASK_TYPES = new Set([
+  'load-skill',
+  'analyze-skill',
+  'map-table',
+  'unload-skill',
+  'archive-template',
+  'unarchive-template',
+]);
 const TERMINAL_OPERATION_STATUSES = new Set(['completed', 'failed', 'canceled', 'interrupted']);
 
 function readJson(file) {
@@ -41,6 +48,7 @@ function summaryOfRun(run) {
   return {
     run_id: run.run_id,
     template_id: run.template_id || null,
+    template_name: run.template_name || null,
     status: run.status || 'unknown',
     trigger: run.trigger || null,
     dry_run: Boolean(run.dry_run),
@@ -148,8 +156,8 @@ class TaskRunner {
         ref: job.operationRef || null,
         run_id: run.run_id,
         template_id: run.template_id || null,
+        template_name: run.template_name || null,
         trigger: run.trigger || null,
-        record_ids: job.operationRecordIds || [],
       },
       result: {
         run_id: run.run_id,
@@ -518,12 +526,8 @@ class TaskRunner {
     if (!templateId) throw new HttpError(400, 'INVALID_RUN', 'Template ID is required', 'Choose a Template and try again');
     const options = normalizeOptions({
       trigger: input.trigger,
-      recordIds: input.record_ids || input.recordIds,
       dryRun: input.dry_run ?? input.dryRun,
     });
-    if (options.trigger === 'record-id' && !options.recordIds.length) {
-      throw new HttpError(400, 'INVALID_RUN', 'At least one record ID is required', 'Enter one or more record IDs');
-    }
     const selected = this.model.getTemplate(templateId);
     const canonicalId = selected.template.template_id || templateId;
     const lockKey = `template:${canonicalId}`;
@@ -531,13 +535,14 @@ class TaskRunner {
     if (existing) {
       throw new HttpError(409, 'TEMPLATE_LOCKED', `Template is already running: ${existing}`, 'Wait for the active run to finish or cancel it');
     }
-    const templatePath = path.join(this.model.templatesDir, `${selected.ref}.template.json`);
+    const templatePath = this.model.findTemplateFile(templateId);
     const runId = generateRunId();
     const runDir = options.dryRun ? null : path.join(this.model.runsDir, runId);
     const now = new Date().toISOString();
     const provisional = {
       run_id: runId,
       template_id: canonicalId,
+      template_name: selected.name || null,
       skill_hash: selected.template.skill?.hash || null,
       work_hash: null,
       trigger: options.trigger,
@@ -569,13 +574,13 @@ class TaskRunner {
         options,
         run_id: runId,
         run_dir: runDir,
+        template_name: selected.name || null,
       },
     };
     job.donePromise = new Promise((resolve) => { job.resolveDone = resolve; });
     job.operationId = options.dryRun ? null : generateOperationId();
     job.operationCreatedAt = now;
     job.operationRef = selected.ref;
-    job.operationRecordIds = options.recordIds || [];
     this.jobs.set(runId, job);
     this.locks.set(lockKey, runId);
     this.mirrorRunOperation(job);
@@ -682,14 +687,14 @@ class TaskRunner {
     if (ACTIVE_STATUSES.has(run.status)) {
       throw new HttpError(409, 'RUN_ACTIVE', 'Cannot retry a running Run', 'Wait for the Run to finish');
     }
-    const recordIds = (run.items || []).filter((item) => item.status === 'failed').map((item) => item.record_id);
-    if (!recordIds.length) {
+    const failed = (run.items || []).filter((item) => item.status === 'failed').length;
+    if (!failed) {
       throw new HttpError(400, 'NO_FAILED_ROWS', 'This Run has no failed rows to retry', 'Refresh the Run details');
     }
+    // 指定行重跑已移除：失败行本来就会被增量重新捞出，所以重试 = 再跑一次增量。
     return this.start({
       template_id: run.template_id,
-      trigger: 'record-id',
-      record_ids: recordIds,
+      trigger: 'incremental',
       dry_run: false,
     });
   }
@@ -728,15 +733,11 @@ class TaskRunner {
     const templateId = String(input.template_id || '').trim();
     if (!templateId) throw new HttpError(400, 'INVALID_RUN', 'Template ID is required', 'Choose a Template and try again');
     const selected = this.model.getTemplate(templateId);
-    const templatePath = path.join(this.model.templatesDir, `${selected.ref}.template.json`);
+    const templatePath = this.model.findTemplateFile(templateId);
     const options = normalizeOptions({
       trigger: input.trigger,
-      recordIds: input.record_ids || input.recordIds,
       dryRun: true,
     });
-    if (options.trigger === 'record-id' && !options.recordIds.length) {
-      throw new HttpError(400, 'INVALID_RUN', 'At least one record ID is required', 'Enter one or more record IDs');
-    }
 
     return new Promise((resolve, reject) => {
       let stderr = '';

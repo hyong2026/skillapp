@@ -1,4 +1,4 @@
-import { h, icon, setNotice } from './dom.js';
+import { actionButton, h, icon, setNotice } from './dom.js';
 import { formatMeta, specMeta } from './format.js';
 
 function panel(title, body, actions = null) {
@@ -121,6 +121,64 @@ function dataTable(headers, rows, label = 'Data Table', className = null) {
   const wrap = h('div', { className: 'table-wrap', role: 'region', tabindex: '0', 'aria-label': label });
   wrap.append(table);
   return wrap;
+}
+
+/**
+ * 分页列表：传统翻页（Prev / Next），每页 pageSize 条，默认看第 1 页（最新的在前）。
+ * 只有一页时不画翻页条。数据本来就在本地，翻页只重画这张表，不再请求服务端。
+ */
+const PAGE_STATE_KEY = 'skillapp.pages';
+
+function readPageState() {
+  try {
+    return JSON.parse(sessionStorage.getItem(PAGE_STATE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+// 每个列表记住自己翻到第几页：重画、来回切页面都还在那一页（刷新也保留）。
+const pageState = readPageState();
+
+function rememberPage(key, page) {
+  pageState[key] = page;
+  try {
+    sessionStorage.setItem(PAGE_STATE_KEY, JSON.stringify(pageState));
+  } catch {
+    // 隐私模式下写不了就算了，本次会话内仍然生效。
+  }
+}
+
+function pagedTable(headers, rows, { pageSize = 10, label = 'Data Table' } = {}) {
+  const slot = h('div');
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  // 记住的页号可能已经越界（列表变短了），夹回合法范围。
+  let page = Math.min(Math.max(1, Number(pageState[label]) || 1), pages);
+
+  const paint = () => {
+    const start = (page - 1) * pageSize;
+    const children = [dataTable(headers, rows.slice(start, start + pageSize), label)];
+
+    if (pages > 1) {
+      const prev = actionButton('Prev', 'prev', 'button');
+      const next = actionButton('Next', 'next', 'button');
+      prev.disabled = page <= 1;
+      next.disabled = page >= pages;
+      prev.addEventListener('click', () => { if (page > 1) { page -= 1; paint(); } });
+      next.addEventListener('click', () => { if (page < pages) { page += 1; paint(); } });
+      children.push(h('div', { className: 'table-pager' }, [
+        h('span', { className: 'muted', textContent: `Page ${page} / ${pages}` }),
+        h('div', { className: 'table-pager-actions' }, [prev, next]),
+      ]));
+    }
+
+    rememberPage(label, page);
+    // 注意：不能把 null 直接塞给 replaceChildren（会渲染成字面量 "null"）。
+    slot.replaceChildren(...children.filter(Boolean));
+  };
+
+  paint();
+  return slot;
 }
 
 function editableText(value, onCommit) {
@@ -260,92 +318,139 @@ function editableColumnTable(kind, specs, canEdit, onSave) {
     }
   };
 
-  const commitChange = async (change) => {
-    const next = JSON.parse(JSON.stringify(specs));
-    change(next);
-    await onSave({ [kind]: next });
+  /**
+   * `specs` 就是 mapping.inputs / outputs 本身：原地替换内容，外面的引用永远是最新的。
+   * 改动后只重建这张表（不重绘页面），滚动位置、JSON 开关、其它面板都不受影响。
+   */
+  const setSpecs = (next) => {
+    specs.length = 0;
+    specs.push(...next);
+    renderRows();
   };
 
-  if (!specs.length) {
-    const td = h('td', { colSpan: headers.length });
-    td.append(empty('No data'));
-    tbody.append(h('tr', {}, td));
-  }
+  const commitChange = async (change) => {
+    const before = JSON.parse(JSON.stringify(specs));
+    const next = JSON.parse(JSON.stringify(specs));
+    change(next);
+    setSpecs(next);
+    try {
+      await onSave();
+    } catch (error) {
+      setSpecs(before);
+      setNotice(error.message, true);
+    }
+  };
 
-  specs.forEach((spec, index) => {
-    const row = h('tr');
-    rowEls.push(row);
-    const dragHandle = canEdit
-      ? h('button', {
-        className: 'drag-handle',
-        type: 'button',
-        title: 'Drag to reorder',
-        'aria-label': `Reorder ${spec.label || spec.key}`,
-      }, icon('drag'))
-      : null;
-    if (dragHandle) {
-      dragHandle.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0 || dragSource) return;
-        event.preventDefault();
-        dragSource = { kind, index, pointerId: event.pointerId, handle: dragHandle };
-        try {
-          dragHandle.setPointerCapture(event.pointerId);
-        } catch {
-          // Pointer capture only fails when the pointer is no longer active.
-        }
-        document.body.classList.add('is-dragging-rows');
+  function renderRows() {
+    tbody.replaceChildren();
+    rowEls.length = 0;
+    if (!specs.length) {
+      const td = h('td', { colSpan: headers.length });
+      td.append(empty('No data'));
+      tbody.append(h('tr', {}, td));
+      return;
+    }
+
+    specs.forEach((spec) => {
+      const unmapped = spec.mapped === false;
+      const row = h('tr', unmapped ? { className: 'is-unmapped' } : {});
+      rowEls.push(row);
+      const dragHandle = canEdit
+        ? h('button', {
+          className: 'drag-handle',
+          type: 'button',
+          title: 'Drag to reorder',
+          'aria-label': `Reorder ${spec.label || spec.key}`,
+        }, icon('drag'))
+        : null;
+      if (dragHandle) {
+        dragHandle.addEventListener('pointerdown', (event) => {
+          if (event.button !== 0 || dragSource) return;
+          event.preventDefault();
+          dragSource = { kind, pointerId: event.pointerId, handle: dragHandle };
+          try {
+            dragHandle.setPointerCapture(event.pointerId);
+          } catch {
+            // Pointer capture only fails when the pointer is no longer active.
+          }
+          document.body.classList.add('is-dragging-rows');
+        });
+        dragHandle.addEventListener('pointermove', (event) => {
+          if (dragSource?.pointerId !== event.pointerId) return;
+          event.preventDefault();
+          applyDropHint(resolveDropTarget(event.clientX, event.clientY));
+        });
+        dragHandle.addEventListener('pointerup', async (event) => {
+          if (dragSource?.pointerId !== event.pointerId) return;
+          const hit = resolveDropTarget(event.clientX, event.clientY) || dragHit;
+          finishPointerDrag();
+          if (!hit) return;
+          const from = rowEls.indexOf(row);
+          if (from < 0) return;
+          if (hit.append ? from === specs.length - 1 : from === hit.target) return;
+          await commitChange((next) => {
+            const [moved] = next.splice(from, 1);
+            if (hit.append) next.push(moved);
+            else next.splice(hit.target, 0, moved);
+          });
+        });
+        dragHandle.addEventListener('pointercancel', finishPointerDrag);
+        dragHandle.addEventListener('lostpointercapture', () => {
+          if (dragSource) finishPointerDrag();
+        });
+      }
+
+      // 必填输入必须映射，勾选框默认勾上且禁用；其余输入/输出都可以自由勾选。
+      const locked = isInput && spec.required === true;
+      const checkbox = h('input', {
+        className: 'map-check',
+        type: 'checkbox',
+        checked: !unmapped,
+        disabled: !canEdit || locked,
+        title: locked ? 'Required: must stay mapped' : 'Map to the Feishu table',
       });
-      dragHandle.addEventListener('pointermove', (event) => {
-        if (dragSource?.pointerId !== event.pointerId) return;
-        event.preventDefault();
-        applyDropHint(resolveDropTarget(event.clientX, event.clientY));
-      });
-      dragHandle.addEventListener('pointerup', async (event) => {
-        if (dragSource?.pointerId !== event.pointerId) return;
-        const source = dragSource;
-        const hit = resolveDropTarget(event.clientX, event.clientY) || dragHit;
-        finishPointerDrag();
-        if (!hit) return;
-        const from = source.index;
-        if (hit.append ? from === specs.length - 1 : from === hit.target) return;
-        await commitChange((next) => {
-          const [moved] = next.splice(from, 1);
-          if (hit.append) next.push(moved);
-          else next.splice(hit.target, 0, moved);
+      checkbox.setAttribute('aria-label', `Map ${spec.label || spec.key}`);
+      checkbox.addEventListener('change', () => {
+        const checked = checkbox.checked;
+        // 失败时 commitChange 会还原并重画这张表，勾选框自己就回去了。
+        commitChange((next) => {
+          const target = next[rowEls.indexOf(row)];
+          if (checked) delete target.mapped;
+          else target.mapped = false;
         });
       });
-      dragHandle.addEventListener('pointercancel', finishPointerDrag);
-      dragHandle.addEventListener('lostpointercapture', () => {
-        if (dragSource) finishPointerDrag();
-      });
-    }
 
-    const dragCell = h('td', { className: 'drag-cell' }, dragHandle);
-    const columnCell = h('td', { className: 'column-cell' }, editableText(spec.label || spec.key, async (label) => {
-      await commitChange((next) => { next[index].label = label; });
-    }));
-    const cells = [
-      dragCell,
-      columnCell,
-      h('td', {}, h('span', { className: 'mono', textContent: spec.key || '—' })),
-      h('td', {}, h('span', { className: 'mono', textContent: spec.type || '—' })),
-    ];
-    if (isInput) {
-      cells.push(
-        h('td', { textContent: spec.required ? 'Yes' : 'No' }),
-        h('td', { textContent: formatMeta(spec.default) }),
-        h('td', { textContent: specMeta(spec) }),
-      );
-    } else {
-      cells.push(
-        h('td', {}, h('span', { className: 'mono', textContent: spec.from || '—' })),
-        h('td', { textContent: spec.round === undefined ? '—' : String(spec.round) }),
-      );
-    }
-    for (const cell of cells) row.append(cell);
-    tbody.append(row);
-  });
+      const dragCell = h('td', { className: 'drag-cell' },
+        h('span', { className: 'drag-cell-inner' }, [dragHandle, checkbox]));
+      const columnCell = h('td', { className: 'column-cell' }, editableText(spec.label || spec.key, async (label) => {
+        await commitChange((next) => { next[rowEls.indexOf(row)].label = label; });
+      }));
+      const cells = [
+        dragCell,
+        columnCell,
+        h('td', {}, h('span', { className: 'mono', textContent: spec.key || '—' })),
+        h('td', {}, h('span', { className: 'mono', textContent: spec.type || '—' })),
+      ];
+      if (isInput) {
+        cells.push(
+          h('td', { textContent: spec.required ? 'Yes' : 'No' }),
+          h('td', { textContent: formatMeta(spec.default) }),
+          h('td', { textContent: specMeta(spec) }),
+        );
+      } else {
+        cells.push(
+          h('td', {}, h('span', { className: 'mono', textContent: spec.from || '—' })),
+          h('td', { textContent: spec.round === undefined ? '—' : String(spec.round) }),
+        );
+      }
+      for (const cell of cells) row.append(cell);
+      // 未映射的行不参与表读写，行内编辑也就没有意义。
+      if (unmapped) for (const button of row.querySelectorAll('.inline-edit')) button.disabled = true;
+      tbody.append(row);
+    });
+  }
 
+  renderRows();
   table.append(colgroup, thead, tbody);
   const wrap = h('div', { className: 'table-wrap', role: 'region', tabindex: '0', 'aria-label': isInput ? 'Input Fields' : 'Output Fields' });
   wrap.append(table);
@@ -364,6 +469,7 @@ export {
   kv,
   section,
   dataTable,
+  pagedTable,
   editableText,
   isAppendTarget,
   clearDropHints,

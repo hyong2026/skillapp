@@ -1,8 +1,8 @@
 import { api, startOperation, watchOperation } from '../lib/api.js';
 import {
-  dataPanel, dataTable, editableColumnTable, empty, head, kv, loadingPanel, panel, section, viewTitle,
+  dataPanel, editableColumnTable, empty, head, kv, loadingPanel, pagedTable, panel, section, viewTitle,
 } from '../lib/components.js';
-import { openLoadDialog, openMappingDialog } from '../lib/dialogs.js';
+import { openConfirmDialog, openLoadDialog, openMappingDialog } from '../lib/dialogs.js';
 import { actionButton, fragment, h, icon, setNotice } from '../lib/dom.js';
 import { codeBlock, encoded, formatDate, statusBadge } from '../lib/format.js';
 import { hashLink } from '../lib/links.js';
@@ -20,9 +20,10 @@ async function skillsView() {
   load.addEventListener('click', openLoadDialog);
   return fragment(
     head('Skills', '', h('div', { className: 'run-actions' }, load)),
-    dataPanel(h('div', { className: 'panel-body flush' }, dataTable(
-      ['Ref', 'Status', 'Loaded', 'Source'],
+    dataPanel(h('div', { className: 'panel-body flush' }, pagedTable(
+      ['Skill Name', 'Status', 'Loaded', 'Source'],
       rows,
+      { label: 'Skills' },
     ))),
   );
 }
@@ -59,7 +60,13 @@ function skillActions(ref, analysis, hasMapping, activeOperations, setAnalysisLo
   const unload = actionButton('Unload', 'unload', 'button danger');
   unload.disabled = Boolean(activeOperations.analyze || activeOperations.mapping || activeOperations.unload);
   unload.addEventListener('click', async () => {
-    if (!window.confirm('Unload this Skill? Local files will be removed. Feishu columns will remain.')) return;
+    const ok = await openConfirmDialog({
+      title: 'Unload Skill',
+      message: `Unload "${ref}"? The loaded copy, its Mapping, Templates and related Runs are removed. Feishu columns are kept.`,
+      confirmText: 'Unload',
+      danger: true,
+    });
+    if (!ok) return;
     unload.disabled = true;
     try {
       await startOperation(`/api/skills/${encoded(ref)}`, {}, 'DELETE');
@@ -72,7 +79,10 @@ function skillActions(ref, analysis, hasMapping, activeOperations, setAnalysisLo
   return h('div', { className: 'run-actions' }, [analyze, mapping, unload]);
 }
 
-/** Mapping 面板：结构化 Inputs / Outputs 可直接改名与排序，JSON 开关看原文。 */
+/** 面板编辑的是「IO ↔ 表列」的配置本身；动作（按钮 / 操作）才叫 Mapping。 */
+const MAPPING_PANEL_TITLE = 'Mapping Configuration';
+
+/** Mapping Configuration 面板：结构化 Inputs / Outputs 可改名、排序、勾选映射，JSON 开关看原文。 */
 function mappingPanel(ref, mapping, canEdit) {
   const body = h('div', { className: 'panel-body toggle-body mapping-body' });
   let showJson = false;
@@ -80,11 +90,9 @@ function mappingPanel(ref, mapping, canEdit) {
     section(`Inputs (${mapping.inputs.length})`, editableColumnTable('inputs', mapping.inputs, canEdit, save)),
     section(`Outputs (${mapping.outputs.length})`, editableColumnTable('outputs', mapping.outputs, canEdit, save)),
   ]);
-  const save = async (patch) => {
-    const next = { ...mapping, ...patch };
-    await api(`/api/skills/${encoded(ref)}/mapping`, { method: 'PUT', body: { mapping: next } });
-    setNotice('Mapping saved');
-    await render({ preserveScroll: true });
+  const save = async () => {
+    // 面板自己维护状态（原地改 mapping.inputs / outputs），保存后不重绘页面。
+    await api(`/api/skills/${encoded(ref)}/mapping`, { method: 'PUT', body: { mapping } });
   };
   const control = h('button', {
     className: 'code-toggle',
@@ -105,7 +113,7 @@ function mappingPanel(ref, mapping, canEdit) {
     h('span', { className: 'toggle-track', 'aria-hidden': 'true' }, h('span', { className: 'toggle-thumb' })),
   ]);
   body.replaceChildren(contractBody());
-  return panel('Mapping', body, control);
+  return panel(MAPPING_PANEL_TITLE, body, control);
 }
 
 async function skillView(ref) {
@@ -118,25 +126,25 @@ async function skillView(ref) {
   const paintAnalysis = () => {
     contractSlot.replaceChildren(analysis.mapping
       ? mappingPanel(ref, analysis.mapping, !activeOperations.analyze && !activeOperations.mapping && !activeOperations.unload)
-      : panel('Mapping', h('div', { className: 'panel-body mapping-body' }, empty('No Mapping available.'))));
+      : panel(MAPPING_PANEL_TITLE, h('div', { className: 'panel-body mapping-body' }, empty('No Mapping available.'))));
   };
   const setAnalysisLoading = () => {
     const current = contractSlot.firstElementChild;
     const height = current ? Math.round(current.getBoundingClientRect().height) : 0;
-    const loading = loadingPanel('Mapping', 'Analyzing Skill IO...', 'mapping-body');
+    const loading = loadingPanel(MAPPING_PANEL_TITLE, 'Analyzing Skill IO...', 'mapping-body');
     if (height) loading.style.minHeight = `${height}px`;
     contractSlot.replaceChildren(loading);
   };
   const restoreAnalysis = () => paintAnalysis();
   paintAnalysis();
   if (activeOperations.analyze) setAnalysisLoading();
-  if (activeOperations.mapping) mappingSlot.replaceChildren(loadingPanel('Mapping', 'Creating Template...'));
+  if (activeOperations.mapping) mappingSlot.replaceChildren(loadingPanel(MAPPING_PANEL_TITLE, 'Creating Template...'));
   const summary = panel('Summary', h('div', { className: 'panel-body' }, kv([
-    ['Ref', skill.ref],
     ['Status', statusBadge(skill.status || 'invalid')],
     ['Fingerprint', h('span', { className: 'mono', textContent: skill.hash || '—' })],
     ['Loaded', formatDate(skill.loaded_at)],
     ['Source', skill.source || '—'],
+    ['Description', skill.description || '—'],
   ])));
   if (activeOperations.analyze) {
     watchOperation(ref, activeOperations.analyze.operation_id).then(() => render()).catch((error) => setNotice(error.message, true));

@@ -133,8 +133,14 @@ function watchOperation(ref, operationId, onEvent = () => {}) {
 
 async function startOperation(path, body, method = 'POST') {
   const operation = await api(path, { method, body });
+  notifyTaskStarted();
   const ref = operation.input?.ref || body.ref;
   return watchOperation(ref, operation.operation_id);
 }
 
-export { api, watchRun, watchOperation, startOperation, stopRunStream };
+/** 有新消息了：让侧边栏消息区立刻刷新，不用等下一次轮询。 */
+function notifyTaskStarted() {
+  window.dispatchEvent(new CustomEvent('skillapp:message'));
+}
+
+export { api, watchRun, watchOperation, startOperation, stopRunStream, notifyTaskStarted };

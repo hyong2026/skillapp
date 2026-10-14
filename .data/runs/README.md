@@ -28,10 +28,11 @@
 ```jsonc
 {
   "run_id": "20260930-194727-86bc",
-  "template_id": "c62d75ba-…",     // 指向 .data/templates/<ref>.template.json
+  "template_id": "c62d75ba-…",     // 指向 .data/templates/<ref>-<目标指纹>.template.json
+  "template_name": "image-merge-7417ead8", // 发起时的 Template Name（就是文件名）；之后不再反查
   "skill_hash": "sha256:a19b…",    // 本次使用的 Skill 版本
   "work_hash": "sha256:7c31…",     // Skill + 命令 + 目标 + 生效映射的版本
-  "trigger": "incremental",        // all | incremental | record-id
+  "trigger": "incremental",        // all | incremental
   "started_at": "…",
   "finished_at": "…",
   "status": "completed",           // completed | partial | failed
@@ -44,7 +45,7 @@
       "stage": null,               // 失败发生在哪一步；成功为 null
       "ms": 404,
       "error": null,
-      "input_hash": "0fdc20aaa60db75a"
+      "input_hash": "sha256:0fdc20aaa60db75a"  // 与其他 hash 一样带算法前缀
     }
   ]
 }

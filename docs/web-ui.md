@@ -15,6 +15,7 @@ Web UI 是 SkillApp 的控制台，不是第二个执行引擎。CLI、HTTP、�
 - 用户不执行 CLI，也能完成一次 Skill 初始化并生成 Template。
 - 所有长任务都有持久状态、可订阅进度、可取消。
 - Load、Analyze、Mapping 都作为持久化操作在后台执行；页面刷新后恢复 Loading 状态。
+- 侧边栏底部是**任务区**：列出进行中与最近的操作（含 Run），可看状态、手工取消、跑完点进对应详情页、手工关闭（只影响本机面板，Operations 页的记录不动）。
 - 同一资源不会被不安全的并发操作同时修改。
 - 服务和浏览器刷新后，可以恢复历史状态和当前进度。
 - CLI 仍然可用，并与 Web 共用核心逻辑。
@@ -24,8 +25,9 @@ Web UI 是 SkillApp 的控制台，不是第二个执行引擎。CLI、HTTP、�
 ### 查看
 
 - 读取 Skill、Template、Run、RunItem、stdout/stderr 和 artifacts；RunItem 的 Status 与产物合并成一个 Summary 面板。
-- **Operations** 页统一列出所有长期任务：`load-skill / analyze-skill / map-table / unload-skill / run-template`，可点进详情看记录 JSON 并跳到对应 Skill / Template / Run。
+- **Operations** 页统一列出所有长期任务：`load-skill / analyze-skill / map-table / unload-skill / archive-template / unarchive-template / run-template`，可点进详情看记录 JSON 并跳到对应 Skill / Template / Run；`POST /api/operations/:id/cancel` 可取消还在跑的操作。
 - Mapping、stdout、stderr 和 JSON 使用语法高亮。
+- 四个列表页（Skills / Templates / Runs / Operations）都是**传统分页**：每页 10 条、最新的在前，底部一条 `Page x / y` + `Prev / Next`（带箭头图标；只有一页时不显示翻页条），翻到第几页会按列表记住（切页面、刷新都还在，页数是 sessionStorage）。数据在本地，翻页只重画表格，不重新请求；表头 `sticky` 锁在列表顶部，列表内部纵向滚动时不会跟着滚走。
 - 支持 Basic Auth / Bearer token。
 - 防止静态资源路径穿越，并将产物访问限制在对应 Run/record 目录。
 
@@ -41,8 +43,8 @@ Web UI 是 SkillApp 的控制台，不是第二个执行引擎。CLI、HTTP、�
 - Run 启动时立即以 `queued` 状态落盘，再进入 `running`。
 - Run 同时落一份 `type: run-template` 的 operation 记录（只做索引，不复制 items / 日志 / 产物），历史 Run 在服务启动时补齐。
 - 通过 SSE 推送 Run 快照、RunItem 状态、阶段和 stdout/stderr。
-- 支持 `incremental`、`all`、`record-id` 和 dry-run API。
-- 支持取消运行、失败行重试和 Template 级锁。
+- 支持 `incremental`、`all` 两种触发与 dry-run API（指定行重跑已移除：使用者无从得知 record_id）。
+- 支持取消运行、失败行重试（等价于再跑一次增量）和 Template 级锁。
 - Template 详情页提供 `Run`，默认执行 `incremental`；勾选 `All Rows` 后执行全量。
 
 ### 初始化
@@ -96,11 +98,12 @@ Task Runner
 | `src/core/ref.js` | Skill ref 白名单与校验 |
 | `src/core/mapping.js` | Mapping 校验与原子保存 |
 | `src/core/map-table.js` | Mapping 计划、diff、plan hash、表格结构写出和 Template 生成 |
+| `src/core/template.js` | Template 身份（Skill + 目标表）与文件名、按目标定位、归档状态 |
 | `src/core/unload-skill.js` | 卸载影响清单、plan hash 和受控删除 |
 | `src/core/run-template.js` | Run 预检、选行、执行、回写、进度与状态 |
 | `src/server/task-runner.js` | 启动 worker、资源锁、状态事件、取消和中断恢复 |
 | `src/server/run-worker.js` | 在独立进程中执行 Run |
-| `src/server/task-worker.js` | 在独立进程中执行装载、Mapping 和卸载任务 |
+| `src/server/task-worker.js` | 在独立进程中执行装载、Mapping、卸载和归档任务 |
 | `src/server/read-model.js` | 只读扫描 Skill、Template、Run、Operation、日志和产物 |
 | `src/server/app.js` | HTTP API、SSE、鉴权、同源写保护和静态资源 |
 | `src/core/settings.js` | 设置白名单，读写仓库根 `.env` |
@@ -110,28 +113,32 @@ Task Runner
 
 ### Skills
 
-- 列表展示 `Ref / Status / Loaded / Source`。
+- 列表展示 `Skill Name / Status / Loaded / Source`。
 - `Load` 打开弹框，只输入 Skill Source 绝对路径；目录名自动作为 Ref，默认完整导入。
+- 所有弹框都是应用内的 `<dialog>`：输入框、信息反馈（Preview）和确认（Unload / Archive / 全量 Run）都不用浏览器原生 `confirm`；确认弹框支持 Esc / Cancel 放弃，危险动作的确认按钮用红色。
 - Load 完成后直接进入 Skill 详情页，不自动分析。
 - 详情页右上角提供 `Analyze / Re-analyze`；分析作为持久化任务运行，页面刷新后恢复 Loading。
-- 详情展示 Skill 状态和 Mapping。
+- 详情面包屑是 `Skills / <Skill Name>`；Summary 展示 Status、Fingerprint、Loaded、Source、Description（装载时从 SKILL.md frontmatter 读取），下面依次是 Mapping Configuration 面板。
 - Skill 状态为 `Unanalyzed / Analyzing / Ready / Stale / Unverified / Invalid`。
-- `Mapping` 默认展示结构化 Inputs/Outputs；`JSON` 开关查看原始 JSON。
+- `Mapping Configuration` 面板默认展示结构化 Inputs/Outputs；`JSON` 开关查看原始 JSON。
+- 每行行首的勾选框决定该列是否参与映射：取消勾选 = 不建列、不读取、不回写，整行退成次要色；必填输入的勾选框默认勾上且不可改。改动即时保存（不弹提示、不重绘页面，只重建这张表），但**要重新执行一次 `Mapping` 才会写进 Template**。
 - 详情页右上角 `Mapping` 打开弹框，输入 Feishu Base URL；点击一次即启动持久化 Mapping 任务，页面刷新后仍保持 Loading。
 - 详情页右上角 `Unload` 一键卸载 Skill、Template、分析产物和关联 Run；飞书列不会被删除。
 
 ### Templates
 
-- 列表展示 `Ref / Template ID / IO / Last Run / Created`。
-- 详情 Summary 展示 Template ID、Skill、Skill Hash、Feishu Base URL 和创建时间。
+- 列表右上角 `Show archived`（默认不勾）：勾上后连归档的一起列出来（归档行带 `Archived` 徽标）；列表展示 `Template Name / Template ID / IO / Last Run / Created`；`Template Name` 在首位并带链接（名字就是文件名 `<ref>-<目标指纹>`，链接锚点用 `template_id`）。同一个 Skill 可有多份 Template（每个 base + table + view 一份）。
+- 面包屑是 `Templates`，页面标题是 Template Name（文件名 `<ref>-<目标指纹>`）；详情 Summary 展示 Template ID、Skill、Skill Hash、Feishu Base URL 和创建时间；归档后多一行 `Archived` 徽标（按 Template ID 仍能直接打开）。
 - `Template Definition` 展示完整 Inputs/Outputs Mapping；`JSON` 开关展示完整 Template JSON。
-- 页面右上角提供 `Run`；`All Rows` 勾选框决定 `all` 或 `incremental`。
+- 页面右上角提供 `Preview` 与 `Run`；`All Rows` 勾选框决定 `all` 或 `incremental`。
+- `Preview` 走 `POST /api/runs/preview`（dry-run）：弹窗反馈触发方式、表内行数、本次会处理的行数、会被跳过的列和目标表链接——只核对，不执行、不回写、不产生 Run。
+- 页面右上角提供 `Archive` / `Unarchive`：归档是**冻结**（文件留着、从列表消失、不能再跑），解冻即恢复；两者都走一次持久化操作，可在 Operations 里查到。
 
 ### Runs
 
-- 列表展示状态、Template、触发方式、成功/失败数和开始时间。
+- 列表展示 `Run ID / Status / Template Name / Trigger / Succeeded / Total / Started`；`template_name` 在发起 Run 时写进 `run.json`，前端直接读，不做反查、不为老数据做兼容。
 - Run 详情展示摘要（含 Run 级 `error`）、进度条、RunItem 状态、Stdout、Stderr 和 Live Output。
-- RunItem 详情展示状态、阶段、耗时、错误、输入 Hash、Artifacts 和两种日志。
+- RunItem 详情展示状态、阶段、耗时、错误、输入 Hash、Artifacts 和两种日志；JSON 与 stdout/stderr 预览带行号（`cat -n` 式：行号在行首，长行换行时续行悬挂缩进，不出现横向滚动）。
 - 运行中的 Run 支持取消；终态 Run 存在失败行时，可以创建只包含失败行的新 Run。
 
 ### UI 约定
@@ -230,7 +237,7 @@ GET    /api/status
 GET    /api/skills
 GET    /api/skills/:ref
 GET    /api/skills/:ref/analysis
-GET    /api/templates
+GET    /api/templates            # ?scope=all 连归档一起返回
 GET    /api/templates/:id
 GET    /api/runs
 GET    /api/runs/:id
@@ -259,6 +266,9 @@ POST   /api/runs/preview
 POST   /api/runs
 POST   /api/runs/:id/cancel
 POST   /api/runs/:id/retry
+POST   /api/templates/:id/archive
+POST   /api/templates/:id/unarchive
+POST   /api/operations/:operation_id/cancel
 ```
 
 异步接口返回 `202 + operation`。`/events` 是 SSE；操作事件包括：
@@ -291,7 +301,7 @@ error
 ├── skills/<ref>/
 │   ├── SKILL.md
 │   └── source.json
-├── templates/<ref>.template.json
+├── templates/<ref>-<目标指纹>.template.json
 ├── operations/<operation_id>/
 │   └── operation.json
 ├── runs/<run_id>/
@@ -331,7 +341,7 @@ error
 - **输出保护**：限制 stdout/stderr 单行、单流和单 Run 大小，增加日志轮转和磁盘水位检查。
 - **保留与清理**：提供 Run/Operation 保留策略，清理前预览目录和容量。
 - **可观测性**：增加 `/api/health`、队列深度、活跃 worker、失败率和磁盘占用指标。
-- **扩展准备**：Run 列表先分页；出现可测瓶颈后再增加只读索引。
+- **扩展准备**：列表已做前端分页（每页 10 条）；占位还有服务端分页与只读索引，等出现可测瓶颈再做。
 
 ### 加固验收
 

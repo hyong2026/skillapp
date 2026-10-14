@@ -64,9 +64,70 @@ function openLoadDialog() {
   });
 }
 
+/** 只反馈信息的弹框：标题 + 若干「字段 / 值」；说明放在底部与按钮同一行的左侧。 */
+function openMessageDialog({ title, rows = [], hint = '' }) {
+  const dialog = h('dialog', { className: 'modal' });
+  const close = textButton('OK', 'button primary');
+  close.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.append(
+    h('div', { className: 'modal-head' }, [
+      h('h2', { textContent: title }),
+      h('button', { className: 'icon-button', type: 'button', 'aria-label': 'Close', onClick: () => dialog.close() }, icon('close')),
+    ]),
+    h('div', { className: 'modal-form' }, [
+      ...rows.map(([label, value]) => h('div', { className: 'modal-field' }, [
+        h('span', { textContent: label }),
+        h('span', { className: 'modal-value' }, value),
+      ])),
+      h('div', { className: 'modal-actions' }, [
+        hint ? h('span', { className: 'modal-hint' }, [icon('info'), h('span', { textContent: hint })]) : null,
+        close,
+      ]),
+    ]),
+  );
+  document.body.append(dialog);
+  dialog.showModal();
+  return dialog;
+}
+
+/** 需要用户确认的弹框（替代 window.confirm）：返回 Promise<boolean>。 */
+function openConfirmDialog({ title, message, confirmText = 'Confirm', danger = false }) {
+  return new Promise((resolve) => {
+    const dialog = h('dialog', { className: 'modal' });
+    let answered = false;
+    const finish = (value) => {
+      if (answered) return;
+      answered = true;
+      resolve(value);
+      dialog.close();
+    };
+    const cancel = textButton('Cancel');
+    const confirm = textButton(confirmText, danger ? 'button danger' : 'button primary');
+    cancel.addEventListener('click', () => finish(false));
+    confirm.addEventListener('click', () => finish(true));
+    // Esc 与右上角 ✕ 都算放弃。
+    dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(false); });
+    dialog.addEventListener('close', () => { if (!answered) { answered = true; resolve(false); } dialog.remove(); });
+    dialog.append(
+      h('div', { className: 'modal-head' }, [
+        h('h2', { textContent: title }),
+        h('button', { className: 'icon-button', type: 'button', 'aria-label': 'Close', onClick: () => finish(false) }, icon('close')),
+      ]),
+      h('div', { className: 'modal-form' }, [
+        h('p', { className: 'modal-text', textContent: message }),
+        h('div', { className: 'modal-actions' }, [cancel, confirm]),
+      ]),
+    );
+    document.body.append(dialog);
+    dialog.showModal();
+    confirm.focus();
+  });
+}
+
 function openMappingDialog(ref) {
   openInputDialog({
-    title: 'Mapping',
+    title: 'Mapping Table',
     label: 'Feishu Base URL',
     placeholder: 'https://my.feishu.cn/base/...?table=...&view=...',
     confirmText: 'Mapping',
@@ -77,4 +138,4 @@ function openMappingDialog(ref) {
   });
 }
 
-export { openInputDialog, openLoadDialog, openMappingDialog };
+export { openInputDialog, openLoadDialog, openMappingDialog, openMessageDialog, openConfirmDialog };

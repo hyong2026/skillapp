@@ -8,6 +8,7 @@
  *   - --incremental 必须感知 Skill / Mapping 版本变化
  *   - 飞书文本列里的 Markdown 链接会归一成裸 URL
  *   - stdout / stderr 原样落成 .log 文本
+ *   - 未映射（mapped: false）的列不读取、不回写；被 cmd 当位置参数用时提前报错
  */
 
 import assert from 'node:assert';
@@ -28,6 +29,8 @@ const FIELDS = [
   { id: 'fldIn', name: 'in: 文本', type: 'text' },
   { id: 'fldOut', name: 'out: 结果', type: 'text' },
 ];
+/** 未映射场景要有一列「表里有、但不参与」的列，才能证明它真的没被读写 */
+const SKIP_FIELD = { id: 'fldSkip', name: 'out: 跳过', type: 'text' };
 
 /** 飞书文本列里的链接长这样：`[标题](URL)` */
 const LINK_CELL = '[外包负责需求单](https://stub.feishu.cn/wiki/Tok?table=t&view=v)';
@@ -55,6 +58,7 @@ function makeFixture(mode) {
   const template = {
     template_id: 'tpl-test',
     created_at: '2026-01-01T00:00:00+08:00',
+    ...(mode === 'archived' ? { archived_at: '2026-01-01T00:00:00+08:00' } : {}),
     skill: { path: 'skills/ref', hash: skillHash(skillDir), entry: 'entry.js' },
     target: { base_token: 'bas', table_id: 'tbl', view_id: 'vew', primary_field_id: 'fldP' },
     mapping: {
@@ -62,15 +66,26 @@ function makeFixture(mode) {
         ? 'node {skill.entry} {text} -o {outdir}'
         : mode === 'link-cell'
           ? 'node {skill.entry} {target_url} -o {outdir}'
-          : 'node {skill.entry} -o {outdir}',
+          : mode === 'unmapped-cmd'
+            ? 'node {skill.entry} {text} -o {outdir}'
+            : 'node {skill.entry} -o {outdir}',
       inputs: mode === 'pagination'
         ? [{ key: 'text', field_id: 'fldIn', type: 'text', default: 'x' }]
         : mode === 'link-cell'
           ? [{ key: 'target_url', field_id: 'fldIn', type: 'text', required: true }]
-          : [],
+          : mode === 'unmapped-input'
+            ? [{ key: 'skipped', field_id: 'fldSkip', type: 'text', mapped: false, default: 'x' }]
+            : mode === 'unmapped-cmd'
+              ? [{ key: 'text', field_id: 'fldIn', type: 'text', mapped: false }]
+              : [],
       outputs: mode === 'no-writeback'
         ? []
-        : [{ key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' }],
+        : mode === 'unmapped-output'
+          ? [
+            { key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' },
+            { key: 'skipped', field_id: 'fldSkip', type: 'text', from: 'stdout.value', mapped: false },
+          ]
+          : [{ key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' }],
     },
     limits: { timeout_s: 5 },
   };
@@ -88,18 +103,21 @@ function makeFixture(mode) {
     }, null, 2));
   }
 
+  const unmapped = mode.startsWith('unmapped');
+  const fields = unmapped ? [...FIELDS, SKIP_FIELD] : FIELDS;
+  const cell = (values) => (unmapped ? [...values, ''] : values);
   const rows = mode === 'pagination'
-    ? Array.from({ length: 201 }, (_, i) => ({ record_id: `rec${i + 1}`, values: ['', '', ''] }))
-    : [{ record_id: 'rec1', values: ['', LINK_CELL, ''] }];
+    ? Array.from({ length: 201 }, (_, i) => ({ record_id: `rec${i + 1}`, values: cell(['', '', '']) }))
+    : [{ record_id: 'rec1', values: cell(['', LINK_CELL, '']) }];
 
-  return { root, templatePath, rows };
+  return { root, templatePath, fields, rows };
 }
 
 /** 假的多维表格：内存表，记下每次调用的分页参数与回读次数。 */
-function fakeLarkSource(rows) {
+function fakeLarkSource(fields, rows) {
   return `'use strict';
 
-const FIELDS = ${JSON.stringify(FIELDS)};
+const FIELDS = ${JSON.stringify(fields)};
 const rows = ${JSON.stringify(rows)};
 const state = { rows, listCalls: [], getCalls: 0, batchUpdates: 0, updates: [] };
 
@@ -139,11 +157,11 @@ exports.lark = (args) => {
 }
 
 async function runWorker(mode) {
-  const { root, templatePath, rows } = makeFixture(mode);
+  const { root, templatePath, fields, rows } = makeFixture(mode);
   process.env.SKILLAPP_ROOT = root;
   process.env.SKILLAPP_DATA_DIR = path.join(root, '.data');
   const fakePath = path.join(root, 'fake-lark.cjs');
-  fs.writeFileSync(fakePath, fakeLarkSource(rows));
+  fs.writeFileSync(fakePath, fakeLarkSource(fields, rows));
   process.env.SKILLAPP_LARK_MODULE = fakePath;
 
   const stdout = [];
@@ -157,7 +175,7 @@ async function runWorker(mode) {
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
   process.argv = ['node', RUN_TEMPLATE, templatePath];
-  if (!['logs', 'no-writeback', 'cwd'].includes(mode)) process.argv.push('--dry-run');
+  if (!['logs', 'no-writeback', 'cwd', 'unmapped-output'].includes(mode)) process.argv.push('--dry-run');
   if (mode === 'incremental') process.argv.push('--incremental');
 
   let exitCode = null;
@@ -178,6 +196,7 @@ async function runWorker(mode) {
 
   let runItems = null;
   let runStatus = null;
+  let inputHashes = null;
   const runsDir = path.join(root, '.data', 'runs');
   if (fs.existsSync(runsDir)) {
     const runId = fs.readdirSync(runsDir).find((name) => name !== 'old-run');
@@ -185,6 +204,7 @@ async function runWorker(mode) {
       const run = JSON.parse(fs.readFileSync(path.join(runsDir, runId, 'run.json'), 'utf8'));
       runStatus = run.status;
       runItems = (run.items || []).map((item) => ({ status: item.status, stage: item.stage, error: item.error }));
+      inputHashes = (run.items || []).map((item) => item.input_hash);
     }
   }
 
@@ -217,6 +237,7 @@ async function runWorker(mode) {
     dataDir: process.env.SKILLAPP_DATA_DIR,
     runStatus,
     runItems,
+    inputHashes,
     dryRows: stdout.filter((line) => line.includes('→ rec')).length,
     dryArgv: (stdout.find((line) => line.includes('argv: ')) || '').split('argv: ')[1] || null,
     noRows: stdout.some((line) => line.includes('没有符合条件的行')),
@@ -285,6 +306,7 @@ if (process.argv.includes('--worker')) {
     const out = scenario('cwd');
     assert.equal(out.exitCode, null);
     assert.equal(out.updates.length, 1, '应回写一次');
+    assert.match(out.inputHashes[0], /^sha256:[0-9a-f]{16}$/, 'input_hash 与其他 hash 一样带算法前缀');
     // 进程里拿到的是解析过符号链接的真实路径（macOS 上 /var → /private/var）
     assert.equal(out.updates[0].update_records.rec1.fldOut, fs.realpathSync(out.dataDir));
   });
@@ -297,5 +319,40 @@ if (process.argv.includes('--worker')) {
     assert.deepEqual(out.logs.logFiles, ['stderr.log', 'stdout.log']);
     assert.equal(out.logs.stdout, '{"value":"ok"}\n', 'stdout 原样落盘');
     assert.equal(out.logs.stderr, 'warn-line\n', 'stderr 原样落盘');
+  });
+
+  test('未映射的输入：不读、不传参，运行照常', () => {
+    const out = scenario('unmapped-input');
+    assert.equal(out.exitCode, null);
+    assert.deepEqual(out.listCalls[0].projection, [], '未映射的输入不该出现在读取列里');
+    const argv = JSON.parse(out.dryArgv);
+    assert.deepEqual(argv.slice(0, 2).map((part, i) => (i === 0 ? part : part.endsWith('entry.js'))), ['node', true],
+      `argv 应是 node + 入口：${out.dryArgv}`);
+    assert.equal(argv.length, 4, '未映射的输入不该变成命令行参数');
+    assert.ok(!argv.includes('x'), '默认值也不该传出去');
+  });
+
+  test('未映射的输出：不解析、不回写，其他输出照常', () => {
+    const out = scenario('unmapped-output');
+    assert.equal(out.exitCode, null);
+    assert.equal(out.batchUpdates, 1, '只该回写映射的那一列');
+    assert.deepEqual(out.updates[0].update_records.rec1, { fldOut: 'ok' });
+    assert.equal(out.runStatus, 'completed');
+  });
+
+  test('未映射的输入被 cmd 当位置参数用：运行前就说清楚，别等逐行报 undefined', () => {
+    const out = scenario('unmapped-cmd');
+    assert.equal(out.exitCode, 1, '应以退出码 1 结束');
+    const text = out.errors.join('\n');
+    assert.match(text, /Input is not mapped but cmd needs it/);
+    assert.match(text, /- text/, '要点名是哪个输入');
+    assert.equal(out.listCalls.length, 0, '还没读表就该拦住');
+  });
+
+  test('归档（冻结）的 Template 不能跑', () => {
+    const out = scenario('archived');
+    assert.equal(out.exitCode, 1, '应以退出码 1 结束');
+    assert.match(out.errors.join('\n'), /Template is archived/);
+    assert.equal(out.listCalls.length, 0, '不该读表');
   });
 }

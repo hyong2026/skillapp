@@ -1,5 +1,5 @@
 import { h } from './dom.js';
-import { highlightJson } from './highlight.js';
+import { highlightText, jsonText } from './highlight.js';
 
 function encoded(value) {
   return encodeURIComponent(String(value));
@@ -83,17 +83,44 @@ function specMeta(spec) {
   return parts.join(' · ') || '—';
 }
 
+const toLines = (text) => {
+  const value = String(text ?? '').replace(/\n$/, '');
+  return value === '' ? [''] : value.split('\n');
+};
+
+/**
+ * 带行号的代码块：行号写在每行最前面（`cat -n` 那种），长行换行时续行悬挂缩进到
+ * 代码起点。这样不折行也不会错位——一个逻辑行永远只有一个行号，且就在它旁边。
+ */
+function numberedBlock(lines, { highlight = false } = {}) {
+  const code = h('code', { className: 'code-lines' });
+  // 行号宽度 = 最大位数 + 2ch（这 2ch 就是行号与代码之间的间距）
+  code.style.setProperty('--gutter-w', `${String(lines.length).length + 2}ch`);
+  lines.forEach((line, index) => {
+    const text = h('span', { className: 'code-text' });
+    if (highlight) text.innerHTML = highlightText(line);
+    else text.textContent = line;
+    code.append(h('span', { className: 'code-line' }, [
+      h('span', { className: 'code-line-no', 'aria-hidden': 'true', textContent: String(index + 1) }),
+      text,
+    ]));
+  });
+  return h('pre', { className: 'code-block' }, code);
+}
+
 function codeBlock(value) {
   if (value === null || value === undefined) return h('span', { className: 'muted', textContent: 'Not recorded' });
-  const code = h('code');
-  code.innerHTML = highlightJson(value);
-  return h('pre', { className: 'code-block' }, code);
+  // 逐行高亮：pretty JSON 的换行都在字符串之外，每行都能独立着色。
+  const text = jsonText(value);
+  return text === null
+    ? numberedBlock(toLines(value))
+    : numberedBlock(toLines(text), { highlight: true });
 }
 
 /** 日志是纯文本：原样展示，不做 JSON 高亮。 */
 function textBlock(value) {
   if (!value) return h('span', { className: 'muted', textContent: 'No output' });
-  return h('pre', { className: 'code-block' }, h('code', { textContent: String(value) }));
+  return numberedBlock(toLines(value));
 }
 
 export {

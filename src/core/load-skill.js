@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { skillHash } from './skill-hash.js';
+import { readSkillDescription } from './skill-meta.js';
 import { SKILLS_DIR } from './paths.js';
 import { AppError } from './errors.js';
 import { assertRef } from './ref.js';
@@ -51,6 +52,7 @@ function loadSkill(input = {}) {
     fs.writeFileSync(path.join(tmp, 'source.json'), JSON.stringify({
       source: src,
       hash,
+      description: readSkillDescription(tmp),
       loaded_at: new Date().toISOString(),
     }, null, 2) + '\n');
 

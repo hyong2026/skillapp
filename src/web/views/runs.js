@@ -1,5 +1,5 @@
-import { api, watchRun } from '../lib/api.js';
-import { dataPanel, dataTable, head, kv, panel, viewTitle } from '../lib/components.js';
+import { api, notifyTaskStarted, watchRun } from '../lib/api.js';
+import { dataPanel, dataTable, head, kv, pagedTable, panel, viewTitle } from '../lib/components.js';
 import { actionButton, fragment, h, setNotice } from '../lib/dom.js';
 import { encoded, formatDate, statusBadge, textBlock, triggerLabel } from '../lib/format.js';
 import { hashLink, templateLink } from '../lib/links.js';
@@ -14,17 +14,17 @@ async function runsView() {
   const rows = runs.map((run) => [
     hashLink(run.run_id, `#runs/${encoded(run.run_id)}`),
     statusBadge(run.status),
-    h('span', { className: 'mono truncate' }, templateLink(run.template_id)),
+    h('span', { className: 'truncate' }, templateLink(run.template_id, run.template_name)),
     triggerLabel(run.trigger),
     `${run.succeeded} / ${run.total}`,
-    run.failed ? h('span', { className: 'mono', textContent: String(run.failed) }) : '0',
     h('span', { textContent: formatDate(run.started_at) }),
   ]);
   return fragment(
     head('Runs'),
-    dataPanel(h('div', { className: 'panel-body flush' }, dataTable(
-      ['Run ID', 'Status', 'Template ID', 'Trigger', 'Succeeded / Total', 'Failed', 'Started'],
+    dataPanel(h('div', { className: 'panel-body flush' }, pagedTable(
+      ['Run ID', 'Status', 'Template Name', 'Trigger', 'Succeeded / Total', 'Started'],
       rows,
+      { label: 'Runs' },
     ))),
   );
 }
@@ -62,6 +62,7 @@ function runContent(runId, run, liveLogs) {
       event.currentTarget.disabled = true;
       try {
         const next = await api(`/api/runs/${encoded(runId)}/retry`, { method: 'POST' });
+        notifyTaskStarted();
         location.hash = `runs/${encoded(next.run_id)}`;
       } catch (error) {
         setNotice(error.message, true);
@@ -89,7 +90,7 @@ function runContent(runId, run, liveLogs) {
     ]),
     panel('Summary', h('div', { className: 'panel-body' }, kv([
       ['Status', statusBadge(run.status)],
-      ['Template ID', h('span', { className: 'mono' }, templateLink(run.template_id))],
+      ['Template Name', templateLink(run.template_id, run.template_name)],
       ['Trigger', triggerLabel(run.trigger)],
       ['Progress', `${completed} / ${total}`],
       ['Progress Bar', h('div', { className: 'progress' }, h('div', { className: 'progress-bar', style: `width:${percent}%` }))],

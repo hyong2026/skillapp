@@ -189,6 +189,7 @@ test('M2 预览并异步执行 Run，最终写入日志与状态', async () => {
   );
   assert.equal(finished.body.data.status, 'completed');
   assert.equal(finished.body.data.succeeded, 1);
+  assert.equal(finished.body.data.template_name, 'ok', 'Template Name 在发起时就写进 run.json');
 
   const events = await readEvents(`/api/runs/${runId}/events`, (frame) => frame.includes('event: done'));
   assert.ok(events.some((frame) => frame.includes('event: snapshot')));
@@ -253,7 +254,13 @@ test('M2 失败行可以重试为新的 Run', async () => {
   const retry = await requestJson(`/api/runs/${runId}/retry`, { method: 'POST' });
   assert.equal(retry.response.status, 202);
   assert.notEqual(retry.body.data.run_id, runId);
-  assert.equal(retry.body.data.trigger, 'record-id');
+  assert.equal(retry.body.data.trigger, 'incremental', '重试 = 再跑一次增量');
+
+  const retried = await waitFor(
+    () => requestJson(`/api/runs/${retry.body.data.run_id}`),
+    ({ body }) => ['completed', 'failed', 'partial'].includes(body.data.status),
+  );
+  assert.equal(retried.body.data.total, 1, '失败行会被增量重新捞出，不需要 record-id');
 });
 
 test('M2 Preview 会返回可操作的 Lark 授权提示', async () => {

@@ -1,7 +1,7 @@
 import { stopRunStream } from './api.js';
 import { head } from './components.js';
 import { actionButton, h, ICON_PATHS, icon, setNotice } from './dom.js';
-import { renderViewContent, scrollContainer, viewHeadSlot } from './shell.js';
+import { closeNavMenu, renderViewContent, scrollContainer, viewHeadSlot } from './shell.js';
 import { operationView, operationsView } from '../views/operations.js';
 import { runItemView } from '../views/run-item.js';
 import { runsView, runView } from '../views/runs.js';
@@ -77,6 +77,7 @@ async function render({ preserveScroll = false } = {}) {
     parts = ['skills'];
   }
   const route = parts[0] === 'home' || parts[0] === 'status' || !parts[0] ? 'skills' : parts[0];
+  closeNavMenu();
   setActive(route);
   setNotice('');
   viewHeadSlot().replaceChildren();

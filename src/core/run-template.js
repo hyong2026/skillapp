@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { lark } from './lark.js';
+import { isMapped } from './mapping.js';
 import { skillHash } from './skill-hash.js';
 import { DATA_DIR, RUNS_DIR } from './paths.js';
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
@@ -176,12 +177,23 @@ function buildArgv(cmd, vars) {
   return argv;
 }
 
+/** cmd 里以单独变量出现（`{key}` / `{key...}`）的输入必须有值——未映射就没法满足。 */
+function requiredKeysInCmd(cmd) {
+  const keys = [];
+  for (const token of tokenize(cmd)) {
+    const match = /^\{(\w+)(?:\.\.\.)?\}$/.exec(token);
+    if (match) keys.push(match[1]);
+  }
+  return keys;
+}
+
 // ─── 输入指纹与运行历史 ───────────────────────────────────────────────────
 
 /** 覆盖全部输入单元格。附件计入 file_token，故换图即失效。 */
 function fingerprint(cells) {
   const stable = Object.fromEntries(Object.entries(cells).sort(([a], [b]) => a.localeCompare(b)));
-  return crypto.createHash('sha256').update(JSON.stringify(stable)).digest('hex').slice(0, 16);
+  // 和 skill_hash / work_hash 一样带算法前缀，界面上所有 hash 一个样。
+  return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(stable)).digest('hex').slice(0, 16);
 }
 
 const fingerprintOf = (inputs, cells) =>
@@ -247,12 +259,22 @@ function preflight(tpl) {
   const reload = `node src/cli/load-skill.js <source-dir>`;
   const skillDir = path.join(DATA_DIR, tpl.skill.path);
 
+  if (tpl.archived_at) {
+    throw new Error(`Template is archived (frozen at ${tpl.archived_at}); unarchive it before running`);
+  }
   if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) {
     throw new Error(`Skill is not loaded: ${tpl.skill.path}\n  Run first: ${reload}`);
   }
   const live = skillHash(skillDir);
   if (live !== tpl.skill.hash) {
     throw new Error(`Skill hash mismatch; run refused:\n  template = ${tpl.skill.hash}\n  on-disk  = ${live}\n  Reload: ${reload}`);
+  }
+
+  // 未映射的输入不会被读取，cmd 却要它当位置参数时只能逐行报 undefined——提前说清楚。
+  const unmappedKeys = new Set(tpl.mapping.inputs.filter((f) => !isMapped(f)).map((f) => f.key));
+  const orphans = [...new Set(requiredKeysInCmd(tpl.mapping.cmd).filter((key) => unmappedKeys.has(key)))];
+  if (orphans.length) {
+    throw new Error(`Input is not mapped but cmd needs it:\n  - ${orphans.join('\n  - ')}\n  Fix: map the input, or drop its variable from cmd`);
   }
 
   const fields = lark(['base', '+field-list', ...tableFlags(tpl)]).data.fields;
@@ -269,16 +291,17 @@ function preflight(tpl) {
     return true;
   };
 
-  const inputs = tpl.mapping.inputs.filter(stillThere).map(named);
-  const outputs = tpl.mapping.outputs.filter(stillThere).map(named);
+  const inputs = tpl.mapping.inputs.filter(isMapped).filter(stillThere).map(named);
+  const outputs = tpl.mapping.outputs.filter(isMapped).filter(stillThere).map(named);
 
-  for (const f of tpl.mapping.inputs) {
+  for (const f of tpl.mapping.inputs.filter(isMapped)) {
     if (f.required && !byId.has(f.field_id)) problems.push(`Required input is missing: ${named(f).field_name} (${f.field_id})`);
   }
   if (!byId.has(tpl.target.primary_field_id)) problems.push(`Primary field is missing: ${tpl.target.primary_field_id}`);
   if (problems.length) throw new Error(`Template does not match the current table; run refused:\n  - ${problems.join('\n  - ')}`);
 
   const dropped = [...tpl.mapping.inputs, ...tpl.mapping.outputs]
+    .filter(isMapped)
     .filter((f) => !byId.has(f.field_id))
     .map(named);
   return { skillDir, inputs, outputs, dropped };
@@ -493,32 +516,19 @@ async function runRow(ctx, row) {
 // ─── 服务接口 ─────────────────────────────────────────────────────────────
 
 function normalizeOptions(options = {}) {
-  const recordIds = Array.isArray(options.recordIds)
-    ? options.recordIds.map((id) => String(id)).filter(Boolean)
-    : [];
-  const incremental = options.trigger === 'incremental';
-  const trigger = recordIds.length
-    ? 'record-id'
-    : incremental
-      ? 'incremental'
-      : options.trigger === 'record-id' ? 'record-id' : 'all';
-  return { trigger, recordIds, dryRun: Boolean(options.dryRun) };
+  // 只有两种触发：增量（只跑该跑的）与全量（整表重跑）。指定 record-id 已移除。
+  return { trigger: options.trigger === 'incremental' ? 'incremental' : 'all', dryRun: Boolean(options.dryRun) };
 }
 
 function selectRows(tpl, options) {
   const normalized = normalizeOptions(options);
-  if (normalized.trigger === 'record-id' && !normalized.recordIds.length) {
-    throw new Error('At least one record_id is required');
-  }
   const { skillDir, inputs, outputs, dropped } = preflight(tpl);
   const workHash = workHashOf(tpl, inputs, outputs);
   const all = readRows(tpl, inputs.map((input) => input.field_id));
   const history = loadHistory(tpl.template_id);
 
   let rows = all;
-  if (normalized.trigger === 'record-id') {
-    rows = all.filter((row) => normalized.recordIds.includes(row.record_id));
-  } else if (normalized.trigger === 'incremental') {
+  if (normalized.trigger === 'incremental') {
     rows = all.filter((row) => !upToDate(
       history,
       row.record_id,
@@ -529,7 +539,7 @@ function selectRows(tpl, options) {
 
   const cap = tpl.limits?.max_rows_per_run;
   if (cap && rows.length > cap) {
-    throw new Error(`Selected ${rows.length} rows, exceeding the Template limit of ${cap}; split the run or use record IDs`);
+    throw new Error(`Selected ${rows.length} rows, exceeding the Template limit of ${cap}; split the table or raise limits.max_rows_per_run`);
   }
 
   return { ...normalized, skillDir, inputs, outputs, dropped, workHash, all, rows };
@@ -548,10 +558,12 @@ function previewTemplate(tpl, options = {}) {
   };
 }
 
-function makeRun(tpl, selected, runId, runDir, startedAt) {
+function makeRun(tpl, selected, runId, runDir, startedAt, templateName = null) {
   return {
     run_id: runId,
     template_id: tpl.template_id,
+    // Template 名字在发起时就定下来，之后不再查表：Run 是记录，不是视图。
+    template_name: templateName,
     skill_hash: tpl.skill.hash,
     work_hash: selected.workHash,
     trigger: selected.trigger,
@@ -581,7 +593,9 @@ function finalStatus(run, dryRun) {
   return run.succeeded === 0 ? 'failed' : 'partial';
 }
 
-async function runTemplate({ template, options = {}, runId = generateRunId(), runDir, onEvent = noop }) {
+async function runTemplate({
+  template, options = {}, runId = generateRunId(), runDir, onEvent = noop, templateName = null,
+}) {
   const selected = selectRows(template, options);
   const workdir = runDir || (selected.dryRun
     ? fs.mkdtempSync('/tmp/skillapp-dry-')
@@ -592,7 +606,7 @@ async function runTemplate({ template, options = {}, runId = generateRunId(), ru
     if (!selected.dryRun) atomicWriteJson(path.join(workdir, 'run.json'), run);
   };
   const startedAt = new Date().toISOString();
-  const run = makeRun(template, selected, runId, workdir, startedAt);
+  const run = makeRun(template, selected, runId, workdir, startedAt, templateName);
   const emit = async (event) => {
     if (event.type === 'item-stage') {
       const item = run.items.find((entry) => entry.record_id === event.record_id);

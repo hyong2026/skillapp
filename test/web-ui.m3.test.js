@@ -46,7 +46,9 @@ function buildFixture() {
     "  const cmd = args[1];",
     "  const flag = (name) => { const i = args.indexOf(name); return i < 0 ? null : args[i + 1]; };",
     "  const json = () => JSON.parse(flag('--json'));",
-    "  if (cmd === '+url-resolve') return { ok: true, data: { base_token: 'baseM3', table_id: 'tblM3', view_id: 'vewM3' } };",
+    // `alt-base` 标记存在时解析成另一张表，用来验证「换表 = 另建 Template」
+    "  const alt = fs.existsSync(path.join(__dirname, 'alt-base'));",
+    "  if (cmd === '+url-resolve') return { ok: true, data: alt ? { base_token: 'baseAlt', table_id: 'tblAlt', view_id: 'vewAlt' } : { base_token: 'baseM3', table_id: 'tblM3', view_id: 'vewM3' } };",
     "  if (cmd === '+field-list') { const live = fs.existsSync(mutation) ? fields.concat([{ id: 'fldMutation', name: 'Mutation', type: 'text' }]) : fields; return { ok: true, data: { fields: live } }; }",
     "  if (cmd === '+view-get-visible-fields') return { ok: true, data: { visible_fields: visible } };",
     "  if (cmd === '+field-create') {",
@@ -91,6 +93,29 @@ async function requestJson(pathname, options = {}) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 按 operation_id 等一个操作结束（归档这类不再挂在 Skill 别名下）。 */
+async function waitForOperationId(operationId) {
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    const result = await requestJson(`/api/operations/${operationId}`);
+    if (!result.response.ok) throw new Error(JSON.stringify(result.body));
+    if (['completed', 'failed', 'canceled', 'interrupted'].includes(result.body.data.status)) return result.body.data;
+    await sleep(50);
+  }
+  throw new Error(`Timed out waiting for operation ${operationId}`);
+}
+
+async function waitForRun(runId) {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const result = await requestJson(`/api/runs/${runId}`);
+    if (!result.response.ok) throw new Error(JSON.stringify(result.body));
+    if (['completed', 'failed', 'partial', 'canceled', 'interrupted'].includes(result.body.data.status)) return result.body.data;
+    await sleep(50);
+  }
+  throw new Error(`Timed out waiting for run ${runId}`);
 }
 
 async function waitForOperation(ref, alias) {
@@ -180,6 +205,116 @@ test('M3 可以通过 Web API 装载 Skill、保存 Mapping 并生成 Template',
   assert.equal(remapped.status, 'completed', JSON.stringify(remapped.error));
 });
 
+test('M3 重新分析会保留「未映射」的勾选，重新 Mapping 后才写进 Template', async () => {
+  const before = await requestJson('/api/skills/demo');
+  const mapping = before.body.data.analysis.mapping;
+  const saved = await requestJson('/api/skills/demo/mapping', {
+    method: 'PUT',
+    body: { mapping: { ...mapping, outputs: mapping.outputs.map((spec) => ({ ...spec, mapped: false })) } },
+  });
+  assert.equal(saved.response.status, 200, JSON.stringify(saved.body));
+
+  await requestJson('/api/skills/demo/analyze', { method: 'POST', body: {} });
+  const reanalyzed = await waitForOperation('demo', 'analyze');
+  assert.equal(reanalyzed.status, 'completed', JSON.stringify(reanalyzed.error));
+
+  const after = await requestJson('/api/skills/demo');
+  const outputs = after.body.data.analysis.mapping.outputs;
+  assert.equal(outputs.length, 1, '新分析的结果应当保留');
+  assert.equal(outputs[0].mapped, false, '重分析不该丢掉未映射的勾选');
+
+  await requestJson('/api/mappings', {
+    method: 'POST',
+    body: { ref: 'demo', url: 'https://stub.feishu.cn/base/x?table=t&view=v' },
+  });
+  const applied = await waitForOperation('demo', 'map-table');
+  assert.equal(applied.status, 'completed', JSON.stringify(applied.error));
+  assert.equal(applied.result.template.mapping.outputs[0].mapped, false, '未映射的标记要写进 Template');
+  assert.ok(applied.result.order.includes('＊in: Title'), '必填输入照常建列');
+  assert.ok(!applied.result.order.includes('out: Result'), '未映射的输出不建列');
+});
+
+test('M3 换一张表会另建 Template，回到原表只更新原来那一份', async () => {
+  const templateFiles = () => fs.readdirSync(path.join(root, 'templates')).filter((name) => name.endsWith('.template.json'));
+  const list = await requestJson('/api/templates');
+  const first = list.body.data[0];
+  assert.match(templateFiles()[0], /^demo-[0-9a-f]{8}\.template\.json$/, '文件名 = Skill 名 + 8 位 Hash');
+  assert.equal(first.name, templateFiles()[0].replace('.template.json', ''), 'Template Name 就是文件名');
+  assert.equal(first.ref, 'demo', 'ref 仍是 Skill 名');
+
+  fs.writeFileSync(path.join(root, 'alt-base'), 'alt');
+  await requestJson('/api/mappings', {
+    method: 'POST',
+    body: { ref: 'demo', url: 'https://stub.feishu.cn/base/y?table=t2&view=v2' },
+  });
+  const other = await waitForOperation('demo', 'map-table');
+  assert.equal(other.status, 'completed', JSON.stringify(other.error));
+  assert.equal(templateFiles().length, 2, '换表要另建一份 Template');
+  assert.notEqual(other.result.template.template_id, first.template_id, '另一张表 = 另一个 Template ID');
+
+  fs.rmSync(path.join(root, 'alt-base'), { force: true });
+  await requestJson('/api/mappings', {
+    method: 'POST',
+    body: { ref: 'demo', url: 'https://stub.feishu.cn/base/x?table=t&view=v' },
+  });
+  const back = await waitForOperation('demo', 'map-table');
+  assert.equal(back.status, 'completed', JSON.stringify(back.error));
+  assert.equal(back.result.template.template_id, first.template_id, '同一张表应更新原来那一份');
+  assert.equal(templateFiles().length, 2, '不该再多出第三份');
+});
+
+test('M3 Template 可以归档：列表消失、不可跑、可解冻，并记进 Operations', async () => {
+  const list = await requestJson('/api/templates');
+  const templateId = list.body.data[0].template_id;
+
+  const archive = await requestJson(`/api/templates/${templateId}/archive`, { method: 'POST', body: {} });
+  assert.equal(archive.response.status, 202, JSON.stringify(archive.body));
+  const archived = await waitForOperationId(archive.body.data.operation_id);
+  assert.equal(archived.status, 'completed', JSON.stringify(archived.error));
+
+  const afterArchive = await requestJson('/api/templates');
+  assert.ok(!afterArchive.body.data.some((item) => item.template_id === templateId), '归档后列表里不该还有它');
+  const withArchived = await requestJson('/api/templates?scope=all');
+  assert.ok(withArchived.body.data.some((item) => item.template_id === templateId && item.archived_at),
+    '显式要全部时，归档的 Template 要能看到（列表页的 Show archived）');
+  const detail = await requestJson(`/api/templates/${templateId}`);
+  assert.equal(detail.response.status, 200, '按 Template ID 仍要能打开');
+  assert.ok(detail.body.data.template.archived_at, '要带上归档时间');
+
+  const started = await requestJson('/api/runs', {
+    method: 'POST',
+    body: { template_id: templateId, trigger: 'incremental' },
+  });
+  assert.equal(started.response.status, 202);
+  const refused = await waitForRun(started.body.data.run_id);
+  assert.equal(refused.status, 'failed', '归档的 Template 不能跑');
+  assert.match(String(refused.error || ''), /archived/, '错误里要说清是被冻结了');
+
+  const unarchive = await requestJson(`/api/templates/${templateId}/unarchive`, { method: 'POST', body: {} });
+  const restored = await waitForOperationId(unarchive.body.data.operation_id);
+  assert.equal(restored.status, 'completed', JSON.stringify(restored.error));
+  const afterRestore = await requestJson('/api/templates');
+  assert.ok(afterRestore.body.data.some((item) => item.template_id === templateId), '解冻后要回到列表');
+
+  const operations = await requestJson('/api/operations');
+  const types = operations.body.data.filter((item) => item.subject?.id === templateId).map((item) => item.type);
+  assert.ok(types.includes('archive-template'), '归档要记进 Operations');
+  assert.ok(types.includes('unarchive-template'), '解冻也要记进 Operations');
+});
+
+test('M3 操作可以取消：已结束的原样返回，不存在的返回 404', async () => {
+  const list = await requestJson('/api/operations');
+  const finished = list.body.data.find((item) => item.status === 'completed');
+  assert.ok(finished, '前面已经跑过操作，应当有已完成的记录');
+
+  const again = await requestJson(`/api/operations/${finished.operation_id}/cancel`, { method: 'POST', body: {} });
+  assert.equal(again.response.status, 200, JSON.stringify(again.body));
+  assert.equal(again.body.data.status, 'completed', '已结束的操作不会被改成 canceled');
+
+  const missing = await requestJson('/api/operations/no-such-operation/cancel', { method: 'POST', body: {} });
+  assert.equal(missing.response.status, 404);
+});
+
 test('M3 分析结果能标记 Skill 指纹过期，卸载会删除关联 Run', async () => {
   fs.appendFileSync(path.join(root, 'skills', 'demo', 'SKILL.md'), '\nchanged\n');
   const sourceFile = path.join(root, 'skills', 'demo', 'source.json');
@@ -190,7 +325,8 @@ test('M3 分析结果能标记 Skill 指纹过期，卸载会删除关联 Run', 
   assert.equal(detail.body.data.analysis.state, 'stale');
   assert.equal(detail.body.data.analysis.stale, true);
 
-  const templateFile = path.join(root, 'templates', 'demo.template.json');
+  const templateFile = path.join(root, 'templates', fs.readdirSync(path.join(root, 'templates'))
+    .find((name) => name.startsWith('demo-') && name.endsWith('.template.json')));
   const template = JSON.parse(fs.readFileSync(templateFile, 'utf8'));
   write('runs/run-demo/run.json', JSON.stringify({ run_id: 'run-demo', template_id: template.template_id, items: [] }));
 

@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { lark } from './lark.js';
-import { SKILLS_DIR, TEMPLATES_DIR, TEMPLATE_SUFFIX } from './paths.js';
+import { SKILLS_DIR } from './paths.js';
 import { AppError } from './errors.js';
 import { readJson, atomicWriteJson } from './json-file.js';
 import { assertRef } from './ref.js';
-import { readMapping, validateMapping, analysisStatus } from './mapping.js';
+import { readMapping, validateMapping, analysisStatus, isMapped } from './mapping.js';
+import { findTemplateFor, templatePathFor } from './template.js';
 
 const INPUT_PREFIX = 'in: ';
 const OUTPUT_PREFIX = 'out: ';
@@ -53,13 +54,26 @@ const columnName = (spec, prefix) => (spec.required ? REQUIRED_MARK : '') + pref
 function checkCmd(cmd, io) {
   if (!cmd) throw new AppError('INVALID_MAPPING', 'Mapping is missing cmd', 'Set the command template');
   const known = new Set(['skill.entry', 'outdir', ...io.inputs.map((item) => item.key)]);
+  const unmapped = new Set(io.inputs.filter((item) => !isMapped(item)).map((item) => item.key));
   const bad = [];
+  const orphans = [];
   for (const [, group] of cmd.matchAll(/\{([^{}]*)\}/g)) {
-    const keys = group.split(/\s+/).filter((part) => part && !part.startsWith('-')).map((part) => part.replace(/\.\.\.$/, ''));
+    const parts = group.split(/\s+/).filter(Boolean);
+    const keys = parts.filter((part) => !part.startsWith('-')).map((part) => part.replace(/\.\.\.$/, ''));
     for (const key of keys) if (!known.has(key)) bad.push(key);
+    // 成对参数（{--flag key}）在值为空时会整对省略，未映射也不算错；单独变量（{key} / {key...}）必须有值。
+    if (parts.some((part) => part.startsWith('-'))) continue;
+    for (const key of keys) if (unmapped.has(key)) orphans.push(key);
   }
   if (bad.length) {
     throw new AppError('INVALID_MAPPING', `cmd references unknown variables: ${[...new Set(bad)].join(', ')}`, 'Fix the command template');
+  }
+  if (orphans.length) {
+    throw new AppError(
+      'INVALID_MAPPING',
+      `cmd needs unmapped inputs: ${[...new Set(orphans)].join(', ')}`,
+      'Map these inputs, or drop their variables from cmd',
+    );
   }
 }
 
@@ -84,15 +98,19 @@ function primaryField(target) {
   return field;
 }
 
-function priorTemplate(ref) {
-  const file = path.join(TEMPLATES_DIR, `${assertRef(ref)}${TEMPLATE_SUFFIX}`);
-  return fs.existsSync(file) ? { file, template: readJson(file) } : { file, template: null };
+/**
+ * 同一张表（base + table + view）上的那份 Template 就原地更新；
+ * 换表就是另一份 Template，路径由目标表决定。老命名（`<ref>.template.json`）也认。
+ */
+function priorTemplate(rawRef, target) {
+  const ref = assertRef(rawRef);
+  return findTemplateFor(ref, target) || { file: templatePathFor(ref, target), template: null };
 }
 
 function wantedColumns(io) {
   return [
-    ...io.inputs.map((spec) => ({ spec, role: 'input', name: columnName(spec, INPUT_PREFIX) })),
-    ...io.outputs.map((spec) => ({ spec, role: 'output', name: columnName(spec, OUTPUT_PREFIX) })),
+    ...io.inputs.filter(isMapped).map((spec) => ({ spec, role: 'input', name: columnName(spec, INPUT_PREFIX) })),
+    ...io.outputs.filter(isMapped).map((spec) => ({ spec, role: 'output', name: columnName(spec, OUTPUT_PREFIX) })),
   ];
 }
 
@@ -160,6 +178,7 @@ const inputEntry = (spec, fieldId) => ({
   key: spec.key,
   field_id: fieldId,
   type: spec.type,
+  ...(isMapped(spec) ? {} : { mapped: false }),
   ...(spec.required ? { required: true } : {}),
   ...(spec.default === undefined ? {} : { default: spec.default }),
   ...(spec.validate ? { validate: spec.validate } : {}),
@@ -171,6 +190,7 @@ const outputEntry = (spec, fieldId) => ({
   field_id: fieldId,
   type: spec.type,
   from: spec.from,
+  ...(isMapped(spec) ? {} : { mapped: false }),
   ...(spec.round === undefined ? {} : { round: spec.round }),
 });
 
@@ -185,10 +205,15 @@ function localIso() {
 }
 
 function buildTemplate({ io, ref, skillHashValue, target, primaryId, columns, prior, createId = false }) {
-  const idOf = (key) => columns.find((column) => column.key === key)?.field_id || null;
+  // 未映射的列不参与对齐，但仍要留住上一次的 field_id，重新勾选时才能复用原列。
+  const priorIds = new Map([...(prior?.mapping?.inputs || []), ...(prior?.mapping?.outputs || [])]
+    .map((entry) => [entry.key, entry.field_id]));
+  const idOf = (key) => columns.find((column) => column.key === key)?.field_id || priorIds.get(key) || null;
   return {
     template_id: prior?.template_id || (createId ? crypto.randomUUID() : null),
     created_at: prior?.created_at || (createId ? localIso() : null),
+    // 归档是人为冻结，重跑 Mapping 不该悄悄解冻。
+    ...(prior?.archived_at ? { archived_at: prior.archived_at } : {}),
     skill: { path: `skills/${assertRef(ref)}`, hash: skillHashValue, entry: io.skill.entry },
     target: { ...target, primary_field_id: primaryId },
     mapping: {
@@ -216,7 +241,7 @@ function planMapping(input = {}) {
 
   const target = resolveTarget(input);
   if (!target.view_id) throw new AppError('VIEW_REQUIRED', 'A view_id is required for mapping', 'Use a URL with a view parameter or provide view');
-  const prior = priorTemplate(ref);
+  const prior = priorTemplate(ref, target);
   const primary = primaryField(target);
   const columns = alignColumns(target, io, prior.template);
   const renamePrimary = primary.name === DEFAULT_PRIMARY ? { from: primary.name, to: PRIMARY_NAME, will_rename: true } : null;
@@ -354,7 +379,7 @@ function applyMapping(input = {}, planned = null) {
   }
 
   const io = plan.mapping;
-  const prior = priorTemplate(plan.ref).template;
+  const prior = priorTemplate(plan.ref, target);
   const template = buildTemplate({
     io,
     ref: plan.ref,
@@ -362,10 +387,11 @@ function applyMapping(input = {}, planned = null) {
     target,
     primaryId: primary.id,
     columns: plan.columns,
-    prior,
+    prior: prior.template,
     createId: true,
   });
-  const templatePath = path.join(TEMPLATES_DIR, `${plan.ref}${TEMPLATE_SUFFIX}`);
+  // 同一张表就写回原来那个文件（含老命名），换表才落到新文件名上。
+  const templatePath = prior.file;
   atomicWriteJson(templatePath, template);
   return { plan, template, template_path: templatePath, order: ordered };
 }

@@ -36,6 +36,12 @@ const readJson = (file, label) => {
   }
 };
 
+/** Template 的 ref 以 `skill.path` 为准——文件名现在带目标表指纹。 */
+const templateRef = (template, file) => {
+  const fromSkill = path.basename(String(template?.skill?.path || ''));
+  return fromSkill && fromSkill !== '.' ? fromSkill : path.basename(file, TEMPLATE_SUFFIX);
+};
+
 const maybeJson = (file) => {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -144,6 +150,7 @@ class ReadModel {
       ref,
       valid: Boolean(stat),
       hash: source.hash || null,
+      description: source.description || null,
       source: source.source || null,
       loaded_at: source.loaded_at || null,
       updated_at: stat ? stat.mtime.toISOString() : null,
@@ -167,7 +174,7 @@ class ReadModel {
       .sort();
   }
 
-  listTemplates(runs = null) {
+  listTemplates(runs = null, { includeArchived = false } = {}) {
     const runList = runs || this.listRuns();
     const lastRuns = new Map();
     for (const run of runList) {
@@ -176,38 +183,47 @@ class ReadModel {
 
     return this.templateFiles().map((file) => {
       const tpl = readJson(file, `Template ${path.basename(file)}`);
-      const ref = path.basename(file, TEMPLATE_SUFFIX);
       return {
-        ref,
+        ref: templateRef(tpl, file),
+        // Template Name 就是文件名（`<ref>-<目标指纹>`），末尾带 Hash。
+        name: path.basename(file, TEMPLATE_SUFFIX),
         template_id: tpl.template_id || null,
         created_at: tpl.created_at || null,
+        archived_at: tpl.archived_at || null,
         skill: tpl.skill || null,
         target: tpl.target || null,
         inputs: tpl.mapping?.inputs?.length || 0,
         outputs: tpl.mapping?.outputs?.length || 0,
         last_run: lastRuns.get(tpl.template_id) || null,
       };
-    }).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    })
+      // 归档默认不出现（文件还在，Run 里按 template_id 仍能打开）；要看得显式要。
+      .filter((item) => includeArchived || !item.archived_at)
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
   }
 
-  getTemplate(id) {
+  findTemplateFile(id) {
     assertSegment(id, 'Template id');
-    const file = this.templateFiles().find((candidate) => {
+    return this.templateFiles().find((candidate) => {
       if (path.basename(candidate, TEMPLATE_SUFFIX) === id) return true;
       try {
         return JSON.parse(fs.readFileSync(candidate, 'utf8')).template_id === id;
       } catch {
         return false;
       }
-    });
+    }) || null;
+  }
 
+  getTemplate(id) {
+    const file = this.findTemplateFile(id);
     if (!file) {
       throw new HttpError(404, 'TEMPLATE_NOT_FOUND', `Template not found: ${id}`, 'Refresh the Templates list');
     }
 
     const template = readJson(file, `Template ${path.basename(file)}`);
     return {
-      ref: path.basename(file, TEMPLATE_SUFFIX),
+      ref: templateRef(template, file),
+      name: path.basename(file, TEMPLATE_SUFFIX),
       template,
     };
   }
@@ -225,6 +241,7 @@ class ReadModel {
         return {
           run_id: run.run_id || entry.name,
           template_id: run.template_id || null,
+          template_name: run.template_name || null,
           status: run.status || 'unknown',
           trigger: run.trigger || null,
           started_at: run.started_at || null,

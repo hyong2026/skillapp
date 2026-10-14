@@ -48,6 +48,13 @@ const FIXTURE = {
 const EXPECTED_ORDER = ['任务名称', '＊in: 待切图片', '＊in: 网格数', 'out: 切片', 'out: 切片数'];
 const EXPECTED_CREATED = FIXTURE.inputs.length + FIXTURE.outputs.length;
 
+/** 同一份契约，但「out: 切片」标为未映射：不建列、不进列序 */
+const UNMAPPED_FIXTURE = {
+  ...FIXTURE,
+  outputs: [{ ...FIXTURE.outputs[0], mapped: false }, FIXTURE.outputs[1]],
+};
+const UNMAPPED_ORDER = ['任务名称', '＊in: 待切图片', '＊in: 网格数', 'out: 切片数'];
+
 // ─── worker：在临时 ROOT 里真跑一次 map-table ─────────────────────────────
 
 /**
@@ -126,7 +133,7 @@ function makeStubBin(root) {
   return { bin, calls };
 }
 
-async function runWorker(hiddenReads) {
+async function runWorker(hiddenReads, unmapped) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-retry-'));
   process.env.SKILLAPP_ROOT = root;
   process.env.SKILLAPP_DATA_DIR = path.join(root, '.data');
@@ -141,13 +148,17 @@ async function runWorker(hiddenReads) {
   const realPath = process.env.PATH;
   process.env.PATH = `${bin}${path.delimiter}${realPath}`;
 
+  // 必须在 env 定好之后再加载 src 模块：paths.js 的目录常量是导入时求值的
+  const { templateFileName } = await import('../src/core/template.js');
+
   // 3) 临时 ROOT：已装 Skill + 契约副本
   fs.mkdirSync(path.join(root, '.data', 'skills', REF), { recursive: true });
   fs.mkdirSync(path.join(root, '.data', 'mappings'), { recursive: true });
   fs.writeFileSync(path.join(root, '.data', 'skills', REF, 'SKILL.md'), '# stub\n');
   fs.writeFileSync(path.join(root, '.data', 'skills', REF, 'source.json'),
     JSON.stringify({ source: '/tmp/stub', hash: 'sha256:stub', loaded_at: '' }));
-  fs.writeFileSync(path.join(root, '.data', 'mappings', `${REF}.mapping.json`), JSON.stringify(FIXTURE, null, 2));
+  fs.writeFileSync(path.join(root, '.data', 'mappings', `${REF}.mapping.json`),
+    JSON.stringify(unmapped ? UNMAPPED_FIXTURE : FIXTURE, null, 2));
 
   // 4) 真跑 map-table.js：它的 catch 会 process.exit(1)，这里换成可捕获的异常
   const errors = [];
@@ -173,12 +184,15 @@ async function runWorker(hiddenReads) {
 
   // 假 lark 与实际执行共用同一个模块实例，直接读它的表状态即可
   const state = createRequire(import.meta.url)(fakePath).state;
-  const templatePath = path.join(root, '.data', 'templates', `${REF}.template.json`);
+  // Template 文件名带目标表指纹：<ref>-<8 位 hash>.template.json
+  const templateName = templateFileName(REF, { base_token: 'basStub', table_id: 'tblStub', view_id: 'vewStub' });
+  const templatePath = path.join(root, '.data', 'templates', templateName);
   const template = fs.existsSync(templatePath) ? JSON.parse(fs.readFileSync(templatePath, 'utf8')) : null;
   const callLog = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean) : [];
 
   process.stdout.write(MARKER + JSON.stringify({
     hiddenReads,
+    unmapped,
     exitCode,
     harnessError,
     sleeps: callLog.filter((line) => line === 'sleep').length,
@@ -197,13 +211,15 @@ async function runWorker(hiddenReads) {
 
 if (process.argv.includes('--worker')) {
   const index = process.argv.indexOf('--hidden-reads');
-  runWorker(Number(process.argv[index + 1] ?? 0)).catch((err) => {
+  runWorker(Number(process.argv[index + 1] ?? 0), process.argv.includes('--unmapped')).catch((err) => {
     console.error(err.stack || String(err));
     process.exit(1);
   });
 } else {
-  const scenario = (hiddenReads) => {
-    const r = spawnSync(process.execPath, [import.meta.filename, '--worker', '--hidden-reads', String(hiddenReads)],
+  const scenario = (hiddenReads, unmapped = false) => {
+    const args = [import.meta.filename, '--worker', '--hidden-reads', String(hiddenReads)];
+    if (unmapped) args.push('--unmapped');
+    const r = spawnSync(process.execPath, args,
       { encoding: 'utf8', timeout: 120000 });
     const line = (r.stdout || '').split('\n').find((candidate) => candidate.startsWith(MARKER));
     assert.ok(line, `worker 没有给出结果（exit=${r.status}）:\n${r.stdout}\n${r.stderr}`);
@@ -254,5 +270,17 @@ if (process.argv.includes('--worker')) {
     assert.match(out.errorText, /＊in: 待切图片/, '要列出缺失的列名');
     assert.match(out.errorText, /重跑本命令即可/, '要给出可操作的下一步');
     assert.equal(out.templateWritten, false, '失败时不应写 Template');
+  });
+
+  test('未映射的输出不建列、不进列序，但标记要留在 Template 里', () => {
+    const out = scenario(0, true);
+    assert.equal(out.exitCode, null, '不该退出');
+    assert.equal(out.created, EXPECTED_CREATED - 1, '未映射的列不该被创建');
+    assert.deepEqual(out.order, UNMAPPED_ORDER, '未映射的列不该出现在列序里');
+    const entry = out.template.mapping.outputs.find((item) => item.key === 'tiles');
+    assert.equal(entry.mapped, false, '未映射的标记要写进 Template');
+    assert.equal(entry.field_id, null, '没建列自然没有 field_id');
+    const kept = out.template.mapping.outputs.find((item) => item.key === 'tile_count');
+    assert.ok(kept.field_id, '其余输出照常拿到 field_id');
   });
 }
