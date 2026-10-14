@@ -108,6 +108,8 @@ Mapping 的每个输入 / 输出都可以标 `mapped: false`：**不建列、不
 2. **绑定一律用 `field_id`，不用字段名。** 名字随时会被改。
 3. **加载时核对，不靠自觉。** 启动时校验 Skill 内容指纹、每个 `field_id` 的存在与类型。
 
+内容层的目录、命名与三条约定见 [`.data/README.md`](.data/README.md)。
+
 已知边界（刻意留着，不是遗漏）完整清单见 [docs/architecture.md](docs/architecture.md#已知边界)，要点：
 
 - 串行执行、没有并发；`--incremental` 会反复捞出失败行；`.data/runs/` 只增不减。
@@ -124,7 +126,7 @@ skillapp/
 │   ├── core/                  内部模块（CLI / HTTP / worker / 测试共用）
 │   ├── server/                HTTP API、SSE、任务执行器与 worker
 │   └── web/                   零依赖静态控制台（app.js + index.html/styles.css，lib/ + views/）
-├── .data/                     内容层 —— 除 README 外不进 Git
+├── .data/                     内容层 —— 除各目录 README 外不进 Git（见 .data/README.md）
 │   ├── skills/<ref>/          装载进来的 Skill
 │   ├── templates/<ref>-<目标指纹>.template.json   Template（内含 Mapping）
 │   ├── mappings/<ref>.mapping.json                Mapping 草案（分析产物）
@@ -154,6 +156,7 @@ skillapp/
 | 文档 | 回答什么 |
 |---|---|
 | 本文件 | 产品是什么、三步流程、怎么开始、术语与状态 |
+| [`.data/README.md`](.data/README.md) | 内容层：五个子目录各放什么、命名规则与三条约定（聚合各子目录的 README） |
 | [docs/gui.md](docs/gui.md) | 图形控制台：页面、交互、消息区、UI 约定 |
 | [docs/cli.md](docs/cli.md) | 四个命令、参数、退出码、`.env` 与分析器配置 |
 | [docs/api.md](docs/api.md) | HTTP API：鉴权、端点、SSE、错误格式 |

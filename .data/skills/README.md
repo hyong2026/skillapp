@@ -1,15 +1,24 @@
 # skills/
 
-导入的 Skill 副本。**内容不进 Git**，本文件除外。
-
-由装载命令生成。装载后 `.data/skills/<name>/` 是运行时的唯一真相；上游改动**必须重新装载**才生效。
+装载进来的 Skill 副本。装载后这里是**运行时的唯一真相**——上游改了，必须重新装载才生效。
 
 ```bash
-node src/cli/load-skill.js /path/to/skill --ref <name>
+node src/cli/load-skill.js /path/to/skill      # 目录名就是 ref
 ```
 
-- 每次装载写入 `.data/skills/<name>/source.json`（来源路径、内容指纹、SKILL.md frontmatter 里的 `description`、装载时间；同样不进 Git）。
-- 版本锚点在 `.data/templates/<ref>-<目标指纹>.template.json` 的 `skill.hash`，不在本目录。
-- `node_modules/` 由导入一并复制（Skill 的运行契约），但不进 Git。
+| 路径 | 是什么 |
+|---|---|
+| `<ref>/SKILL.md` | Skill 本体（写给 Agent 看的那份说明书） |
+| `<ref>/source.json` | 装载记录：来源绝对路径、内容指纹 `hash`、`SKILL.md` frontmatter 里的 `description`、`loaded_at` |
+| `<ref>/node_modules/` | 一并复制（Skill 的运行契约），但不进 Git |
+| `<ref>/…` | Skill 自己的脚本与资源 |
 
-**本目录为空 = 尚未导入任何 Skill，`src/cli/run-template.js` 会拒绝运行。**
+约定：
+
+- `ref` = 源目录最后一段，必须匹配 `[A-Za-z0-9._-]+`；装载时整目录原子替换。
+- **版本锚点在 Template 里**（`skill.hash`），不在本目录——这里只有当前这一份。
+- 语言中立：可能是 Node，也可能是 Python；本目录不放 `package.json` 替它决定（见 [../README.md](../README.md)）。
+
+📖 装载、分析与执行的完整语义见 [`docs/run.md`](../docs/run.md) 与 [`docs/cli.md`](../docs/cli.md)。
+
+**本目录为空 = 还没装载任何 Skill，执行会被拒绝。**

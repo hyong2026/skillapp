@@ -1,19 +1,28 @@
 # mappings/
 
-Mapping。**内容不进 Git**，本文件除外。
+Mapping —— Skill 的 **IO 契约（草案）**：输入、输出与命令模板。
+`analyze-skill-io` 写它，`map-table.js` 读它；界面上就是 Skill 详情里的 `Mapping Configuration` 面板。
 
-`analyze-skill-io` 在这里生成 Mapping，`src/cli/map-table.js` 消费它：
+```text
+analyze-skill-io  →  mappings/<ref>.mapping.json  →  map-table.js  →  templates/…
+                            ↑
+                    面板里的改名 / 勾选 / 排序（即时保存）
+```
 
-| 文件 | 是什么 |
+| 字段 | 是什么 |
 |---|---|
-| `.data/mappings/<ref>.mapping.json` | Mapping，`src/cli/map-table.js` 的输入 |
+| `skill.entry` | 入口脚本，相对 Skill 目录 |
+| `cmd` | 每行要跑的命令模板（`{skill.entry}`、`{key}`、`{key...}`、`{--flag key}`） |
+| `inputs[]` / `outputs[]` | 契约条目：`key` / `label` / `type` / `required` / `default` / `validate` / `transform` / `hint`；输出多一个 `from` 表达式与可选 `round` |
+| `mapped` | `false` = 该列不建、不读、不写；缺省即参与映射（必填输入不允许 `false`） |
+| `skill_hash` / `updated_at` | 对应的 Skill 指纹与保存时间 |
 
-```
-analyze-skill-io  →  .data/mappings/<ref>.mapping.json  →  map-table.js
-```
+约定：
 
-文件名带 Skill 名——SkillApp 可以同时装载多个 Skill，不区分就会互相覆盖。
+- **一个 Skill 一份**（文件名带 `<ref>`），同时装载多个 Skill 不会互相覆盖。
+- 它**不是一次性文件**：每次映射都读它、面板改动即时写回它；重新分析会覆盖它，但**保留用户勾掉的 `mapped: false`**。
+- 小改：面板或直接编辑这份 JSON；大改：重新分析。
 
-它是**一次性的**：`map-table.js` 消费完即可丢弃。下次要改映射，重跑分析即可。
+📖 结构详解见 [`docs/run.md`](../docs/run.md#mapping-的结构)。
 
-**本目录为空 = 没有正在进行的映射。**
+**本目录为空 = 还没分析过任何 Skill（GUI 里点 `Analyze`）。**
