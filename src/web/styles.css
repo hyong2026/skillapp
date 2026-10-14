@@ -532,6 +532,8 @@ pre {
   min-height: 96px;
 }
 .error-box {
+  /* 出错时头部的 view-head 是空的，这里自己补上顶部间距。 */
+  margin-top: 20px;
   padding: 18px;
   border: 1px solid rgba(248, 113, 113, .34);
   border-radius: var(--radius-md);

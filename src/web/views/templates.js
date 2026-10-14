@@ -1,6 +1,6 @@
-import { api, notifyTaskStarted, startOperation, watchOperation } from '../lib/api.js';
+import { api, startOperation, watchOperation } from '../lib/api.js';
 import {
-  dataPanel, head, kv, mappingInputRows, mappingOutputRows, pagedTable, panel, section, togglePanel, viewTitle,
+  dataPanel, dataTable, head, kv, mappingInputRows, mappingOutputRows, pagedTable, panel, section, togglePanel, viewTitle,
 } from '../lib/components.js';
 import { actionButton, fragment, h, icon, setNotice } from '../lib/dom.js';
 import { codeBlock, encoded, formatDate, statusBadge, triggerLabel } from '../lib/format.js';
@@ -125,7 +125,6 @@ function runControl(template) {
           trigger: allRows.checked ? 'all' : 'incremental',
         },
       });
-      notifyTaskStarted();
       location.hash = `runs/${encoded(run.run_id)}`;
     } catch (error) {
       setNotice(error.message, true);

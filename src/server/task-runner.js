@@ -8,6 +8,7 @@ import {
   TERMINAL_STATUSES,
 } from '../core/run-template.js';
 import { HttpError, ReadModel } from './read-model.js';
+import { operationSummary } from './operation-summary.js';
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'canceling']);
 const DEFAULT_WORKER = path.join(import.meta.dirname, 'run-worker.js');
@@ -98,6 +99,8 @@ class TaskRunner {
     this.model = new ReadModel(this.root);
     this.jobs = new Map();
     this.operations = new Map();
+    // 全局操作订阅者：GET /api/operations/events 的连接。
+    this.operationListeners = new Set();
     this.locks = new Map();
     this.recoverInterrupted();
     this.recoverInterruptedOperations();
@@ -171,6 +174,7 @@ class TaskRunner {
       lock_keys: job.lockKey ? [job.lockKey] : [],
     };
     atomicWriteJson(path.join(this.model.operationsDir, id, 'operation.json'), record);
+    this.broadcastOperation(record);
     return record;
   }
 
@@ -265,6 +269,25 @@ class TaskRunner {
 
   persistOperation(job) {
     atomicWriteJson(path.join(this.model.operationsDir, job.job.operation_id, 'operation.json'), job.job);
+    this.broadcastOperation(job.job);
+  }
+
+  /** 全局操作流：任何一条操作落盘变化，就通知所有订阅者（消息面板）。 */
+  subscribeOperations(listener) {
+    this.operationListeners.add(listener);
+    return () => this.operationListeners.delete(listener);
+  }
+
+  broadcastOperation(record) {
+    if (!record) return;
+    const summary = operationSummary(record);
+    for (const listener of this.operationListeners) {
+      try {
+        listener(summary);
+      } catch {
+        this.operationListeners.delete(listener);
+      }
+    }
   }
 
   updateOperation(job, patch = {}) {

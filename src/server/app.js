@@ -8,6 +8,7 @@ import { saveMapping } from '../core/mapping.js';
 import { readSettings, saveSettings } from '../core/settings.js';
 import { ReadModel, HttpError, isWithin } from './read-model.js';
 import { TaskRunner } from './task-runner.js';
+import { operationSummary } from './operation-summary.js';
 const MAX_BODY_BYTES = 1024 * 1024;
 const OPERATION_TERMINAL = new Set(['completed', 'failed', 'canceled', 'interrupted']);
 
@@ -162,6 +163,41 @@ function serveEvents(req, res, runner, runId) {
   req.on('end', close);
 }
 
+/**
+ * 全局操作流：先给一次全量快照，之后只推单条操作的摘要。
+ * 侧边栏消息区靠它实时更新，不需要轮询。
+ */
+function serveOperationListEvents(req, res, runner) {
+  res.writeHead(200, {
+    ...securityHeaders(),
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  res.flushHeaders?.();
+  let heartbeat = null;
+  let closed = false;
+  const unsubscribe = runner.subscribeOperations((summary) => {
+    sendSseEvent(res, { type: 'operation', operation: summary });
+  });
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    if (heartbeat) clearInterval(heartbeat);
+    unsubscribe();
+  };
+
+  sendSseEvent(res, {
+    type: 'snapshot',
+    operations: runner.listOperations().map(operationSummary),
+  });
+  heartbeat = setInterval(() => res.write(': ping\n\n'), 15000);
+  heartbeat.unref?.();
+  req.on('close', close);
+  req.on('end', close);
+}
+
 function serveOperationEvents(req, res, runner, operationId) {
   const initialOperation = runner.getOperation(operationId);
   res.writeHead(200, {
@@ -235,44 +271,6 @@ function operationData(operation) {
 function skillOperations(runner, ref) {
   const operations = runner.skillOperations(ref);
   return Object.fromEntries(Object.entries(operations).map(([alias, operation]) => [alias, operationData(operation)]));
-}
-
-/** Operations 列表用的摘要：不带上 result（map-table 的 plan 有几十 KB）。 */
-function operationSummary(operation) {
-  const input = operation.input || {};
-  const result = operation.result || {};
-  const started = operation.started_at ? Date.parse(operation.started_at) : NaN;
-  const finished = operation.finished_at ? Date.parse(operation.finished_at) : NaN;
-  const templateId = input.template_id || result.template?.template_id || null;
-  let subject = null;
-  if (operation.type === 'run-template') {
-    // 名字优先：任务区里显示 Template Name，比 Run ID 有意义。
-    subject = input.run_id
-      ? { type: 'run', id: input.run_id, label: input.template_name || input.run_id }
-      : null;
-  } else if (operation.type === 'map-table' && templateId) {
-    subject = { type: 'template', id: templateId, label: input.ref || templateId };
-  } else if ((operation.type === 'archive-template' || operation.type === 'unarchive-template') && templateId) {
-    subject = { type: 'template', id: templateId, label: input.template_name || templateId };
-  } else if (input.ref) {
-    subject = { type: 'skill', id: input.ref, label: input.ref };
-  }
-  return {
-    operation_id: operation.operation_id,
-    type: operation.type,
-    status: operation.status || 'unknown',
-    created_at: operation.created_at || null,
-    started_at: operation.started_at || null,
-    finished_at: operation.finished_at || null,
-    duration_ms: Number.isFinite(started) && Number.isFinite(finished) ? finished - started : null,
-    progress: operation.progress || null,
-    subject,
-    counts: operation.type === 'run-template'
-      ? { total: result.total ?? null, succeeded: result.succeeded ?? null, failed: result.failed ?? null }
-      : null,
-    trigger: operation.type === 'run-template' ? input.trigger || null : null,
-    error: operation.error || null,
-  };
 }
 
 function operationDetail(operation) {
@@ -518,6 +516,7 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
       return sendApi(req, res, await runner.cancelOperation(segments[2]));
     }
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
+    if (segments.length === 3 && segments[2] === 'events') return serveOperationListEvents(req, res, runner);
     if (segments.length === 2) return sendApi(req, res, runner.listOperations().map(operationSummary));
     if (segments.length === 3) return sendApi(req, res, operationDetail(runner.getOperation(segments[2])));
     throw new HttpError(404, 'NOT_FOUND', 'Operation endpoint not found', 'Check the request path');

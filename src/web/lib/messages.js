@@ -6,12 +6,13 @@
  * 关掉只影响本机这块面板（localStorage），Operations 页里的记录不动。
  */
 
-import { api } from './api.js';
+import { api, readEventStream } from './api.js';
 import { h, icon, setNotice } from './dom.js';
 import { encoded, statusBadge } from './format.js';
 
 const DISMISSED_KEY = 'skillapp.messages.dismissed';
-const POLL_MS = 3000;
+const STREAM_PATH = '/api/operations/events';
+const RECONNECT_MS = 2000;
 const MAX_ROWS = 3;
 const ACTIVE = new Set(['queued', 'running', 'canceling']);
 const TYPE_LABELS = {
@@ -62,7 +63,7 @@ function cancelPath(operation) {
   return `/api/operations/${encoded(operation.operation_id)}/cancel`;
 }
 
-function messageRow(operation, refresh) {
+function messageRow(operation, { onCancel, onClose }) {
   const active = ACTIVE.has(operation.status);
   const label = TYPE_LABELS[operation.type] || operation.type;
   const subject = operation.subject?.label || operation.subject?.id || '';
@@ -75,16 +76,7 @@ function messageRow(operation, refresh) {
       title: 'Cancel task',
       'aria-label': `Cancel ${label}`,
     }, icon('cancel'));
-    cancel.addEventListener('click', async () => {
-      cancel.disabled = true;
-      try {
-        await api(cancelPath(operation), { method: 'POST' });
-      } catch (error) {
-        setNotice(error.message, true);
-        cancel.disabled = false;
-      }
-      await refresh();
-    });
+    cancel.addEventListener('click', () => onCancel(operation, cancel));
     actions.append(cancel);
   } else {
     const close = h('button', {
@@ -94,8 +86,7 @@ function messageRow(operation, refresh) {
       'aria-label': `Dismiss ${label}`,
       onClick: (event) => {
         event.stopPropagation();
-        dismiss(operation.operation_id);
-        refresh();
+        onClose(operation);
       },
     }, icon('close'));
     actions.append(close);
@@ -130,7 +121,7 @@ function messageRow(operation, refresh) {
   return row;
 }
 
-function renderMessages(container, operations, refresh) {
+function renderMessages(container, operations, handlers) {
   const visible = operations
     .filter((operation) => !dismissed.has(operation.operation_id))
     .sort((a, b) => Number(ACTIVE.has(b.status)) - Number(ACTIVE.has(a.status)))
@@ -144,28 +135,75 @@ function renderMessages(container, operations, refresh) {
   container.hidden = false;
   container.replaceChildren(
     h('div', { className: 'messages-head', textContent: 'Messages' }),
-    ...visible.map((operation) => messageRow(operation, refresh)),
+    ...visible.map((operation) => messageRow(operation, handlers)),
   );
+}
+
+/** 新的一条覆盖旧的同 ID 记录，并按创建时间倒序排好（服务端也是这个顺序）。 */
+function mergeOperation(operations, next) {
+  const rest = operations.filter((operation) => operation.operation_id !== next.operation_id);
+  return [next, ...rest];
 }
 
 function initMessages() {
   const container = document.getElementById('messages');
   if (!container) return;
 
-  const refresh = async () => {
+  // 列表完全靠 SSE：连上时的一次全量快照 + 之后逐条推送，平时不发任何 GET。
+  let operations = [];
+  const paint = () => renderMessages(container, operations, handlers);
+  const handlers = {
+    async onCancel(operation, button) {
+      button.disabled = true;
+      try {
+        const result = await api(cancelPath(operation), { method: 'POST' });
+        // 任务类取消会把更新后的操作回给我们；Run 类等流推。
+        if (result?.operation_id) operations = mergeOperation(operations, result);
+      } catch (error) {
+        setNotice(error.message, true);
+        button.disabled = false;
+      }
+      paint();
+    },
+    onClose(operation) {
+      dismiss(operation.operation_id);
+      paint();
+    },
+  };
+  // 只有在流连不上、而且手上还没有任何数据时兜底拉一次，绝不是轮询。
+  const fallbackFetch = async () => {
+    if (operations.length) return;
     try {
-      renderMessages(container, await api('/api/operations'), refresh);
+      operations = await api('/api/operations');
+      paint();
     } catch {
-      // 服务暂时不可用时保持现状，等下一次轮询。
+      // 拿不到就保持空白，等下一次重连。
     }
   };
 
-  window.addEventListener('hashchange', () => { void refresh(); });
-  window.addEventListener('skillapp:message', () => { void refresh(); });
-  setInterval(() => {
-    if (!document.hidden) void refresh();
-  }, POLL_MS);
-  void refresh();
+  const connect = async () => {
+    if (!container.isConnected) return;
+    try {
+      const response = await fetch(STREAM_PATH, {
+        headers: { accept: 'text/event-stream' },
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (!response.ok || !response.body) throw new Error(`Operation stream failed (${response.status})`);
+      await readEventStream(response, (event) => {
+        if (event.type === 'snapshot') operations = event.operations || [];
+        else if (event.type === 'operation' && event.operation) operations = mergeOperation(operations, event.operation);
+        else return;
+        paint();
+      });
+    } catch {
+      // 断线：先兜底拉一次，再重连（重连成功后服务端会再发一次全量快照）。
+      await fallbackFetch();
+    }
+    setTimeout(connect, RECONNECT_MS);
+  };
+
+  void connect();
 }
 
 export { initMessages };

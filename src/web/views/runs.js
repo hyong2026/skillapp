@@ -1,4 +1,4 @@
-import { api, notifyTaskStarted, watchRun } from '../lib/api.js';
+import { api, watchRun } from '../lib/api.js';
 import { dataPanel, dataTable, head, kv, pagedTable, panel, viewTitle } from '../lib/components.js';
 import { actionButton, fragment, h, setNotice } from '../lib/dom.js';
 import { encoded, formatDate, statusBadge, textBlock, triggerLabel } from '../lib/format.js';
@@ -62,7 +62,6 @@ function runContent(runId, run, liveLogs) {
       event.currentTarget.disabled = true;
       try {
         const next = await api(`/api/runs/${encoded(runId)}/retry`, { method: 'POST' });
-        notifyTaskStarted();
         location.hash = `runs/${encoded(next.run_id)}`;
       } catch (error) {
         setNotice(error.message, true);

@@ -94,7 +94,7 @@ async function render({ preserveScroll = false } = {}) {
   } catch (error) {
     if (sequence !== renderSequence) return;
     app.removeAttribute('aria-busy');
-    setNotice(error.message, true);
+    // 页面级失败就直接页面里报（error-box 带 Retry），不再额外弹一条同文案的 toast。
     app.replaceChildren(h('div', { className: 'view-body-inner' }, errorView(error)));
   } finally {
     if (previousScroll !== null && sequence === renderSequence) {

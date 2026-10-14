@@ -96,6 +96,41 @@ function sleep(ms) {
 }
 
 /** 按 operation_id 等一个操作结束（归档这类不再挂在 Skill 别名下）。 */
+/** 读 SSE 直到出现满足条件的帧（验证全局操作流用）。 */
+async function readStreamFrames(pathname, predicate, { timeoutMs = 8000, onOpen = null } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      headers: { authorization: AUTH, accept: 'text/event-stream' },
+      signal: controller.signal,
+    });
+    assert.equal(response.status, 200);
+    if (onOpen) await onOpen();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary;
+      while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const data = frame.split('\n').filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join('\n');
+        if (!data) continue;
+        const event = JSON.parse(data);
+        if (predicate(event)) return event;
+      }
+    }
+    throw new Error(`stream ended before the expected frame: ${pathname}`);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
 async function waitForOperationId(operationId) {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
@@ -300,6 +335,28 @@ test('M3 Template 可以归档：列表消失、不可跑、可解冻，并记�
   const types = operations.body.data.filter((item) => item.subject?.id === templateId).map((item) => item.type);
   assert.ok(types.includes('archive-template'), '归档要记进 Operations');
   assert.ok(types.includes('unarchive-template'), '解冻也要记进 Operations');
+});
+
+test('M3 全局操作流：连上先发快照，之后实时推单条操作', async () => {
+  let started = null;
+  const pushed = await readStreamFrames(
+    '/api/operations/events',
+    (event) => event.type === 'operation' && event.operation?.type === 'analyze-skill',
+    {
+      onOpen: async () => {
+        started = await requestJson('/api/skills/demo/analyze', { method: 'POST', body: {} });
+      },
+    },
+  );
+  assert.equal(started.response.status, 202);
+  assert.equal(pushed.operation.operation_id, started.body.data.operation_id, '推的应当是刚发起的那条');
+  assert.ok(['queued', 'running', 'completed'].includes(pushed.operation.status), pushed.operation.status);
+  assert.deepEqual(pushed.operation.subject, { type: 'skill', id: 'demo', label: 'demo' }, '摘要要带 subject 供列表跳转');
+  await waitForOperationId(started.body.data.operation_id);
+
+  const snapshot = await readStreamFrames('/api/operations/events', (event) => event.type === 'snapshot');
+  assert.ok(Array.isArray(snapshot.operations), '快照要带一份操作列表');
+  assert.ok(snapshot.operations.every((item) => 'operation_id' in item && 'status' in item), '快照里每条都是摘要');
 });
 
 test('M3 操作可以取消：已结束的原样返回，不存在的返回 404', async () => {
