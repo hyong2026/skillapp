@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">SkillApp WebUI</title>
+  <defs>
+    <linearGradient id="tile" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e2e8f0"/>
+    </linearGradient>
+  </defs>
+  <rect x="1.5" y="1.5" width="29" height="29" rx="8.5" fill="url(#tile)" stroke="#cbd5e1" stroke-width="1"/>
+  <path d="M22.5 7H13a4.5 4.5 0 0 0 0 9h6a4.5 4.5 0 0 1 0 9H9.5" fill="none" stroke="#16a34a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -311,7 +311,7 @@ test('M3 Template 可以归档：列表消失、不可跑、可解冻，并记�
   assert.ok(!afterArchive.body.data.some((item) => item.template_id === templateId), '归档后列表里不该还有它');
   const withArchived = await requestJson('/api/templates?scope=all');
   assert.ok(withArchived.body.data.some((item) => item.template_id === templateId && item.archived_at),
-    '显式要全部时，归档的 Template 要能看到（列表页的 Show archived）');
+    '显式要全部时，归档的 Template 要能看到（列表页的 Show Archived）');
   const detail = await requestJson(`/api/templates/${templateId}`);
   assert.equal(detail.response.status, 200, '按 Template ID 仍要能打开');
   assert.ok(detail.body.data.template.archived_at, '要带上归档时间');

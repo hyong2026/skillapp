@@ -190,4 +190,4 @@ dry-run：只核对不执行。返回
 
 ## 静态资源
 
-`/` 与 `/styles.css`、`/app.js`、`/lib/*`、`/views/*` 等由同一个服务提供，路径穿越会被拒绝；产物只能通过 `/api/runs/:id/artifacts/:recordId/<相对路径>` 读取，且被限制在该 Run/record 目录内。
+`/` 与 `/styles.css`、`/app.js`、`/theme-boot.js`、`/lib/*`、`/views/*`、`/logo*.svg` 等由同一个服务提供，路径穿越会被拒绝；产物只能通过 `/api/runs/:id/artifacts/:recordId/<相对路径>` 读取，且被限制在该 Run/record 目录内。

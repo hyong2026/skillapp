@@ -118,7 +118,7 @@ function dataTable(headers, rows, label = 'Data Table', className = null) {
     }
   }
   table.append(thead, tbody);
-  const wrap = h('div', { className: 'table-wrap', role: 'region', tabindex: '0', 'aria-label': label });
+  const wrap = h('div', { className: 'table-wrap', role: 'region', 'aria-label': label });
   wrap.append(table);
   return wrap;
 }
@@ -157,7 +157,11 @@ function pagedTable(headers, rows, { pageSize = 10, label = 'Data Table' } = {})
 
   const paint = () => {
     const start = (page - 1) * pageSize;
-    const children = [dataTable(headers, rows.slice(start, start + pageSize), label)];
+    // 只有列表自带滚动条与锁定表头；键盘要能滚，所以这里才需要可聚焦。
+    const list = dataTable(headers, rows.slice(start, start + pageSize), label);
+    list.classList.add('is-scrolling');
+    list.tabIndex = 0;
+    const children = [list];
 
     if (pages > 1) {
       const prev = actionButton('Prev', 'prev', 'button');
@@ -452,7 +456,7 @@ function editableColumnTable(kind, specs, canEdit, onSave) {
 
   renderRows();
   table.append(colgroup, thead, tbody);
-  const wrap = h('div', { className: 'table-wrap', role: 'region', tabindex: '0', 'aria-label': isInput ? 'Input Fields' : 'Output Fields' });
+  const wrap = h('div', { className: 'table-wrap', role: 'region', 'aria-label': isInput ? 'Input Fields' : 'Output Fields' });
   wrap.append(table);
   return wrap;
 }

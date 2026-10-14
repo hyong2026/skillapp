@@ -45,7 +45,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 ### Templates
 
 - 列表：`Template Name / Template ID / IO / Last Run / Created`；`Template Name` 是文件名 `<ref>-<目标指纹>` 且带链接（链接锚点用 `template_id`）。
-- 右上角 `Show archived`（默认不勾）：勾上后连归档的一起列出，归档行带 `Archived` 徽标。
+- 右上角 `Show Archived`（默认不勾）：勾上后连归档的一起列出，归档行带 `Archived` 徽标。
 - 详情：面包屑 `Templates`，标题就是 Template Name；Summary 展示 Template ID、Skill Name、Skill Hash、Feishu Base URL、Created，归档后多一行 `Archived` 徽标。
 - `Template Definition` 展示完整 Inputs / Outputs 映射，`JSON` 开关看完整 Template JSON。
 - 右上角动作：`Preview`、`Run`（`All Rows` 勾选框决定 `all` / `incremental`）、`Archive` / `Unarchive`。
@@ -67,8 +67,9 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 ### Settings
 
+- `Appearance`：`Theme` 分段控件 `Dark | Light`，默认 Dark。切换即时生效，只存本浏览器（`localStorage`），不进服务端配置；首屏由独立的 `theme-boot.js` 先落主题（CSP 只允许 `script-src 'self'`，所以不用内联脚本），不闪。浅色主题在 `styles.css` 的 `:root[data-theme="light"]` 里只覆盖同名变量，logo 也随之切到 `logo-light.svg`。
 - `Runtime`：App URL、Repo Root、Node Version（只读）。
-- `Configuration`：目前是占位面板。分析器白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），界面后续接。
+- 分析器白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），暂无对应界面。
 - 应用重启与飞书授权初始化**尚未实现**：授权走 `lark-cli auth login`。
 
 ## 消息区（Messages）
@@ -86,7 +87,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - 表头、Summary 字段名、弹框字段名共用一套样式与字号（10px / 600 / 等宽，次要色）。
 - 所有弹框都是应用内 `<dialog>`，不用浏览器原生 `confirm`：输入弹框、信息弹框（Preview）、确认弹框（Unload / Archive / 全量 Run）。确认弹框支持 Esc / Cancel 放弃，危险动作的确认按钮为红色，按钮返回 `OK`。
 - 列表页（Skills / Templates / Runs / Operations）**每页 10 条、最新在前**，底部 `Page x / y` + 带箭头的 `Prev / Next`（只有一页时不显示翻页条）；页号按列表记忆（sessionStorage），切页面/刷新仍在原页。表头 `sticky` 锁在列表顶部。
-- 表格容器自己纵向滚动（`max-height: 70vh`），滚动时表头不动。
+- 只有列表页的表格容器自己纵向滚动（`max-height: 70vh`），滚动时表头不动；其余表格跟随页面滚动。
 - 日期时间统一 `YYYY-MM-DD HH:mm:ss`。
 - JSON / stdout / stderr 用代码块展示并带行号（行号在行首，长行换行时续行悬挂缩进，不出现横向滚动）。
 - 默认路由 `#skills`；列表与 Summary 不放无意义的统计块。
@@ -103,6 +104,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 | `lib/components.js` | 面板、表格、分页表、可编辑映射表等共用件 |
 | `lib/api.js` | 请求封装、SSE 读取、操作订阅 |
 | `lib/messages.js` | 侧边栏消息区（全局操作流） |
+| `lib/theme.js`、`theme-boot.js` | 主题 Dark / Light：运行时切换与首屏防闪（`logo-light.svg` 是浅色 logo） |
 | `lib/shell.js` | 页面骨架（视图头固定在滚动区之外）、窄屏 ☰ 菜单 |
 | `lib/dialogs.js` | 输入 / 信息 / 确认三类弹框 |
 | `lib/format.js`、`lib/highlight.js`、`lib/links.js`、`lib/dom.js` | 格式化、JSON 高亮、链接与 DOM 小工具 |

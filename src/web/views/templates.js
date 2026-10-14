@@ -60,7 +60,7 @@ async function templatesView() {
   return fragment(
     head('Templates', '', h('label', { className: 'run-option' }, [
       showArchived,
-      h('span', { textContent: 'Show archived' }),
+      h('span', { textContent: 'Show Archived' }),
     ])),
     body,
   );
