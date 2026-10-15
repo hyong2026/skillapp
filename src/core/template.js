@@ -81,7 +81,6 @@ export {
   templateFileName,
   templatePathFor,
   sameTarget,
-  templateFilesIn,
   findTemplateFor,
   findTemplateById,
   setTemplateArchived,

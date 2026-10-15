@@ -115,4 +115,4 @@ function saveSettings(patch = {}) {
   return readSettings();
 }
 
-export { EDITABLE, READONLY, envFilePath, readSettings, saveSettings };
+export { readSettings, saveSettings };

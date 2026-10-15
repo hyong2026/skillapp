@@ -8,10 +8,10 @@ node src/cli/load-skill.js /path/to/skill      # 目录名就是 ref
 
 | 路径 | 是什么 |
 |---|---|
-| `<ref>/SKILL.md` | Skill 本体（写给 Agent 看的那份说明书） |
-| `<ref>/source.json` | 装载记录：来源绝对路径、内容指纹 `hash`、`SKILL.md` frontmatter 里的 `description`、`loaded_at` |
-| `<ref>/node_modules/` | 一并复制（Skill 的运行契约），但不进 Git |
-| `<ref>/…` | Skill 自己的脚本与资源 |
+| `<Skill Name>/SKILL.md` | Skill 本体（写给 Agent 看的那份说明书） |
+| `<Skill Name>/source.json` | 装载记录：来源绝对路径、内容指纹 `hash`、`SKILL.md` frontmatter 里的 `description`、`loaded_at` |
+| `<Skill Name>/node_modules/` | 一并复制（Skill 的运行契约），但不进 Git |
+| `<Skill Name>/…` | Skill 自己的脚本与资源 |
 
 约定：
 

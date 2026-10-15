@@ -23,7 +23,6 @@ const MAPPING_SUFFIX = '.mapping.json';
 export {
   ROOT,
   DATA_DIR,
-  SRC_DIR,
   SKILLS_DIR,
   TEMPLATES_DIR,
   RUNS_DIR,

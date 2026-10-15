@@ -47,16 +47,16 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 
 ```text
 .data/
-├── skills/<ref>/{SKILL.md,source.json,...}
-├── mappings/<ref>.mapping.json
-├── templates/<ref>-<目标指纹>.template.json
+├── skills/<Skill Name>/{SKILL.md,source.json,...}
+├── mappings/<Skill Name>.mapping.json
+├── templates/<Skill Name>-<目标指纹>.template.json
 ├── operations/<operation_id>/operation.json
 └── runs/<run_id>/{run.json,<record_id>/{downloads,artifacts,logs}}
 ```
 
 - **文件系统是唯一真相**，当前不引入数据库。
 - JSON 状态文件一律**临时文件 + rename** 原子更新。
-- `run.json` 在 Run 启动时创建，状态或 RunItem 变化时更新。
+- `run.json` 在 Run 启动时创建，状态或 Run Item 变化时更新。
 - `operation.json` 记录异步操作的状态、输入、结果和错误；Run 只在这里留一份索引（mirror），明细仍在 `.data/runs/`。
 - stdout/stderr 以 `.log` 文本原样保存。
 - 服务启动时扫描活动 Run/Operation，标成 `interrupted`（不自动续跑）。

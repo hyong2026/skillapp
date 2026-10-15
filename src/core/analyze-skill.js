@@ -164,4 +164,4 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
   });
 }
 
-export { analyzeSkill, analyzerArgs };
+export { analyzeSkill };

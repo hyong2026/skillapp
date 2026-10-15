@@ -11,4 +11,4 @@ function assertRef(ref) {
   return value;
 }
 
-export { SAFE_REF, assertRef };
+export { assertRef };

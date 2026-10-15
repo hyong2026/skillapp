@@ -44,7 +44,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 ### Templates
 
-- 列表：`Template Name / Template ID / IO / Last Run / Created`；`Template Name` 是文件名 `<ref>-<目标指纹>` 且带链接（链接锚点用 `template_id`）。
+- 列表：`Template Name / Template ID / IO / Last Run / Created`；`Template Name` 是文件名 `<Skill Name>-<目标指纹>` 且带链接（链接锚点用 `template_id`）。
 - 右上角 `Show Archived`（默认不勾）：勾上后连归档的一起列出，归档行带 `Archived` 徽标。
 - 详情：面包屑 `Templates`，标题就是 Template Name；Summary 展示 Template ID、Skill Name、Skill Hash、Feishu Base URL、Created，归档后多一行 `Archived` 徽标。
 - `Template Definition` 展示完整 Inputs / Outputs 映射，`JSON` 开关看完整 Template JSON。
@@ -56,7 +56,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 - 列表：`Run ID / Status / Template Name / Trigger / Succeeded / Total / Started`。
 - 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Error、Work Hash）、`Run Items` 表、Live Output。
-- RunItem 详情：状态、阶段、耗时、错误、Input Hash、Artifacts 卡片与 stdout/stderr 日志。
+- Run Item 详情：状态、阶段、耗时、错误、Input Hash、Artifacts 卡片与 stdout/stderr 日志。
 - 运行中的 Run 可 `Cancel`；终态且有失败行时可 `Retry`（等价于再跑一次增量，产生新 Run）。
 
 ### Operations

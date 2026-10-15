@@ -112,7 +112,6 @@ function analysisStatus(skillHashValue, mapping) {
 }
 
 export {
-  FIELD_TYPES,
   isMapped,
   mappingPath,
   validateMapping,

@@ -627,9 +627,4 @@ function createServer(options = {}) {
   return server;
 }
 
-export {
-  createServer,
-  createRequestHandler,
-  isAuthorized,
-  isWithin,
-};
+export { createServer, isWithin };

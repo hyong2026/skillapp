@@ -9,7 +9,7 @@ node src/cli/run-template.js <template.json> [--incremental]
 node src/cli/unload-skill.js <ref> [--with-runs]
 ```
 
-**分析（Analyze）没有独立命令**：它要读任意实现、做类型取舍，只能是 Skill。由 Agent 用 [`.agents/skills/analyze-skill-io/`](../.agents/skills/analyze-skill-io/) 完成，产出 `.data/mappings/<ref>.mapping.json`（图形界面里的 `Analyze` 按钮走的是同一个分析器）。
+**分析（Analyze）没有独立命令**：它要读任意实现、做类型取舍，只能是 Skill。由 Agent 用 [`.agents/skills/analyze-skill-io/`](../.agents/skills/analyze-skill-io/) 完成，产出 `.data/mappings/<Skill Name>.mapping.json`（图形界面里的 `Analyze` 按钮走的是同一个分析器）。
 
 ## 共同约定
 
@@ -24,7 +24,7 @@ node src/cli/unload-skill.js <ref> [--with-runs]
 node src/cli/load-skill.js /path/to/skill
 ```
 
-- **目录名就是 ref**，装载后落在 `.data/skills/<ref>/`。
+- **目录名就是 Skill Name**（CLI 与落盘路径里叫 `ref`），装载后落在 `.data/skills/<Skill Name>/`。
 - 目录必须包含 `SKILL.md`；默认完整导入（含 `node_modules`），跳过 `.git` / `.DS_Store`。
 - 装载时：计算内容指纹写入 `source.json`（含来源路径、指纹、`SKILL.md` frontmatter 里的 `description`、装载时间），原子替换旧副本。
 - 源目录与目标目录相同或互相包含时拒绝执行。
@@ -39,7 +39,7 @@ node src/cli/map-table.js --ref <ref> --url '<链接>' --dry-run
 
 | 参数 | 说明 |
 |---|---|
-| `--ref <ref>` | 已装载的 Skill 名，Mapping 默认读 `.data/mappings/<ref>.mapping.json` |
+| `--ref <ref>` | 已装载的 Skill 名（对应 Skill Name），Mapping 默认读 `.data/mappings/<Skill Name>.mapping.json` |
 | `--url <链接>` | 目标表格链接，需带 `table` 与 `view` 参数 |
 | `--base/--table/--view` | 直接给 token，替代 `--url` |
 | `--dry-run` | 只输出计划，不建列、不排顺序、不写文件 |
@@ -51,7 +51,7 @@ node src/cli/map-table.js --ref <ref> --url '<链接>' --dry-run
 ## run-template.js
 
 ```bash
-node src/cli/run-template.js .data/templates/<ref>-<目标指纹>.template.json --incremental
+node src/cli/run-template.js .data/templates/<Skill Name>-<目标指纹>.template.json --incremental
 node src/cli/run-template.js <template.json> --dry-run
 ```
 

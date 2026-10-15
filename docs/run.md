@@ -98,7 +98,7 @@
 
 ## Mapping 的结构
 
-`.data/mappings/<ref>.mapping.json` 是分析产物，也是 `map-table.js` 的输入；写进 Template 后就是运行契约。
+`.data/mappings/<Skill Name>.mapping.json` 是分析产物，也是 `map-table.js` 的输入；写进 Template 后就是运行契约。
 
 ```jsonc
 {

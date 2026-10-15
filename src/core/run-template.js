@@ -658,7 +658,6 @@ export {
   normalizeOptions,
   previewTemplate,
   runTemplate,
-  selectRows,
   atomicWriteJson,
   TERMINAL_STATUSES,
 };

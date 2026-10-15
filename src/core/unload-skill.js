@@ -118,4 +118,4 @@ function applyUnload(input = {}, planned = null) {
   return fresh;
 }
 
-export { CONTENT_DIRS, planUnload, applyUnload };
+export { planUnload, applyUnload };

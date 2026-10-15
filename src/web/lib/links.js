@@ -61,4 +61,12 @@ function isImage(file) {
   return /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(file);
 }
 
-export { hashLink, skillRefFromPath, skillLink, templateLink, subjectLink, feishuBaseLink, artifactUrl, isImage };
+export {
+  hashLink,
+  skillLink,
+  templateLink,
+  subjectLink,
+  feishuBaseLink,
+  artifactUrl,
+  isImage,
+};

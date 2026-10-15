@@ -396,18 +396,4 @@ function applyMapping(input = {}, planned = null) {
   return { plan, template, template_path: templatePath, order: ordered };
 }
 
-export {
-  INPUT_PREFIX,
-  OUTPUT_PREFIX,
-  REQUIRED_MARK,
-  PRIMARY_NAME,
-  DEFAULT_PRIMARY,
-  fieldJson,
-  columnName,
-  checkCmd,
-  resolveTarget,
-  primaryField,
-  planMapping,
-  applyMapping,
-  buildTemplate,
-};
+export { planMapping, applyMapping };

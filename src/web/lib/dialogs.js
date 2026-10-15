@@ -138,4 +138,9 @@ function openMappingDialog(ref) {
   });
 }
 
-export { openInputDialog, openLoadDialog, openMappingDialog, openMessageDialog, openConfirmDialog };
+export {
+  openLoadDialog,
+  openMappingDialog,
+  openMessageDialog,
+  openConfirmDialog,
+};

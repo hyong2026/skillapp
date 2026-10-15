@@ -34,4 +34,4 @@ function skillHash(skillDir) {
   return 'sha256:' + outer.digest('hex');
 }
 
-export { skillHash, definitionFiles };
+export { skillHash };

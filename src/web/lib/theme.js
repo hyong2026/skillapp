@@ -11,6 +11,8 @@ const STORAGE_KEY = 'skillapp.theme';
 const THEMES = ['dark', 'light'];
 const DEFAULT_THEME = 'dark';
 const THEME_COLOR = { dark: '#0b1220', light: '#f8fafc' };
+// 标签页图标也跟着主题走：深色版是现在这份 logo，浅色版换成浅底那张。
+const THEME_ICON = { dark: '/logo.svg', light: '/logo-light.svg' };
 
 function getTheme() {
   try {
@@ -28,6 +30,8 @@ function applyTheme(theme) {
   root.style.colorScheme = next;
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', THEME_COLOR[next]);
+  const icon = document.querySelector('link[rel="icon"]');
+  if (icon) icon.setAttribute('href', THEME_ICON[next]);
   return next;
 }
 
@@ -45,4 +49,9 @@ function initTheme() {
   return applyTheme(getTheme());
 }
 
-export { getTheme, setTheme, initTheme, THEMES, DEFAULT_THEME };
+export {
+  getTheme,
+  setTheme,
+  initTheme,
+  THEMES,
+};

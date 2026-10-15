@@ -311,9 +311,4 @@ class ReadModel {
   }
 }
 
-export {
-  ReadModel,
-  HttpError,
-  isWithin,
-  walkArtifacts,
-};
+export { ReadModel, HttpError, isWithin };

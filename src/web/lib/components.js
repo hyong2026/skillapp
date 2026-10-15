@@ -474,12 +474,7 @@ export {
   section,
   dataTable,
   pagedTable,
-  editableText,
-  isAppendTarget,
-  clearDropHints,
   editableColumnTable,
-  inputRows,
-  outputRows,
   mappingInputRows,
   mappingOutputRows,
 };

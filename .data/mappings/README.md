@@ -4,7 +4,7 @@ Mapping —— Skill 的 **IO 契约（草案）**：输入、输出与命令模
 `analyze-skill-io` 写它，`map-table.js` 读它；界面上就是 Skill 详情里的 `Mapping Configuration` 面板。
 
 ```text
-analyze-skill-io  →  mappings/<ref>.mapping.json  →  map-table.js  →  templates/…
+analyze-skill-io  →  mappings/<Skill Name>.mapping.json  →  map-table.js  →  templates/…
                             ↑
                     面板里的改名 / 勾选 / 排序（即时保存）
 ```
@@ -19,7 +19,7 @@ analyze-skill-io  →  mappings/<ref>.mapping.json  →  map-table.js  →  temp
 
 约定：
 
-- **一个 Skill 一份**（文件名带 `<ref>`），同时装载多个 Skill 不会互相覆盖。
+- **一个 Skill 一份**（文件名带 `<Skill Name>`），同时装载多个 Skill 不会互相覆盖。
 - 它**不是一次性文件**：每次映射都读它、面板改动即时写回它；重新分析会覆盖它，但**保留用户勾掉的 `mapped: false`**。
 - 小改：面板或直接编辑这份 JSON；大改：重新分析。
 

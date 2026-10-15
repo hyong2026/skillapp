@@ -63,4 +63,10 @@ function initNavMenu() {
   topbar.append(toggle);
 }
 
-export { scrollContainer, viewHeadSlot, splitViewHead, renderViewContent, initNavMenu, closeNavMenu };
+export {
+  scrollContainer,
+  viewHeadSlot,
+  renderViewContent,
+  initNavMenu,
+  closeNavMenu,
+};

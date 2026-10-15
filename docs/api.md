@@ -97,7 +97,7 @@ PUT    /api/settings                    { values: { KEY: "value" } }
 
 ### `POST /api/skills/:ref/analyze`
 
-调用本地分析器（默认 `codex exec`，可用 `SKILLAPP_ANALYZE_COMMAND` 替换），写 `.data/mappings/<ref>.mapping.json`。
+调用本地分析器（默认 `codex exec`，可用 `SKILLAPP_ANALYZE_COMMAND` 替换），写 `.data/mappings/<Skill Name>.mapping.json`。
 重新分析会**保留用户勾掉的 `mapped: false`**（按 key 合并）。分析结果带 Skill hash，Skill 变了会标记 `stale`。
 
 ### `PUT /api/skills/:ref/mapping`
