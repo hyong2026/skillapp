@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
+// bind-table.js — 把已分析好的 IO Schema 绑到一张飞书多维表格：
+// 对齐列（复用 / 新建）、设列顺序、必要时改主字段名，最后写出 Template。
+// 「Mapping」在项目里是数据概念（.data/mappings/*.mapping.json = 分析产出的 IO Schema），
+// 绑到表上这个动作叫 Bind，对应 `POST /api/skills/:ref/bind`。
+
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadEnv } from '../core/load-env.js';
@@ -9,9 +14,9 @@ loadEnv();
 
 // .env 必须先于路径配置生效，所以业务模块用动态 import 加载。
 const { ROOT } = await import('../core/paths.js');
-const { planMapping, applyMapping } = await import('../core/map-table.js');
+const { planMapping, applyMapping } = await import('../core/bind-table.js');
 
-const USAGE = `用法: node src/cli/map-table.js --ref <ref> --url <链接> [选项]
+const USAGE = `用法: node src/cli/bind-table.js --ref <ref> --url <链接> [选项]
 
 参数:
   --ref <ref>          已装载的 Skill 名（.data/skills/<ref>）；Template 也以此命名
@@ -19,7 +24,7 @@ const USAGE = `用法: node src/cli/map-table.js --ref <ref> --url <链接> [选
   --base <token>       ┐ 也可以直接给 token，替代 --url
   --table <table_id>   │
   --view <view_id>     ┘
-  --dry-run            只输出映射计划，不建列、不改顺序、不写文件
+  --dry-run            只输出绑定计划，不建列、不改顺序、不写文件
   -h, --help           显示本帮助`;
 
 function parseArgv(argv) {

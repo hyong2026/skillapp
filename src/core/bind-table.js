@@ -1,3 +1,11 @@
+/**
+ * bind-table.js — 执行 Bind 动作的核心实现（CLI 与 task-worker 共用）
+ *
+ * 输入是分析产出的 IO Schema（`.data/mappings/*.mapping.json`）+ 目标表，
+ * 输出是「建哪些列、复用哪些列、列顺序如何」的计划，以及落盘的 Template。
+ * 函数名保留 plan/applyMapping：这里算的正是 Mapping 计划，Mapping 是数据概念，
+ * Bind 是把这份 Mapping 绑到表上的动作。
+ */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';

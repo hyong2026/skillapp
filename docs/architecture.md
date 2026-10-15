@@ -5,7 +5,7 @@
 ```text
 Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
                                              ├── run-worker 子进程  → core/run-template
-                                             ├── task-worker 子进程 → core/load-skill / map-table / unload-skill / template
+                                             ├── task-worker 子进程 → core/load-skill / bind-table / unload-skill / template
                                              ├── lark-cli（argv 数组，不经过 shell）
                                              └── .data/ 文件系统
 ```
@@ -29,7 +29,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 | `src/core/ref.js` | Skill ref 白名单与校验 |
 | `src/core/mapping.js` | Mapping 校验、`mapped` 规则与原子保存 |
 | `src/core/analyze-skill.js` | 调用本地分析器，校验结果并持久化 Mapping |
-| `src/core/map-table.js` | Mapping 计划、diff、plan hash、建列与 Template 生成 |
+| `src/core/bind-table.js` | Mapping 计划、diff、plan hash、建列与 Template 生成 |
 | `src/core/template.js` | Template 身份（Skill + 目标表）与文件名、按目标定位、归档状态 |
 | `src/core/unload-skill.js` | 卸载影响清单、plan hash 和受控删除 |
 | `src/core/run-template.js` | Run 预检、选行、执行、回写、进度与状态 |
@@ -77,12 +77,12 @@ queued → running → completed | failed | canceled | interrupted
 |---|---|
 | Run | `template:<template_id>` |
 | Load / Unload / Analyze | `skill:<ref>` |
-| Mapping（map-table） | `skill:<ref>` + `table:<base>:<table>` |
+| Bind（bind-table） | `skill:<ref>` + `table:<base>:<table>` |
 | 归档 / 解冻 | `template:<template_id>` |
 
 同一个资源被占用时，新的写操作直接返回冲突，不排队。
 
-**计划与校验**：map-table 与 unload 都先生成 `plan`（含 `plan_hash`），写入前重新计算并比对；不一致就拒绝，避免拿过期计划去改真实数据。
+**计划与校验**：bind-table 与 unload 都先生成 `plan`（含 `plan_hash`），写入前重新计算并比对；不一致就拒绝，避免拿过期计划去改真实数据。
 
 **取消**：先置 `canceling`，再终止 worker 进程组；已提交到飞书的写回无法回滚。
 **重试**：只允许终态且有失败行的 Run，等价于再跑一次增量，产生新 Run，不改历史。
@@ -130,7 +130,7 @@ queued → running → completed | failed | canceled | interrupted
 
 - 部署形态：单实例、可信环境，默认只监听 `127.0.0.1`。
 - Skill 来源：本地 Skill 根目录的绝对路径。
-- 分析来源：由 `analyze-skill-io` 产出；默认通过 `codex exec` 调用，可用 `SKILLAPP_ANALYZE_COMMAND` 替换。
+- 分析来源：由 `analyze-skill` 产出；默认通过 `codex exec` 调用，可用 `SKILLAPP_ANALYZE_COMMAND` 替换。
 - 飞书身份：全站共用一个 `lark-cli` 身份。
 - Template 保留在本机文件系统，界面可查看完整 JSON。
 

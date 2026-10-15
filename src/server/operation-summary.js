@@ -2,7 +2,7 @@
  * operation-summary.js — 一条操作的摘要
  *
  * Operations 列表（GET /api/operations）与全局 SSE（GET /api/operations/events）
- * 共用同一份形状：只带列表要用的字段，不复制 result（map-table 的 plan 有几十 KB）。
+ * 共用同一份形状：只带列表要用的字段，不复制 result（bind-table 的 plan 有几十 KB）。
  */
 
 function operationSummary(operation) {
@@ -17,7 +17,7 @@ function operationSummary(operation) {
     subject = input.run_id
       ? { type: 'run', id: input.run_id, label: input.template_name || input.run_id }
       : null;
-  } else if (operation?.type === 'map-table' && templateId) {
+  } else if (operation?.type === 'bind-table' && templateId) {
     subject = { type: 'template', id: templateId, label: input.ref || templateId };
   } else if ((operation?.type === 'archive-template' || operation?.type === 'unarchive-template') && templateId) {
     subject = { type: 'template', id: templateId, label: input.template_name || templateId };

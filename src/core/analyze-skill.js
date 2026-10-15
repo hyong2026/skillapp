@@ -35,14 +35,14 @@ function analyzerArgs() {
 }
 
 function promptFor(ref, skillDir, mappingPath) {
-  return `Use the project skill analyze-skill-io.
+  return `Use the project skill analyze-skill.
 
 Analyze the loaded Skill at:
 ${skillDir}
 
 Loaded ref: ${ref}
 
-Follow .agents/skills/analyze-skill-io/SKILL.md exactly. Inspect the Skill implementation, not just SKILL.md.
+Follow .agents/skills/analyze-skill/SKILL.md exactly. Inspect the Skill implementation, not just SKILL.md.
 Write exactly this file and do not modify any other repository file:
 - ${mappingPath}
 

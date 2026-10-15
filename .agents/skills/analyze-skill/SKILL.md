@@ -1,5 +1,5 @@
 ---
-name: analyze-skill-io
+name: analyze-skill
 description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mapping（IO 契约）。当需要把已有 Skill 转成 Template、或要确定某个 Skill 的输入输出时使用。
 ---
 
@@ -7,9 +7,9 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mappi
 
 把 Skill 的接口从实现里提取出来，变成可审的结构化契约。
 
-这是第 1 步「装载」的后半。装载 = **复制** + **分析**：复制由 `src/cli/load-skill.js` 管，分析要判断，所以由你来读、来写。
+这是第 2 步「分析」：**复制**由 `src/cli/load-skill.js` 管（第 1 步「装载」），而分析要判断，所以由你来读、来写。
 
-产出是**一份可执行的 Mapping**。生成后可以进入第 2 步「映射」（Mapping → 表格列 + Template，纯机械，交给 `src/cli/map-table.js`）。
+产出是**一份可执行的 Mapping**。生成后可以进入第 3 步「绑定」（Mapping → 表格列 + Template，纯机械，交给 `src/cli/bind-table.js`）。
 
 | | |
 |---|---|
@@ -74,7 +74,7 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mappi
 
 ## label 命名
 
-`label` 只写标签本身，**不带前缀、不带必填标记**——列名由 `src/cli/map-table.js` 按规范拼装：
+`label` 只写标签本身，**不带前缀、不带必填标记**——列名由 `src/cli/bind-table.js` 按规范拼装：
 
 ```
 ＊in: 网格数       ← 必填输入
@@ -103,7 +103,8 @@ out: 切片数        ← 输出
 
   "outputs": [
     { "key": "tiles", "label": "切片", "type": "attachment", "from": "stdout.files[].path" },
-    { "key": "tile_count", "label": "切片数", "type": "number", "from": "stdout.grid.total" }
+    { "key": "tile_count", "label": "切片数", "type": "number", "from": "stdout.grid.total",
+      "hint": "按网格数向下取整" }
   ],
 
   "limits": { "max_rows_per_run": 200, "timeout_s": 120 }
@@ -116,7 +117,7 @@ out: 切片数        ← 输出
 - `default` —— 单元格为空时的取值；列被删除则不传该参数，由 Skill 自己决定
 - `validate` —— `enum` / `min` / `max` / `count` / `min_count` / `max_count`
 - `transform` —— 列值 → 命令行值 的映射（如 `PNG` → `png`）
-- `hint` —— 写进列的 description，给人看
+- `hint` —— 写进列的 description，给人看；输入与输出都可以有（界面上的 `Notes` 列）
 - `from` —— 从 stdout 取值。`stdout.a.b` 取值，`/ 1024` 可换算，段尾 `[]` 表示逐项取值（结果变成数组）
 - `round` —— 保留小数位
 
@@ -134,10 +135,10 @@ out: 切片数        ← 输出
 
 所有需要判断的取舍都必须**已经落进 Mapping**（含默认值），避免后续步骤再引入人工决策。
 
-用户要求继续或进入映射时，直接交给第 2 步：
+用户要求继续或进入绑定时，直接交给第 3 步：
 
 ```bash
-node src/cli/map-table.js --ref <ref> --url '<表格链接>'
+node src/cli/bind-table.js --ref <ref> --url '<表格链接>'
 ```
 
 它只消费这份契约、不重新判断。契约是一次性的，落库后即可丢弃——下次要改映射，重跑本 Skill 即可。

@@ -164,15 +164,30 @@ function pagedTable(headers, rows, { pageSize = 10, label = 'Data Table' } = {})
     const children = [list];
 
     if (pages > 1) {
-      const prev = actionButton('Prev', 'prev', 'button');
-      const next = actionButton('Next', 'next', 'button');
+      // 页码与翻页合成一个控件：两个箭头按钮夹着静止的页码，跟着列表左对齐的总数。
+      const prev = h('button', {
+        className: 'icon-button',
+        type: 'button',
+        'aria-label': 'Previous page',
+        title: 'Previous page',
+        onClick: () => { if (page > 1) { page -= 1; paint(); } },
+      }, icon('prev'));
+      const next = h('button', {
+        className: 'icon-button',
+        type: 'button',
+        'aria-label': 'Next page',
+        title: 'Next page',
+        onClick: () => { if (page < pages) { page += 1; paint(); } },
+      }, icon('next'));
       prev.disabled = page <= 1;
       next.disabled = page >= pages;
-      prev.addEventListener('click', () => { if (page > 1) { page -= 1; paint(); } });
-      next.addEventListener('click', () => { if (page < pages) { page += 1; paint(); } });
       children.push(h('div', { className: 'table-pager' }, [
-        h('span', { className: 'muted', textContent: `Page ${page} / ${pages}` }),
-        h('div', { className: 'table-pager-actions' }, [prev, next]),
+        h('span', { className: 'pager-total', textContent: `${rows.length} total` }),
+        h('div', { className: 'pager-group', role: 'group', 'aria-label': `Page ${page} of ${pages}` }, [
+          prev,
+          h('span', { className: 'pager-page', textContent: `${page} / ${pages}` }),
+          next,
+        ]),
       ]));
     }
 
@@ -185,11 +200,11 @@ function pagedTable(headers, rows, { pageSize = 10, label = 'Data Table' } = {})
   return slot;
 }
 
-function editableText(value, onCommit) {
+function editableText(value, onCommit, label = 'Field name') {
   const button = h('button', { className: 'inline-edit', type: 'button', textContent: value || '—' });
   button.addEventListener('click', () => {
     const input = h('input', { className: 'inline-edit-input', type: 'text', value: value || '' });
-    input.setAttribute('aria-label', 'Column name');
+    input.setAttribute('aria-label', label);
     button.replaceWith(input);
     input.focus();
     input.select();
@@ -272,16 +287,17 @@ function mappingOutputRows(entries) {
     h('span', { className: 'mono', textContent: entry.type || '—' }),
     h('span', { className: 'mono', textContent: entry.from || '—' }),
     entry.round === undefined ? '—' : entry.round,
+    entry.hint || '—',
   ]);
 }
 
 /** 可编辑的 Inputs / Outputs 契约表：行内改名 + 指针拖拽排序。 */
-function editableColumnTable(kind, specs, canEdit, onSave) {
+function editableSchemaTable(kind, specs, canEdit, onSave) {
   const isInput = kind === 'inputs';
   const headers = isInput
-    ? ['', 'Column', 'Key', 'Type', 'Required', 'Default', 'Constraints / Notes']
-    : ['', 'Column', 'Key', 'Type', 'Value Path', 'Precision'];
-  const table = h('table', { className: `mapping-table mapping-table-${isInput ? 'inputs' : 'outputs'}` });
+    ? ['', 'Field', 'Key', 'Type', 'Required', 'Default', 'Notes']
+    : ['', 'Field', 'Key', 'Type', 'Value Path', 'Precision', 'Notes'];
+  const table = h('table', { className: `schema-table schema-table-${isInput ? 'inputs' : 'outputs'}` });
   const colgroup = h('colgroup');
   for (let i = 0; i < headers.length; i += 1) colgroup.append(h('col'));
   const thead = h('thead');
@@ -426,7 +442,7 @@ function editableColumnTable(kind, specs, canEdit, onSave) {
 
       const dragCell = h('td', { className: 'drag-cell' },
         h('span', { className: 'drag-cell-inner' }, [dragHandle, checkbox]));
-      const columnCell = h('td', { className: 'column-cell' }, editableText(spec.label || spec.key, async (label) => {
+      const columnCell = h('td', { className: 'field-cell' }, editableText(spec.label || spec.key, async (label) => {
         await commitChange((next) => { next[rowEls.indexOf(row)].label = label; });
       }));
       const cells = [
@@ -445,6 +461,7 @@ function editableColumnTable(kind, specs, canEdit, onSave) {
         cells.push(
           h('td', {}, h('span', { className: 'mono', textContent: spec.from || '—' })),
           h('td', { textContent: spec.round === undefined ? '—' : String(spec.round) }),
+          h('td', { textContent: specMeta(spec) }),
         );
       }
       for (const cell of cells) row.append(cell);
@@ -474,7 +491,7 @@ export {
   section,
   dataTable,
   pagedTable,
-  editableColumnTable,
+  editableSchemaTable,
   mappingInputRows,
   mappingOutputRows,
 };

@@ -37,10 +37,7 @@
 GET    /api/status
 GET    /api/skills
 GET    /api/skills/:ref
-GET    /api/skills/:ref/analysis
-GET    /api/skills/:ref/operations/:alias       # alias: load | analyze | mapping | unload
-GET    /api/skills/:ref/events[?operation_id=]  # SSE
-GET    /api/templates[?scope=all]               # scope=all 连归档一起返回
+GET    /api/templates[?include_archived=1]      # include_archived=1 连归档一起返回
 GET    /api/templates/:id                       # id 可用 template_id 或文件名（Template Name）
 GET    /api/runs
 GET    /api/runs/:id
@@ -50,6 +47,7 @@ GET    /api/runs/:id/artifacts/:recordId/:file
 GET    /api/operations
 GET    /api/operations/events                   # SSE：全局操作流
 GET    /api/operations/:operation_id
+GET    /api/operations/:operation_id/events     # SSE：单条操作的进度流
 GET    /api/settings
 ```
 
@@ -68,18 +66,17 @@ GET    /api/settings
 ### 写入
 
 ```text
-POST   /api/skills/load                 { source_path }
+POST   /api/skills                      { source_path }
 POST   /api/skills/:ref/analyze         {}
-PUT    /api/skills/:ref/mapping         { mapping }
-DELETE /api/skills/:ref                 {}
+PUT    /api/skills/:ref/schema          { mapping }
+POST   /api/skills/:ref/bind            { url }  或  { base, table, view }
+DELETE /api/skills/:ref[?with_runs=1]   {}         # 默认只删副本 + IO Schema + 它的 Template
 
-POST   /api/mappings                    { ref, url }  或  { ref, base, table, view }
-
-POST   /api/runs/preview                { template_id, trigger }
 POST   /api/runs                        { template_id, trigger }
 POST   /api/runs/:id/cancel             {}
 POST   /api/runs/:id/retry              {}
 
+POST   /api/templates/:id/preview       { trigger }
 POST   /api/templates/:id/archive       {}
 POST   /api/templates/:id/unarchive     {}
 
@@ -90,7 +87,7 @@ PUT    /api/settings                    { values: { KEY: "value" } }
 
 ## 主要端点说明
 
-### `POST /api/skills/load`
+### `POST /api/skills`
 
 `source_path` 是本地 Skill 根目录绝对路径；目录名即 `ref`，必须包含 `SKILL.md`。
 返回 `202 + operation`，完成后 `result` 含 `ref` / `hash` / `files`。
@@ -100,18 +97,18 @@ PUT    /api/settings                    { values: { KEY: "value" } }
 调用本地分析器（默认 `codex exec`，可用 `SKILLAPP_ANALYZE_COMMAND` 替换），写 `.data/mappings/<Skill Name>.mapping.json`。
 重新分析会**保留用户勾掉的 `mapped: false`**（按 key 合并）。分析结果带 Skill hash，Skill 变了会标记 `stale`。
 
-### `PUT /api/skills/:ref/mapping`
+### `PUT /api/skills/:ref/schema`
 
 Body 是整份 Mapping（结构见 [run.md](run.md#mapping-的结构)）。服务端会校验并原子保存，返回 `{ mapping, state }`。
 面板上的每次改动（改名 / 勾选映射 / 排序）都会调用它——只落盘，不改表格。
 
-### `POST /api/mappings`
+### `POST /api/skills/:ref/bind`
 
-把 Mapping 对到某张表：`{ ref, url }`（或 `{ ref, base, table, view }`）。
+把这份 IO Schema 绑到某张表：`{ url }`（或 `{ base, table, view }`）。
 异步执行，`result` 含 `plan`（`plan_hash`、`create` / `reuse` / 类型冲突 / 必需列风险 / 列顺序）、写出的 `template` 与 `order`。
 计划在写入前重新校验：表格结构变了会以 `MAPPING_PLAN_STALE` / `MAPPING_CONFLICT` 拒绝。
 
-### `POST /api/runs/preview`
+### `POST /api/templates/:id/preview`
 
 dry-run：只核对不执行。返回
 
@@ -150,7 +147,7 @@ dry-run：只核对不执行。返回
 
 | 路径 | 先发 | 之后 |
 |---|---|---|
-| `/api/skills/:ref/events?operation_id=` | 该操作的快照 | `progress`、`error`、`done` |
+| `/api/operations/:operation_id/events` | 该操作的快照 | `progress`、`error`、`done` |
 | `/api/runs/:id/events` | Run 快照 | `run-created`、`item-started`、`item-stage`、`item-log`、`item-finished`、`run-finished`、`error`、`done` |
 | `/api/operations/events` | 全量操作快照 `{ operations: [...] }` | 每次变化推 `operation`（单条摘要） |
 
@@ -161,7 +158,7 @@ dry-run：只核对不执行。返回
 ```json
 {
   "operation_id": "20261014-181500-ab12",
-  "type": "map-table",
+  "type": "bind-table",
   "status": "running",
   "created_at": "…", "started_at": "…", "finished_at": null,
   "duration_ms": null,

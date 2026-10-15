@@ -18,7 +18,7 @@ const ACTIVE = new Set(['queued', 'running', 'canceling']);
 const TYPE_LABELS = {
   'load-skill': 'Load',
   'analyze-skill': 'Analyze',
-  'map-table': 'Mapping',
+  'bind-table': 'Bind',
   'unload-skill': 'Unload',
   'archive-template': 'Archive',
   'unarchive-template': 'Unarchive',

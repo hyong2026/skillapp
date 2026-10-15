@@ -8,7 +8,7 @@
 ```text
 装载   skills/<Skill Name>/                              Skill 副本 + source.json（来源、指纹、描述）
 分析   mappings/<Skill Name>.mapping.json                IO 契约草案（输入 / 输出 / 命令模板）
-映射   templates/<Skill Name>-<目标指纹>.template.json    Skill + 目标表 + 生效的 Mapping
+绑定   templates/<Skill Name>-<目标指纹>.template.json    Skill + 目标表 + 生效的 Mapping
 执行   runs/<run_id>/                            Run、Run Item、日志与产物
 过程   operations/<operation_id>/operation.json   异步操作状态（含 Run 的索引镜像）
 ```

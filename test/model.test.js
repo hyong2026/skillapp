@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * template.js 的单元测试：Template 的身份（Skill + 目标表）、按目标定位、归档状态。
+ * model.test.js — Mapping 与 Template 两个数据模型的规则
+ *
+ *   Mapping   ：`mapped` 标记规则（缺省即映射；必填输入不能未映射）
+ *   Template  ：身份 = Skill + 目标表（base + table + view），按目标定位，归档 / 解冻
+ *
  * 全落在 os.tmpdir() 下的临时目录，不碰真表、不起子进程。
  */
-
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { isMapped, validateMapping } from '../src/core/mapping.js';
 import {
   findTemplateById,
   findTemplateFor,
@@ -18,31 +22,57 @@ import {
   templateFileName,
 } from '../src/core/template.js';
 
+const base = (overrides = {}) => ({
+  skill: { entry: 'run.js' },
+  cmd: 'node {skill.entry} {text} -o {outdir}',
+  inputs: [{ key: 'text', label: '文本', type: 'text' }],
+  outputs: [{ key: 'result', label: '结果', type: 'text', from: 'stdout.value' }],
+  ...overrides,
+});
+
 const A = { base_token: 'bas1', table_id: 'tbl1', view_id: 'vew1' };
 const B = { base_token: 'bas1', table_id: 'tbl2', view_id: 'vew1' };
 const A_OTHER_VIEW = { base_token: 'bas1', table_id: 'tbl1', view_id: 'vew2' };
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-template-'));
+const writeTemplate = (dir, name, template) => fs.writeFileSync(path.join(dir, name), JSON.stringify(template, null, 2));
 
-const writeTemplate = (dir, name, template) =>
-  fs.writeFileSync(path.join(dir, name), JSON.stringify(template, null, 2));
+test('Mapping：缺省即映射，只有 mapped:false 才算未映射', () => {
+  assert.equal(isMapped({}), true);
+  assert.equal(isMapped({ mapped: true }), true);
+  assert.equal(isMapped({ mapped: false }), false);
+});
 
-test('文件名 = <ref>-<目标指纹>.template.json，目标不同文件名就不同', () => {
+test('Mapping：非必填输入与输出都可以未映射，必填输入不行，mapped 只收布尔值', () => {
+  const mapping = validateMapping(base({
+    inputs: [{ key: 'text', label: '文本', type: 'text', mapped: false, default: 'x' }],
+    outputs: [{ key: 'result', label: '结果', type: 'text', from: 'stdout.value', mapped: false }],
+  }));
+  assert.equal(mapping.inputs[0].mapped, false);
+  assert.equal(mapping.outputs[0].mapped, false);
+
+  assert.throws(() => validateMapping(base({
+    inputs: [{ key: 'text', label: '文本', type: 'text', required: true, mapped: false }],
+  })), /required and cannot be unmapped/);
+  assert.throws(() => validateMapping(base({
+    outputs: [{ key: 'result', label: '结果', type: 'text', from: 'stdout.value', mapped: 'no' }],
+  })), /mapped must be a boolean/);
+});
+
+test('Template 身份：文件名带目标指纹，视图也算目标', () => {
   assert.match(templateFileName('image-merge', A), /^image-merge-[0-9a-f]{8}\.template\.json$/);
   assert.equal(targetKey(A).length, 8);
   assert.equal(templateFileName('image-merge', A), templateFileName('image-merge', { ...A }));
   assert.notEqual(templateFileName('image-merge', A), templateFileName('image-merge', B));
-  assert.notEqual(templateFileName('image-merge', A), templateFileName('image-merge', A_OTHER_VIEW), '换个视图也是另一份');
-});
+  assert.notEqual(templateFileName('image-merge', A), templateFileName('image-merge', A_OTHER_VIEW));
 
-test('sameTarget 只认 base + table + view 三元组', () => {
   assert.equal(sameTarget(A, { ...A }), true);
   assert.equal(sameTarget(A, B), false);
   assert.equal(sameTarget(A, A_OTHER_VIEW), false);
   assert.equal(sameTarget(A, null), false);
 });
 
-test('按目标找 Template：老命名也认，目标不同则不命中', () => {
+test('按目标定位 Template：老命名也认，目标或 Skill 不同则不命中', () => {
   const dir = tempDir();
   writeTemplate(dir, 'image-merge.template.json', {
     template_id: 'tpl-1',

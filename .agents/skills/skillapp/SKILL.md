@@ -1,48 +1,53 @@
 ---
 name: skillapp
-description: SkillApp 的操作入口：装载 Skill、把它的 IO 映射到飞书多维表格、执行 Template。当用户说「装载 / 导入 Skill」「映射到多维表格 / 建列 / 出 Template」「执行 / 跑 Template / 跑一批」时使用。注意它不负责分析 Skill 的输入输出——那是 analyze-skill-io 的活。
+description: SkillApp 的操作入口：装载 Skill、把它的 IO 绑定到飞书多维表格、执行 Template。当用户说「装载 / 导入 Skill」「绑定到多维表格 / 建列 / 出 Template」（也会认「映射到多维表格」）「执行 / 跑 Template / 跑一批」时使用。注意它不负责分析 Skill 的输入输出——那是 analyze-skill 的活。
 ---
 
 # 操作 SkillApp
 
-三个步骤。**本文件只回答「这一步该做什么」**，不复制各命令的选项——那些用 `-h` 查，免得维护第二份真相。
+四个步骤。**本文件只回答「这一步该做什么」**，不复制各命令的选项——那些用 `-h` 查，免得维护第二份真相。
 
 | # | 步骤 | 用户给什么 | 用户得到什么 |
 |---|---|---|---|
-| 1 | **装载** | 一个 Skill 路径 | 复制进 SkillApp + 一份 **Mapping** |
-| 2 | **映射** | 一个飞书表格链接 | 表格列 + Template |
-| 3 | **执行** | —— | 回写的结果 |
+| 1 | **装载** | 一个 Skill 路径 | 复制进 SkillApp |
+| 2 | **分析** | —— | 一份 **Mapping**（IO 契约） |
+| 3 | **绑定** | 一个飞书表格链接 | 表格列 + Template |
+| 4 | **执行** | —— | 回写的结果 |
 
-**闸门在「装载 → 映射」之间。** 装载只复制并生成 Mapping，不碰表格；映射会改表格结构，按 Mapping 中的默认建议执行。
+**闸门在绑定。** 装载与分析都不碰表格；只有绑定会改表格结构，按 Mapping 中的默认建议执行。
 
-**一次只做一步。** 用户说「装载」就只装载（复制 + 分析），做完交 Mapping 并停下；**不要顺手进入映射**。可以提议下一步，但别自己走进去。
+**一次只做一步。** 用户说「装载」就只装载；「分析」交给 `analyze-skill`；做完停下，**不要顺手进入绑定**。可以提议下一步，但别自己走进去。
 
 ## 1 装载
 
-这一步包含两个动作：
+```bash
+node src/cli/load-skill.js <源目录>
+```
 
-1. **复制进来并固定版本** —— `node src/cli/load-skill.js <源目录>`
-2. **分析它的输入输出** —— 用 `analyze-skill-io`
-
-上游改动后**必须重新装载**才生效——它会覆盖 `.data/skills/<ref>/` 并重算内容指纹。指纹一变，旧 Template 就被执行器拒绝；这是故意的，在逼人复核映射。
+上游改动后**必须重新装载**才生效——它会覆盖 `.data/skills/<ref>/` 并重算内容指纹。指纹一变，旧 Template 就被执行器拒绝；这是故意的，在逼人复核绑定。
 
 源目录的最后一段自动作为 `ref`，也是 Template 里 `skill.path` 的末段。
 
-**交付物是 Mapping**。取舍直接落进 Mapping（列、类型、必填、default、transform），理由写进 `hint`——没有单独的待确认清单。
+## 2 分析
 
-## 2 映射
+交给 [`analyze-skill`](../analyze-skill/SKILL.md)：它读 Skill 实现，产出 `.data/mappings/<ref>.mapping.json`。
+**分析没有命令行**——它要读任意实现、做类型取舍，只能是 Skill。
+
+交付物是 Mapping：取舍直接落进去（列、类型、必填、default、transform），理由写进 `hint`——没有单独的待确认清单。
+
+## 3 绑定
 
 只在两种情况需要重跑：Skill 的 IO 变了，或表格结构变了。**它会改用户表格的结构**，所以只在该做的时候做。
 
 跑之前确认 Mapping 已生成，且其中的默认建议可以直接执行。
 
 ```bash
-node src/cli/map-table.js --ref <ref> --url '<表格链接>'
+node src/cli/bind-table.js --ref <ref> --url '<表格链接>'
 ```
 
 契约默认读 `.data/mappings/<ref>.mapping.json`（由 `--ref` 推导），不用手写路径。
 
-## 3 执行
+## 4 执行
 
 **默认 `--incremental`**：只跑「工作版本或输入与最近一次成功运行不一致」的行；Skill、Mapping、目标或输入变了都会重跑，重复执行安全。
 
@@ -66,4 +71,4 @@ node src/cli/unload-skill.js --all --yes    # 清空整个内容层（引擎保�
 | 运行记录（Run / RunItem） | `.data/runs/<run_id>/run.json` |
 | 多维表格 | **只有输入列和输出列**，不含任何运行状态 |
 
-失败的行会被 `--incremental` 一直捞出（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入，或用 `--record-id` 单独跑别的行。
+失败的行会被 `--incremental` 一直捞出（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入；要无视历史重跑全表用 `--all`。

@@ -1,15 +1,15 @@
 # CLI
 
-四条命令：装载、映射、执行、卸载。它们与图形控制台共用 `src/core/` 里的同一份业务逻辑，只是薄壳（参数解析 + 终端输出 + 退出码）。
+四条命令：装载、绑定、执行、卸载。它们与图形控制台共用 `src/core/` 里的同一份业务逻辑，只是薄壳（参数解析 + 终端输出 + 退出码）。
 
 ```bash
 node src/cli/load-skill.js   <Skill 根目录>
-node src/cli/map-table.js    --ref <ref> --url '<表格链接>'
+node src/cli/bind-table.js    --ref <ref> --url '<表格链接>'
 node src/cli/run-template.js <template.json> [--incremental]
 node src/cli/unload-skill.js <ref> [--with-runs]
 ```
 
-**分析（Analyze）没有独立命令**：它要读任意实现、做类型取舍，只能是 Skill。由 Agent 用 [`.agents/skills/analyze-skill-io/`](../.agents/skills/analyze-skill-io/) 完成，产出 `.data/mappings/<Skill Name>.mapping.json`（图形界面里的 `Analyze` 按钮走的是同一个分析器）。
+**分析（Analyze）没有独立命令**：它要读任意实现、做类型取舍，只能是 Skill。由 Agent 用 [`.agents/skills/analyze-skill/`](../.agents/skills/analyze-skill/) 完成，产出 `.data/mappings/<Skill Name>.mapping.json`（图形界面里的 `Analyze` 按钮走的是同一个分析器）。
 
 ## 共同约定
 
@@ -29,12 +29,12 @@ node src/cli/load-skill.js /path/to/skill
 - 装载时：计算内容指纹写入 `source.json`（含来源路径、指纹、`SKILL.md` frontmatter 里的 `description`、装载时间），原子替换旧副本。
 - 源目录与目标目录相同或互相包含时拒绝执行。
 
-## map-table.js
+## bind-table.js
 
 ```bash
-node src/cli/map-table.js --ref <ref> --url '<表格链接>'
-node src/cli/map-table.js --ref <ref> --base <token> --table <id> --view <view_id>
-node src/cli/map-table.js --ref <ref> --url '<链接>' --dry-run
+node src/cli/bind-table.js --ref <ref> --url '<表格链接>'
+node src/cli/bind-table.js --ref <ref> --base <token> --table <id> --view <view_id>
+node src/cli/bind-table.js --ref <ref> --url '<链接>' --dry-run
 ```
 
 | 参数 | 说明 |
@@ -46,7 +46,7 @@ node src/cli/map-table.js --ref <ref> --url '<链接>' --dry-run
 
 行为：对齐列（复用 / 新建）、按契约设列顺序、必要时把主字段改名为 `任务名称`，最后写 Template。
 计划带 `plan_hash + diff`，写入前重新校验——表格结构在执行期间变了会拒绝写出。
-同一个 Skill 映射到不同表（base + table + **view**）会各生成一份 Template；三元组完全一致才原地更新。
+同一个 Skill 绑定到不同表（base + table + **view**）会各生成一份 Template；三元组完全一致才原地更新。
 
 ## run-template.js
 
@@ -87,7 +87,7 @@ node src/cli/unload-skill.js --all --yes        # 清空整个内容层
 # 图形控制台
 SKILLAPP_WEB_TOKEN=<token>              # 非本机监听时必须；改动需重启
 
-# 分析器（Analyze 按钮 / analyze-skill-io 调用）
+# 分析器（Analyze 按钮 / analyze-skill 调用）
 SKILLAPP_ANALYZE_COMMAND=codex          # 默认 codex
 SKILLAPP_ANALYZE_MODEL=<model>          # 可选，留空用命令自带默认
 SKILLAPP_ANALYZE_REASONING_EFFORT=low   # low / medium / high
@@ -106,9 +106,9 @@ SKILLAPP_LARK_MODULE=<path>             # 替换 lark 实现（测试用）
 
 | 事情 | CLI | HTTP | GUI |
 |---|---|---|---|
-| 装载 | `load-skill.js` | `POST /api/skills/load` | Skills → `Load` |
-| 分析 | Agent + `analyze-skill-io` | `POST /api/skills/:ref/analyze` | Skill 详情 → `Analyze` |
-| 映射 | `map-table.js` | `POST /api/mappings` | Skill 详情 → `Mapping` |
+| 装载 | `load-skill.js` | `POST /api/skills` | Skills → `Load` |
+| 分析 | Agent + `analyze-skill` | `POST /api/skills/:ref/analyze` | Skill 详情 → `Analyze` |
+| 绑定 | `bind-table.js` | `POST /api/skills/:ref/bind` | Skill 详情 → `Bind Table` |
 | 执行 | `run-template.js` | `POST /api/runs` | Template 详情 → `Run` |
 | 卸载 | `unload-skill.js` | `DELETE /api/skills/:ref` | Skill 详情 → `Unload` |
 

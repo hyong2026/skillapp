@@ -1,6 +1,6 @@
 import { loadSkill } from '../core/load-skill.js';
 import { analyzeSkill } from '../core/analyze-skill.js';
-import { planMapping, applyMapping } from '../core/map-table.js';
+import { planMapping, applyMapping } from '../core/bind-table.js';
 import { planUnload, applyUnload } from '../core/unload-skill.js';
 import { setTemplateArchived } from '../core/template.js';
 
@@ -37,7 +37,7 @@ async function execute(input) {
       onProgress: (progress) => send({ type: 'operation-progress', progress }),
     });
   }
-  if (input.type === 'map-table') {
+  if (input.type === 'bind-table') {
     const plan = planMapping(payload);
     return applyMapping({ ...payload, planHash: plan.plan_hash }, plan);
   }

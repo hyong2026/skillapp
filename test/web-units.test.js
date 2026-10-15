@@ -1,13 +1,35 @@
 #!/usr/bin/env node
-//
-// 静态检查：src/web 里 import 的名字，提供方模块必须真的导出。
-// ESM 的 "does not provide an export named ..." 只有在浏览器里才会炸，
-// 这类漏改 import 的错很容易漏到页面上（dataTable 就这么漏过一次），所以在这里提前抓。
-
+/**
+ * web-units.test.js — Web 层的两个静态/纯函数检查
+ *
+ *   1. 代码块高亮：行号渲染用的 JSON 整理、逐行高亮与转义
+ *   2. import 体检：src/web 里 import 的名字，提供方必须真的导出
+ *      （ESM 的 "does not provide an export named ..." 只在浏览器里炸，
+ *       dataTable 就这么漏过一次，所以在这里提前抓）
+ */
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
+import { escapeHtml, highlightText, jsonText } from '../src/web/lib/highlight.js';
+
+test('jsonText：对象与 JSON 字符串都整理成好看的文本，非 JSON 交给调用方兜底', () => {
+  assert.equal(jsonText({ count: 3 }), '{\n  "count": 3\n}');
+  assert.equal(jsonText('{"count":3}'), '{\n  "count": 3\n}');
+  assert.equal(jsonText('plain <text>'), null);
+});
+
+test('逐行高亮：转义内容、标记 token，且不依赖整段是合法 JSON', () => {
+  const html = highlightText('  "name": "<skillapp>",');
+  assert.match(html, /json-key/);
+  assert.match(html, /&lt;skillapp&gt;/);
+  assert.doesNotMatch(html, /<skillapp>/);
+
+  assert.equal(highlightText('{'), '{', '没有 token 的行原样输出');
+  assert.match(highlightText('  "ok": true'), /json-literal/);
+  assert.match(highlightText('  "count": 3'), /json-number/);
+  assert.equal(escapeHtml(`&<>"'`), '&amp;&lt;&gt;&quot;&#39;');
+});
 
 const WEB_DIR = path.resolve(import.meta.dirname, '..', 'src', 'web');
 
@@ -30,9 +52,7 @@ function exportsOf(file) {
       if (name) names.add(name);
     }
   }
-  for (const [, name] of source.matchAll(/export\s+(?:function|const|let|class)\s+([\w$]+)/g)) {
-    names.add(name);
-  }
+  for (const [, name] of source.matchAll(/export\s+(?:function|const|let|class)\s+([\w$]+)/g)) names.add(name);
   return names;
 }
 

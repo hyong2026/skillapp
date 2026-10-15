@@ -98,7 +98,7 @@
 
 ## Mapping 的结构
 
-`.data/mappings/<Skill Name>.mapping.json` 是分析产物，也是 `map-table.js` 的输入；写进 Template 后就是运行契约。
+`.data/mappings/<Skill Name>.mapping.json` 是分析产物，也是 `bind-table.js` 的输入；写进 Template 后就是运行契约。
 
 ```jsonc
 {
@@ -125,4 +125,4 @@
 
 ## 预览（dry-run）
 
-`POST /api/runs/preview` 与 `--dry-run` 只核对：会处理哪些行、共几行、哪些绑定列在表里已经找不到（`dropped`）、目标表是谁。不执行、不回写、不产生 Run。
+`POST /api/templates/:id/preview` 与 `--dry-run` 只核对：会处理哪些行、共几行、哪些绑定列在表里已经找不到（`dropped`）、目标表是谁。不执行、不回写、不产生 Run。

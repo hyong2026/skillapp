@@ -1,3 +1,20 @@
+/**
+ * styles.css — SkillApp WebUI 的全部样式
+ *
+ * 结构（自上而下，想改哪块直接搜分节标题）：
+ *   1. 设计变量   :root 是深色默认值；:root[data-theme="light"] 只覆盖同名变量
+ *   2. 基础与外框 reset、侧栏 .topbar / 导航 .nav、消息区 .messages
+ *   3. 页面骨架   .page 列布局：标题栏在滚动区之外，.page-body 滚内容
+ *   4. 面板与表格 .panel、列表表 .table-wrap、IO Schema 表 .schema-table、
+ *                 Template 详情表 .contract-table
+ *   5. 代码与产物 行号代码块、Artifacts 卡片
+ *   6. 控件与弹框 .button、开关、<dialog>
+ *   7. Home 流程  .flow / .step 四步
+ *   8. 断点       ≤920px / ≤720px / ≤600px
+ *
+ * 约定：字体与字号只在变量里定义（全站等宽、只用偶数号）；颜色一律走变量，
+ * 规则里不写死色值——这样浅色主题只需覆盖变量。
+ */
 :root {
   color-scheme: dark;
   --bg: #0b1220;
@@ -55,7 +72,6 @@
   --json-string: #86efac;
   --json-number: #fca5a5;
   --json-literal: #c4b5fd;
-  --json-raw: #dbeafe;
   --radius-sm: 8px;
   --radius-md: 12px;
   /* Typography — one scale for the whole app, and one font family everywhere.
@@ -132,9 +148,9 @@
   --json-string: #15803d;
   --json-number: #b91c1c;
   --json-literal: #6d28d9;
-  --json-raw: #1e293b;
 }
 
+/* ===== 基础与外框（reset / 侧栏 / 导航 / 消息区） ===== */
 * { box-sizing: border-box; }
 html { height: 100%; scroll-behavior: smooth; }
 body {
@@ -259,6 +275,7 @@ button { cursor: pointer; }
 .message .icon-button .icon { width: 14px; height: 14px; }
 .message .badge { min-height: 18px; padding: 0 6px; font-size: var(--text-2xs); }
 
+/* ===== 页面骨架（标题栏固定，只有 .page-body 滚内容） ===== */
 /* The shell never scrolls. `.page` is a column: the view head sits outside the
    scroll area (so it is genuinely fixed) and `.page-body` scrolls the panels. */
 .page {
@@ -348,6 +365,7 @@ h3 { color: var(--text-strong); font-size: var(--text-md); font-weight: 600; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-inline { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 
+/* ===== 面板与表格（列表表 / IO Schema 表 / Template 详情表） ===== */
 .panel {
   margin-bottom: 18px;
   border: 1px solid var(--line);
@@ -412,33 +430,44 @@ h3 { color: var(--text-strong); font-size: var(--text-md); font-weight: 600; }
 tr.drag-over td { box-shadow: inset 0 2px 0 var(--accent); }
 tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 /* 固定列宽、允许收缩：这张表不靠横向滚动条兜底，所以要盖掉 table 的 min-width: 720px。 */
-.mapping-table { width: 100%; min-width: 0; table-layout: fixed; }
-.mapping-table th { white-space: normal; overflow: hidden; }
-.mapping-table-inputs col:nth-child(1), .mapping-table-outputs col:nth-child(1) { width: 64px; }
-.mapping-table-inputs col:nth-child(2), .mapping-table-outputs col:nth-child(2) { width: 19%; }
-.mapping-table-inputs col:nth-child(3), .mapping-table-outputs col:nth-child(3) { width: 16%; }
-.mapping-table-inputs col:nth-child(4), .mapping-table-outputs col:nth-child(4) { width: 12%; }
-.mapping-table-inputs col:nth-child(5) { width: 10%; }
-.mapping-table-inputs col:nth-child(6) { width: 13%; }
-.mapping-table-inputs col:nth-child(7) { width: auto; }
-.mapping-table-outputs col:nth-child(5) { width: 22%; }
-.mapping-table-outputs col:nth-child(6) { width: auto; }
-.mapping-table td { overflow: hidden; vertical-align: middle; }
-.drag-cell { width: 64px; padding: 10px 6px !important; text-align: center; }
+.schema-table { width: 100%; min-width: 0; table-layout: fixed; }
+.schema-table th { white-space: normal; overflow: hidden; }
+/* 契约类表格的单元格一律允许在任意位置断行：长串（enum=[...] / transform={...}）
+   自然折行、把行撑高，而不是被裁掉或压到隔壁列。 */
+.schema-table td, .contract-table td { overflow-wrap: anywhere; }
+/* Inputs / Outputs 列数一致，按位置统一列宽。中间列按"实测内容 + 单元格左右各 16px 内边距
+   + 余量"给宽度（Type 需 104px、Value Path 需 205px、Key 需 126px），剩下的留给 Notes。 */
+.schema-table col:nth-child(1) { width: 56px; }
+.schema-table col:nth-child(2) { width: 14%; }
+.schema-table col:nth-child(3) { width: 12%; }
+.schema-table col:nth-child(4) { width: 10%; }
+.schema-table col:nth-child(5) { width: 20%; }
+.schema-table col:nth-child(6) { width: 9%; }
+.schema-table col:nth-child(7) { width: 30%; }
+/* Template 详情里的 Template Definition：列宽与 IO Schema 同一套比例。 */
+.contract-table { table-layout: fixed; }
+.contract-table col:nth-child(1) { width: 12%; }
+.contract-table col:nth-child(2) { width: 10%; }
+.contract-table col:nth-child(3) { width: 10%; }
+.contract-table col:nth-child(4) { width: 19%; }
+.contract-table col:nth-child(5) { width: 9%; }
+.contract-table col:nth-child(6) { width: 40%; }
+.schema-table td { overflow: hidden; }
+.drag-cell { width: 56px; padding: 10px 6px !important; text-align: center; }
 .drag-cell-inner { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .map-check { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .map-check:disabled { cursor: default; opacity: .55; }
 /* 未映射的列不参与表读写，整行（含列名）都退成次要色。 */
-.mapping-table tr.is-unmapped td,
-.mapping-table tr.is-unmapped .inline-edit { color: var(--muted-2); }
-.mapping-table tr.is-unmapped .inline-edit { cursor: default; }
+.schema-table tr.is-unmapped td,
+.schema-table tr.is-unmapped .inline-edit { color: var(--muted-2); cursor: default; }
 .drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-2); cursor: grab; touch-action: none; }
 .drag-handle:hover { background: var(--surface-3); color: var(--text); }
 .drag-handle:active { cursor: grabbing; }
 .drag-handle .icon { width: 17px; height: 17px; }
 .is-dragging-rows { user-select: none; }
-.column-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inline-edit { display: block; max-width: 100%; margin: 0; padding: 2px 4px; overflow: hidden; border: 0; border-bottom: 1px dashed transparent; background: transparent; color: var(--text); font: inherit; line-height: 1.5; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+/* Field 标签必须完整可见：不截断、不省略号；列宽不够时宁可折行也不隐藏。 */
+.field-cell { overflow-wrap: anywhere; }
+.inline-edit { display: block; width: 100%; margin: 0; padding: 2px 4px; border: 0; border-bottom: 1px dashed transparent; background: transparent; color: var(--text); font: inherit; line-height: 1.5; text-align: left; overflow-wrap: anywhere; }
 .inline-edit:hover { border-bottom-color: var(--line-strong); }
 .inline-edit-input { display: block; width: 100%; max-width: 100%; padding: 2px 4px; border: 0; border-bottom: 1px solid var(--accent); border-radius: 0; outline: none; background: transparent; color: var(--text); font: inherit; line-height: 1.5; white-space: nowrap; }
 .run-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -498,15 +527,29 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 8px 16px;
   border-top: 1px solid var(--line);
 }
-.table-pager-actions { display: flex; gap: 8px; }
-.table-pager .button { min-width: 64px; min-height: 32px; }
-.table-pager .button .icon { width: 14px; height: 14px; }
+.pager-total { color: var(--muted-2); font: 600 var(--text-2xs)/1 var(--font-mono); }
+/* 翻页控件：细边框圆角组，两个箭头夹着静止的页码；上下页禁用时明显变淡。 */
+.pager-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.pager-group .icon-button { width: 26px; height: 26px; border-radius: 6px; }
+.pager-group .icon-button .icon { width: 15px; height: 15px; }
+.pager-group .icon-button:disabled { color: var(--muted-2); opacity: .45; cursor: not-allowed; }
+.pager-group .icon-button:disabled:hover { background: transparent; color: var(--muted-2); }
+.pager-page { min-width: 46px; color: var(--muted); font: 600 var(--text-2xs)/1 var(--font-mono); text-align: center; }
 /* separate 才能让 th 的 position: sticky 生效（collapse 下 Chromium 不支持）。 */
 table { width: 100%; min-width: 720px; border-collapse: separate; border-spacing: 0; }
-th, td { padding: 12px 16px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+/* 单元格内容垂直居中：行里最高的那格把整行撑满，所以只影响比行矮的内容。 */
+th, td { padding: 12px 16px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
 .table-wrap.is-scrolling th {
   position: sticky;
   top: 0;
@@ -546,15 +589,14 @@ td.actions { text-align: right; white-space: nowrap; }
   white-space: nowrap;
 }
 .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .9; }
+/* 徽标按语义分三色：成功 / 失败 / 进行中；unknown / unanalyzed 用默认灰。 */
 .badge.succeeded, .badge.completed, .badge.ready { border-color: var(--success-border); color: var(--success-text); background: var(--accent-soft); }
-.badge.failed, .badge.partial, .badge.canceled, .badge.interrupted, .badge.invalid { border-color: var(--danger-border); color: var(--danger-text); background: var(--danger-soft); }
-.badge.running, .badge.queued, .badge.canceling, .badge.dry-run, .badge.unverified, .badge.missing { border-color: var(--warning-border); color: var(--warning-text); background: var(--warning-soft); }
-.badge.ready { border-color: var(--success-border); color: var(--success-text); background: var(--accent-soft); }
-.badge.analyzing { border-color: var(--warning-border); color: var(--warning-text); background: var(--warning-soft); }
-.badge.stale { border-color: var(--danger-border); color: var(--danger-text); background: var(--danger-soft); }
+.badge.failed, .badge.partial, .badge.canceled, .badge.interrupted, .badge.invalid, .badge.stale { border-color: var(--danger-border); color: var(--danger-text); background: var(--danger-soft); }
+.badge.running, .badge.queued, .badge.canceling, .badge.dry-run, .badge.unverified, .badge.missing, .badge.analyzing { border-color: var(--warning-border); color: var(--warning-text); background: var(--warning-soft); }
 .badge.archived { border-color: var(--neutral-border); color: var(--muted); background: var(--surface-2); }
 .badge.unknown, .badge.unanalyzed { color: var(--muted); }
 
+/* ===== 代码与产物（行号代码块 / Artifacts 卡片） ===== */
 pre {
   overflow: auto;
   max-height: 440px;
@@ -574,6 +616,7 @@ pre {
 /*
  * 行号写在行首（`cat -n` 式）：一个逻辑行只有一个行号，而且紧贴这行；
  * 长行换行时续行悬挂缩进到代码起点，所以行号永远不会错位，也不需要横向滚动。
+ * `--gutter-w` 由 highlight.js 按行号位数写入（2 位 → 4ch），默认 4ch 兜底。
  */
 .code-line {
   display: block;
@@ -596,7 +639,6 @@ pre {
 .json-string { color: var(--json-string); }
 .json-number { color: var(--json-number); }
 .json-literal { color: var(--json-literal); }
-.json-raw { color: var(--json-raw); }
 .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .kv { display: grid; grid-template-columns: 132px minmax(0, 1fr); align-items: center; gap: 8px 14px; margin: 0; }
 .kv dt { align-self: center; text-transform: capitalize; }
@@ -623,8 +665,8 @@ pre {
   background: var(--empty-bg);
   text-align: center;
 }
-/* Keep the empty Mapping panel exactly as tall as the "Analyzing..." state. */
-.panel-body.mapping-body > .empty {
+/* 让空的 IO Schema 面板与 "Analyzing..." 状态等高，切换时不跳动。 */
+.panel-body.schema-body > .empty {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -662,12 +704,14 @@ pre {
 .skeleton-subtitle { width: min(440px, 78%); height: 14px; }
 .skeleton-panel { height: 260px; border: 1px solid var(--line); }
 
+/* ===== 控件与弹框（按钮 / 开关 / <dialog>） ===== */
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-width: 72px;
+  /* 全站按钮统一的最小宽度：短标签（Load / Run / Preview）也保持一样宽。 */
+  min-width: 104px;
   min-height: 40px;
   padding: 0 12px;
   border: 1px solid var(--line);
@@ -761,6 +805,73 @@ pre {
 .segmented-option:hover { color: var(--text); }
 .segmented-option[aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
 
+/* ===== Home 流程（四步） ===== */
+/* 左侧序号轨 + 右侧卡片，步骤状态用 is-pending / is-active / is-done 表达。 */
+.flow { display: grid; gap: 10px; }
+.step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; }
+.step-rail { position: relative; display: flex; justify-content: center; }
+.step-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+  font: 600 var(--text-xs)/1 var(--font-mono);
+}
+.step:not(:last-child) .step-rail::after {
+  content: "";
+  position: absolute;
+  top: 30px;
+  bottom: -10px;
+  width: 1px;
+  background: var(--line);
+}
+.step-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.step-head { display: flex; align-items: center; gap: 10px; }
+.step-title { color: var(--text-strong); font-size: var(--text-md); font-weight: 600; }
+.step-state { margin-left: auto; color: var(--muted-2); font: 600 var(--text-2xs)/1.4 var(--font-mono); letter-spacing: .08em; }
+.step-note { margin: 6px 0 0; color: var(--muted-2); font-size: var(--text-xs); }
+.step-body { margin-top: 12px; }
+.step-result:not(:empty) { margin-top: 12px; }
+.step-hint { margin: 0; color: var(--muted-2); font-size: var(--text-xs); }
+/* Home 的每一步：按钮一律靠右；带输入框时输入框自己撑满，按钮自然落到最右。 */
+.flow-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.flow-input {
+  flex: 1 1 320px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: var(--text-xs)/1.4 var(--font-mono);
+}
+.flow-input:focus { border-color: var(--accent); outline: none; }
+.flow-input:disabled { color: var(--muted-2); }
+.flow-editor { margin-top: 12px; }
+.step.is-active .step-card { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.step.is-active .step-index {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.step.is-done .step-index { border-color: var(--success-border); background: var(--accent-soft); color: var(--success-text); }
+.step.is-done .step-state { color: var(--success-text); }
+.step.is-pending .step-card { background: var(--bg-elevated); }
+.step.is-pending .step-title { color: var(--muted); }
+
+/* ===== 断点（窄屏：侧栏收窄 → 顶栏折叠 → 单列） ===== */
 @media (max-width: 920px) {
   .topbar { width: 190px; padding: 16px 12px; }
   .view-head, .view-body-inner { padding-left: 16px; padding-right: 16px; }

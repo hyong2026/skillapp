@@ -2,6 +2,7 @@ import { stopRunStream } from './api.js';
 import { head } from './components.js';
 import { actionButton, h, ICON_PATHS, icon, setNotice } from './dom.js';
 import { closeNavMenu, renderViewContent, scrollContainer, viewHeadSlot } from './shell.js';
+import { homeView } from '../views/home.js';
 import { operationView, operationsView } from '../views/operations.js';
 import { runItemView } from '../views/run-item.js';
 import { runsView, runView } from '../views/runs.js';
@@ -14,6 +15,7 @@ let renderSequence = 0;
 
 /** Hash 路由表：每个主菜单一个 list，详情页按需带 detail / item。 */
 const VIEWS = {
+  home: { list: homeView },
   skills: { list: skillsView, detail: skillView },
   templates: { list: templatesView, detail: templateView },
   runs: { list: runsView, detail: runView, item: runItemView },
@@ -69,14 +71,15 @@ async function render({ preserveScroll = false } = {}) {
   const sequence = ++renderSequence;
   const currentScroller = scrollContainer();
   const previousScroll = preserveScroll && currentScroller ? currentScroller.scrollTop : null;
-  const rawHash = (location.hash || '#skills').slice(1);
+  const rawHash = (location.hash || '').slice(1);
   let parts;
   try {
     parts = rawHash.split('/').filter(Boolean).map((part) => decodeURIComponent(part));
   } catch {
-    parts = ['skills'];
+    parts = [];
   }
-  const route = parts[0] === 'home' || parts[0] === 'status' || !parts[0] ? 'skills' : parts[0];
+  // 无锚点就是 Home（`#home` 与旧的 `#status` 也落到它）。
+  const route = !parts[0] || parts[0] === 'status' ? 'home' : parts[0];
   closeNavMenu();
   setActive(route);
   setNotice('');

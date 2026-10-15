@@ -11,5 +11,6 @@ initTheme();
 injectNavIcons();
 initNavMenu();
 initMessages();
-if (!location.hash) location.hash = 'skills';
+// 没有锚点时补一个默认路由，URL 始终带 #xxx，保持统一。
+if (!location.hash) location.hash = 'home';
 else render();

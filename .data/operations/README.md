@@ -10,7 +10,7 @@ operations/<operation_id>/operation.json
 ```jsonc
 {
   "operation_id": "20261012-190323-0b54",
-  "type": "map-table",   // load-skill | analyze-skill | map-table | unload-skill
+  "type": "bind-table",  // load-skill | analyze-skill | bind-table | unload-skill
                          // archive-template | unarchive-template | run-template
   "status": "completed", // queued | running | canceling | completed | failed | canceled | interrupted
   "created_at": "…",

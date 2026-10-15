@@ -17,7 +17,7 @@ const DEFAULT_REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const TASK_TYPES = new Set([
   'load-skill',
   'analyze-skill',
-  'map-table',
+  'bind-table',
   'unload-skill',
   'archive-template',
   'unarchive-template',
@@ -216,24 +216,9 @@ class TaskRunner {
     const active = this.listOperations().filter((job) => job.input?.ref === ref && ACTIVE_STATUSES.has(job.status));
     return {
       analyze: active.find((job) => job.type === 'analyze-skill') || null,
-      mapping: active.find((job) => job.type === 'map-table') || null,
+      bind: active.find((job) => job.type === 'bind-table') || null,
       unload: active.find((job) => job.type === 'unload-skill') || null,
     };
-  }
-
-  skillOperation(ref, alias) {
-    const aliases = {
-      load: new Set(['load-skill']),
-      analyze: new Set(['analyze-skill']),
-      mapping: new Set(['map-table']),
-      'map-table': new Set(['map-table']),
-      unload: new Set(['unload-skill']),
-    };
-    const types = aliases[alias];
-    if (!types) return null;
-    return this.listOperations()
-      .filter((job) => job.input?.ref === ref && types.has(job.type))
-      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0] || null;
   }
 
   getOperation(operationId) {

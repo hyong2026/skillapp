@@ -86,15 +86,14 @@ async function watchRun(runId, onEvent) {
 
 /**
  * 订阅一条持久化操作，直到它终结；resolve 它的 result。
- * 页面刷新后靠 operation_id 重新挂上同一条流。
+ * 流挂在 operation 资源自己身上（与全局的 /api/operations/events 对称）。
  */
-function watchOperation(ref, operationId, onEvent = () => {}) {
+function watchOperation(operationId, onEvent = () => {}) {
   const controller = new AbortController();
   activeStream = controller;
-  const query = operationId ? `?operation_id=${encoded(operationId)}` : '';
   return new Promise(async (resolve, reject) => {
     try {
-      const response = await fetch(`/api/skills/${encoded(ref)}/events${query}`, {
+      const response = await fetch(`/api/operations/${encoded(operationId)}/events`, {
         headers: { accept: 'text/event-stream' },
         credentials: 'same-origin',
         cache: 'no-store',
@@ -133,8 +132,7 @@ function watchOperation(ref, operationId, onEvent = () => {}) {
 
 async function startOperation(path, body, method = 'POST') {
   const operation = await api(path, { method, body });
-  const ref = operation.input?.ref || body.ref;
-  return watchOperation(ref, operation.operation_id);
+  return watchOperation(operation.operation_id);
 }
 
 export { api, readEventStream, watchRun, watchOperation, startOperation, stopRunStream };

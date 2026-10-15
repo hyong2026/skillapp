@@ -236,25 +236,6 @@ function serveOperationEvents(req, res, runner, operationId) {
   req.on('end', close);
 }
 
-function serveSkillEvents(req, res, runner, ref, operationId = null) {
-  let operation = operationId ? runner.getOperation(operationId) : null;
-  if (!operation) {
-    const active = runner.skillOperations(ref);
-    operation = active.analyze || active.mapping || active.unload || null;
-  }
-  if (!operation) {
-    res.writeHead(200, {
-      ...securityHeaders(),
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-    });
-    sendSseEvent(res, { type: 'snapshot', operation: null });
-    res.end();
-    return;
-  }
-  return serveOperationEvents(req, res, runner, operation.operation_id);
-}
-
 function skillStatus(skill, analysis, operations) {
   if (operations?.analyze) return 'analyzing';
   if (!skill.valid) return 'invalid';
@@ -383,7 +364,8 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
   }
 
   if (segments[1] === 'skills') {
-    if (req.method === 'POST' && segments.length === 3 && segments[2] === 'load') {
+    // 装载 = 在集合上创建一份 Skill 副本（body: source_path）。
+    if (req.method === 'POST' && segments.length === 2) {
       assertSameOrigin(req);
       const body = await readJsonBody(req);
       const sourcePath = String(body.source_path || '').trim();
@@ -398,18 +380,10 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
       });
     }
 
-    if (req.method === 'POST' && segments.length === 4 && segments[3] === 'analyze') {
-      assertSameOrigin(req);
-      const ref = assertRef(segments[2]);
-      return sendJson(req, res, 202, {
-        ok: true,
-        data: operationData(runner.startTask('analyze-skill', { ref }, { lockKeys: [`skill:${ref}`] })),
-        error: null,
-      });
-    }
-
-    const allowedWrite = (segments.length === 4 && segments[3] === 'mapping' && req.method === 'PUT')
-      || (segments.length === 4 && segments[3] === 'analyze' && req.method === 'POST')
+    // item 级动作一律「POST /api/skills/:ref/<动作>」，Schema 是资源，用 PUT 覆盖。
+    const allowedWrite = (segments.length === 4 && segments[3] === 'analyze' && req.method === 'POST')
+      || (segments.length === 4 && segments[3] === 'bind' && req.method === 'POST')
+      || (segments.length === 4 && segments[3] === 'schema' && req.method === 'PUT')
       || (segments.length === 3 && req.method === 'DELETE');
     if (!readOnly && !allowedWrite) {
       throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed', 'Check the request method');
@@ -427,22 +401,32 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
       const operations = skillOperations(runner, ref);
       return sendApi(req, res, { ...detail, status: skillStatus(detail, detail.analysis, operations), operations });
     }
-    if (segments.length === 5 && segments[3] === 'operations' && readOnly) {
+    if (segments.length === 4 && segments[3] === 'analyze' && req.method === 'POST') {
+      assertSameOrigin(req);
       const ref = assertRef(segments[2]);
-      const operation = runner.skillOperation(ref, segments[4]);
-      if (!operation) throw new HttpError(404, 'OPERATION_NOT_FOUND', `Operation not found: ${segments[4]}`, 'Refresh the Skill details');
-      return sendApi(req, res, operationData(operation));
+      return sendJson(req, res, 202, {
+        ok: true,
+        data: operationData(runner.startTask('analyze-skill', { ref }, { lockKeys: [`skill:${ref}`] })),
+        error: null,
+      });
     }
-
-    if (segments.length === 4 && segments[3] === 'events' && readOnly) {
+    // 绑定：把这份 IO Schema 绑到一张表上，产出/更新 Template（会改飞书表结构）。
+    if (segments.length === 4 && segments[3] === 'bind' && req.method === 'POST') {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
       const ref = assertRef(segments[2]);
-      const operationId = new URL(req.url, 'http://localhost').searchParams.get('operation_id');
-      return serveSkillEvents(req, res, runner, ref, operationId);
+      const base = body.base || body.base_token;
+      const table = body.table || body.table_id;
+      const lockKeys = [`skill:${ref}`];
+      if (base && table) lockKeys.push(`table:${base}:${table}`);
+      return sendJson(req, res, 202, {
+        ok: true,
+        data: operationData(runner.startTask('bind-table', { ...body, ref }, { lockKeys })),
+        error: null,
+      });
     }
-    if (segments.length === 4 && segments[3] === 'analysis' && readOnly) {
-      return sendApi(req, res, model.getSkill(segments[2]).analysis);
-    }
-    if (segments.length === 4 && segments[3] === 'mapping' && req.method === 'PUT') {
+    // 保存分析产出的 IO Schema（保存在 .data/mappings/<Skill Name>.mapping.json）。
+    if (segments.length === 4 && segments[3] === 'schema' && req.method === 'PUT') {
       assertSameOrigin(req);
       const body = await readJsonBody(req);
       const ref = assertRef(segments[2]);
@@ -450,16 +434,14 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
       const mapping = saveMapping(ref, body.mapping || body, skill.hash, model.root);
       return sendApi(req, res, { mapping, state: 'current' });
     }
+    // 卸载：默认只删 Skill 副本（含 Mapping 与它的 Template）；要连 Run 一起删就加 ?with_runs=1。
     if (segments.length === 3 && req.method === 'DELETE') {
       assertSameOrigin(req);
-      const body = await readJsonBody(req);
       const ref = assertRef(segments[2]);
+      const withRuns = new URL(req.url, 'http://localhost').searchParams.get('with_runs') === '1';
       return sendJson(req, res, 202, {
         ok: true,
-        data: operationData(runner.startTask('unload-skill', {
-          ref,
-          with_runs: body.with_runs !== false,
-        }, { lockKeys: [`skill:${ref}`] })),
+        data: operationData(runner.startTask('unload-skill', { ref, with_runs: withRuns }, { lockKeys: [`skill:${ref}`] })),
         error: null,
       });
     }
@@ -467,6 +449,12 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
   }
 
   if (segments[1] === 'templates') {
+    // 预览：dry-run 回答「这份 Template 会跑哪些行」，不产生 Run（因此挂在 Template 下）。
+    if (req.method === 'POST' && segments.length === 4 && segments[3] === 'preview') {
+      assertSameOrigin(req);
+      const body = await readJsonBody(req);
+      return sendApi(req, res, await runner.preview({ ...body, template_id: segments[2] }));
+    }
     if (segments.length === 4 && (segments[3] === 'archive' || segments[3] === 'unarchive') && req.method === 'POST') {
       assertSameOrigin(req);
       const templateId = segments[2];
@@ -486,28 +474,10 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
     }
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
     if (segments.length === 2) {
-      const includeArchived = new URL(req.url, 'http://localhost').searchParams.get('scope') === 'all';
+      const includeArchived = new URL(req.url, 'http://localhost').searchParams.get('include_archived') === '1';
       return sendApi(req, res, model.listTemplates(null, { includeArchived }));
     }
     if (segments.length === 3) return sendApi(req, res, model.getTemplate(segments[2]));
-  }
-
-  if (segments[1] === 'mappings') {
-    if (req.method === 'POST' && segments.length === 2) {
-      assertSameOrigin(req);
-      const body = await readJsonBody(req);
-      const ref = assertRef(body.ref);
-      const base = body.base || body.base_token;
-      const table = body.table || body.table_id;
-      const lockKeys = [`skill:${ref}`];
-      if (base && table) lockKeys.push(`table:${base}:${table}`);
-      return sendJson(req, res, 202, {
-        ok: true,
-        data: operationData(runner.startTask('map-table', body, { lockKeys })),
-        error: null,
-      });
-    }
-    throw new HttpError(404, 'NOT_FOUND', 'Mapping endpoint not found', 'Check the request path');
   }
 
   if (segments[1] === 'operations') {
@@ -517,6 +487,8 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
     }
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
     if (segments.length === 3 && segments[2] === 'events') return serveOperationListEvents(req, res, runner);
+    // 单条操作的进度流挂在 operation 自己身上，不再绕道 skill。
+    if (segments.length === 4 && segments[3] === 'events') return serveOperationEvents(req, res, runner, segments[2]);
     if (segments.length === 2) return sendApi(req, res, runner.listOperations().map(operationSummary));
     if (segments.length === 3) return sendApi(req, res, operationDetail(runner.getOperation(segments[2])));
     throw new HttpError(404, 'NOT_FOUND', 'Operation endpoint not found', 'Check the request path');
@@ -539,11 +511,6 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
       assertSameOrigin(req);
       const body = await readJsonBody(req);
       return sendJson(req, res, 202, { ok: true, data: runner.start(body), error: null });
-    }
-    if (req.method === 'POST' && segments.length === 3 && segments[2] === 'preview') {
-      assertSameOrigin(req);
-      const body = await readJsonBody(req);
-      return sendApi(req, res, await runner.preview(body));
     }
     if (req.method === 'POST' && segments.length === 4 && segments[3] === 'cancel') {
       assertSameOrigin(req);

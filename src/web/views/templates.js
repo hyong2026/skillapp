@@ -13,14 +13,16 @@ function templateDefinitionPanel(template) {
   const outputs = Array.isArray(template?.mapping?.outputs) ? template.mapping.outputs : [];
   return togglePanel('Template Definition', 'JSON', () => h('div', { className: 'contract-body' }, [
     section(`Inputs (${inputs.length})`, dataTable(
-      ['Key', 'Field ID', 'Type', 'Required', 'Default', 'Rules'],
+      ['Key', 'Field ID', 'Type', 'Required', 'Default', 'Notes'],
       mappingInputRows(inputs),
       'Template Input Mapping',
+      'contract-table',
     )),
     section(`Outputs (${outputs.length})`, dataTable(
-      ['Key', 'Field ID', 'Type', 'Value Path', 'Precision'],
+      ['Key', 'Field ID', 'Type', 'Value Path', 'Precision', 'Notes'],
       mappingOutputRows(outputs),
       'Template Output Mapping',
+      'contract-table',
     )),
   ]), () => codeBlock(template));
 }
@@ -30,7 +32,7 @@ async function templatesView() {
   const body = h('div');
 
   const paint = async () => {
-    const query = showArchived.checked ? '?scope=all' : '';
+    const query = showArchived.checked ? '?include_archived=1' : '';
     const templates = await api(`/api/templates${query}`);
     const rows = templates.map((template) => {
       const last = template.last_run;
@@ -80,9 +82,9 @@ function runControl(template) {
     preview.disabled = true;
     setNotice('');
     try {
-      const data = await api('/api/runs/preview', {
+      const data = await api(`/api/templates/${encoded(template.template_id)}/preview`, {
         method: 'POST',
-        body: { template_id: template.template_id, trigger: trigger() },
+        body: { trigger: trigger() },
       });
       openMessageDialog({
         title: 'Preview',

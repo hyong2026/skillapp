@@ -1,6 +1,6 @@
 import { api, startOperation, watchOperation } from '../lib/api.js';
 import {
-  dataPanel, editableColumnTable, empty, head, kv, loadingPanel, pagedTable, panel, section, viewTitle,
+  dataPanel, editableSchemaTable, empty, head, kv, loadingPanel, pagedTable, panel, section, viewTitle,
 } from '../lib/components.js';
 import { openConfirmDialog, openLoadDialog, openMappingDialog } from '../lib/dialogs.js';
 import { actionButton, fragment, h, icon, setNotice } from '../lib/dom.js';
@@ -51,24 +51,25 @@ function skillActions(ref, analysis, hasMapping, activeOperations, setAnalysisLo
     }
   });
 
-  const mapping = actionButton(activeOperations.mapping ? 'Mapping...' : 'Mapping', 'mapping', 'button');
-  mapping.disabled = !hasMapping || Boolean(activeOperations.mapping);
-  mapping.title = hasMapping ? 'Create a Template from this Skill' : 'Analyze the Skill first';
-  if (activeOperations.mapping) mapping.replaceChildren(icon('spinner', 'icon spinner'), h('span', { textContent: 'Mapping...' }));
+  const mapping = actionButton(activeOperations.bind ? 'Binding...' : 'Bind Table', 'mapping', 'button');
+  mapping.disabled = !hasMapping || Boolean(activeOperations.bind);
+  mapping.title = hasMapping ? 'Bind this IO Schema to a Feishu table and create a Template' : 'Analyze the Skill first';
+  if (activeOperations.bind) mapping.replaceChildren(icon('spinner', 'icon spinner'), h('span', { textContent: 'Binding...' }));
   mapping.addEventListener('click', () => openMappingDialog(ref));
 
   const unload = actionButton('Unload', 'unload', 'button danger');
-  unload.disabled = Boolean(activeOperations.analyze || activeOperations.mapping || activeOperations.unload);
+  unload.disabled = Boolean(activeOperations.analyze || activeOperations.bind || activeOperations.unload);
   unload.addEventListener('click', async () => {
     const ok = await openConfirmDialog({
       title: 'Unload Skill',
-      message: `Unload "${ref}"? The loaded copy, its Mapping, Templates and related Runs are removed. Feishu columns are kept.`,
+      message: `Unload "${ref}"? The loaded copy, its IO Schema and its Templates are removed. Feishu columns and past Runs are kept.`,
       confirmText: 'Unload',
       danger: true,
     });
     if (!ok) return;
     unload.disabled = true;
     try {
+      // 不带 ?with_runs=1：默认只删副本 + IO Schema + Template，Run 作为历史留着。
       await startOperation(`/api/skills/${encoded(ref)}`, {}, 'DELETE');
       location.hash = 'skills';
     } catch (error) {
@@ -79,20 +80,20 @@ function skillActions(ref, analysis, hasMapping, activeOperations, setAnalysisLo
   return h('div', { className: 'run-actions' }, [analyze, mapping, unload]);
 }
 
-/** 面板编辑的是「IO ↔ 表列」的配置本身；动作（按钮 / 操作）才叫 Mapping。 */
-const MAPPING_PANEL_TITLE = 'Mapping Configuration';
+/** 面板编辑的是分析产出的 IO Schema（还没绑定）；把它绑到表上的动作叫 Bind。 */
+const SCHEMA_PANEL_TITLE = 'IO Schema';
 
-/** Mapping Configuration 面板：结构化 Inputs / Outputs 可改名、排序、勾选映射，JSON 开关看原文。 */
-function mappingPanel(ref, mapping, canEdit) {
-  const body = h('div', { className: 'panel-body toggle-body mapping-body' });
+/** IO Schema 面板：结构化 Inputs / Outputs 可改名、排序、勾选映射，JSON 开关看原文。 */
+function schemaPanel(ref, mapping, canEdit) {
+  const body = h('div', { className: 'panel-body toggle-body schema-body' });
   let showJson = false;
   const contractBody = () => h('div', { className: 'contract-body' }, [
-    section(`Inputs (${mapping.inputs.length})`, editableColumnTable('inputs', mapping.inputs, canEdit, save)),
-    section(`Outputs (${mapping.outputs.length})`, editableColumnTable('outputs', mapping.outputs, canEdit, save)),
+    section(`Inputs (${mapping.inputs.length})`, editableSchemaTable('inputs', mapping.inputs, canEdit, save)),
+    section(`Outputs (${mapping.outputs.length})`, editableSchemaTable('outputs', mapping.outputs, canEdit, save)),
   ]);
   const save = async () => {
     // 面板自己维护状态（原地改 mapping.inputs / outputs），保存后不重绘页面。
-    await api(`/api/skills/${encoded(ref)}/mapping`, { method: 'PUT', body: { mapping } });
+    await api(`/api/skills/${encoded(ref)}/schema`, { method: 'PUT', body: { mapping } });
   };
   const control = h('button', {
     className: 'code-toggle',
@@ -113,7 +114,7 @@ function mappingPanel(ref, mapping, canEdit) {
     h('span', { className: 'toggle-track', 'aria-hidden': 'true' }, h('span', { className: 'toggle-thumb' })),
   ]);
   body.replaceChildren(contractBody());
-  return panel(MAPPING_PANEL_TITLE, body, control);
+  return panel(SCHEMA_PANEL_TITLE, body, control);
 }
 
 async function skillView(ref) {
@@ -122,23 +123,23 @@ async function skillView(ref) {
   const mapping = analysis.mapping || null;
   const activeOperations = skill.operations || {};
   const contractSlot = h('div');
-  const mappingSlot = h('div');
+  const bindSlot = h('div');
   const paintAnalysis = () => {
     contractSlot.replaceChildren(analysis.mapping
-      ? mappingPanel(ref, analysis.mapping, !activeOperations.analyze && !activeOperations.mapping && !activeOperations.unload)
-      : panel(MAPPING_PANEL_TITLE, h('div', { className: 'panel-body mapping-body' }, empty('No Mapping available.'))));
+      ? schemaPanel(ref, analysis.mapping, !activeOperations.analyze && !activeOperations.bind && !activeOperations.unload)
+      : panel(SCHEMA_PANEL_TITLE, h('div', { className: 'panel-body schema-body' }, empty('No Mapping available.'))));
   };
   const setAnalysisLoading = () => {
     const current = contractSlot.firstElementChild;
     const height = current ? Math.round(current.getBoundingClientRect().height) : 0;
-    const loading = loadingPanel(MAPPING_PANEL_TITLE, 'Analyzing Skill IO...', 'mapping-body');
+    const loading = loadingPanel(SCHEMA_PANEL_TITLE, 'Analyzing Skill IO...', 'schema-body');
     if (height) loading.style.minHeight = `${height}px`;
     contractSlot.replaceChildren(loading);
   };
   const restoreAnalysis = () => paintAnalysis();
   paintAnalysis();
   if (activeOperations.analyze) setAnalysisLoading();
-  if (activeOperations.mapping) mappingSlot.replaceChildren(loadingPanel(MAPPING_PANEL_TITLE, 'Creating Template...'));
+  if (activeOperations.bind) bindSlot.replaceChildren(loadingPanel(SCHEMA_PANEL_TITLE, 'Creating Template...'));
   const summary = panel('Summary', h('div', { className: 'panel-body' }, kv([
     ['Status', statusBadge(skill.status || 'invalid')],
     ['Fingerprint', h('span', { className: 'mono', textContent: skill.hash || '—' })],
@@ -147,9 +148,9 @@ async function skillView(ref) {
     ['Description', skill.description || '—'],
   ])));
   if (activeOperations.analyze) {
-    watchOperation(ref, activeOperations.analyze.operation_id).then(() => render()).catch((error) => setNotice(error.message, true));
-  } else if (activeOperations.mapping) {
-    watchOperation(ref, activeOperations.mapping.operation_id)
+    watchOperation(activeOperations.analyze.operation_id).then(() => render()).catch((error) => setNotice(error.message, true));
+  } else if (activeOperations.bind) {
+    watchOperation(activeOperations.bind.operation_id)
       .then((result) => { location.hash = `templates/${encoded(result.template.template_id)}`; })
       .catch((error) => setNotice(error.message, true));
   }
@@ -162,7 +163,7 @@ async function skillView(ref) {
     summary,
     analysis.state === 'stale' || analysis.state === 'unverified' ? h('div', { className: 'warning-box', textContent: analysis.reason }) : null,
     contractSlot,
-    mappingSlot,
+    bindSlot,
   );
 }
 

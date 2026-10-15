@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * map-table.js 的「建列后回读」回归测试。
+ * bind-table.js 的「建列后回读」回归测试。
  *
- * 被测的是真代码：真跑 src/cli/map-table.js，只替换两处外部依赖——
+ * 被测的是真代码：真跑 src/cli/bind-table.js，只替换两处外部依赖——
  *   - src/core/lark → 假的多维表格（经 SKILLAPP_LARK_MODULE 注入；能让新建的列延迟 N 次 field-list 才可见）
  *   - PATH 上的 sleep / node → 空转替身（退避不耗时、自检直接成功，只记调用次数）
  * 契约夹具内嵌在下面，写操作全落在 os.tmpdir() 下的临时 ROOT 里，不碰真表、不碰 .data/templates/。
  *
  *   node --test                                                   # 在仓库根跑全部（Node 默认的测试文件匹配规则）
- *   node test/map-table.retry.test.js --worker --hidden-reads 2    # 单跑一个场景（调试用）
+ *   node test/bind-table.retry.test.js --worker --hidden-reads 2    # 单跑一个场景（调试用）
  *
  * 这个 bug 的由来：第一次把 image-split 映射到真实表格时，8 列建完后立刻回读却没读到，
  * 于是报「新建后仍找不到列『out: 每格高 (px)』」中断。旧代码的回读只试一次，
@@ -25,7 +25,7 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const MAP_TABLE = path.join(ROOT, 'src', 'cli', 'map-table.js');
+const BIND_TABLE = path.join(ROOT, 'src', 'cli', 'bind-table.js');
 const REF = 'testref';
 const MARKER = '__RESULT__ ';
 
@@ -55,7 +55,7 @@ const UNMAPPED_FIXTURE = {
 };
 const UNMAPPED_ORDER = ['任务名称', '＊in: 待切图片', '＊in: 网格数', 'out: 切片数'];
 
-// ─── worker：在临时 ROOT 里真跑一次 map-table ─────────────────────────────
+// ─── worker：在临时 ROOT 里真跑一次 bind-table ─────────────────────────────
 
 /**
  * 假的多维表格：内存表 + 可配置的字段可见延迟。
@@ -160,7 +160,7 @@ async function runWorker(hiddenReads, unmapped) {
   fs.writeFileSync(path.join(root, '.data', 'mappings', `${REF}.mapping.json`),
     JSON.stringify(unmapped ? UNMAPPED_FIXTURE : FIXTURE, null, 2));
 
-  // 4) 真跑 map-table.js：它的 catch 会 process.exit(1)，这里换成可捕获的异常
+  // 4) 真跑 bind-table.js：它的 catch 会 process.exit(1)，这里换成可捕获的异常
   const errors = [];
   const realError = console.error;
   console.error = (...args) => { errors.push(args.join(' ')); realError(...args); };
@@ -168,12 +168,12 @@ async function runWorker(hiddenReads, unmapped) {
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
 
-  process.argv = ['node', 'map-table.js', '--ref', REF, '--url', 'https://stub.feishu.cn/base/x?table=t&view=v'];
+  process.argv = ['node', 'bind-table.js', '--ref', REF, '--url', 'https://stub.feishu.cn/base/x?table=t&view=v'];
 
   let exitCode = null;
   let harnessError = null;
   try {
-    await import(pathToFileURL(MAP_TABLE).href);
+    await import(pathToFileURL(BIND_TABLE).href);
   } catch (err) {
     if (err instanceof ExitCalled) exitCode = err.code;
     else harnessError = err.stack || String(err);

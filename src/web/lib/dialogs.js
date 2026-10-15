@@ -58,7 +58,7 @@ function openLoadDialog() {
     placeholder: '/Users/me/skills/my-skill',
     confirmText: 'Load',
     onConfirm: async (sourcePath) => {
-      const result = await startOperation('/api/skills/load', { source_path: sourcePath }, 'POST');
+      const result = await startOperation('/api/skills', { source_path: sourcePath }, 'POST');
       location.hash = `skills/${encoded(result.ref)}`;
     },
   });
@@ -127,12 +127,12 @@ function openConfirmDialog({ title, message, confirmText = 'Confirm', danger = f
 
 function openMappingDialog(ref) {
   openInputDialog({
-    title: 'Mapping Table',
+    title: 'Bind Table',
     label: 'Feishu Base URL',
     placeholder: 'https://my.feishu.cn/base/...?table=...&view=...',
-    confirmText: 'Mapping',
+    confirmText: 'Bind',
     onConfirm: async (url) => {
-      const result = await startOperation('/api/mappings', { ref, url }, 'POST');
+      const result = await startOperation(`/api/skills/${encoded(ref)}/bind`, { url }, 'POST');
       location.hash = `templates/${encoded(result.template.template_id)}`;
     },
   });
