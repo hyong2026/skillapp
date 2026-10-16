@@ -292,7 +292,9 @@ button { cursor: pointer; }
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  /* 关掉首尾的弹性回弹（macOS/触控板那种"滚一下又弹回去"的手感）以及滚动链，
+     滚到顶/底就停住。 */
+  overscroll-behavior: none;
   scrollbar-gutter: stable both-edges;
 }
 .view-body-inner {
@@ -371,7 +373,8 @@ h3 { color: var(--text-strong); font-size: var(--text-md); font-weight: 600; }
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: var(--shadow);
+  /* 不投大范围阴影：浅色下页面与面板同色，50px 模糊的投影会在固定顶栏下沿形成一圈灰晕；
+     分层交给 1px 边框（浮层类元素如弹框/窄屏菜单仍各有自己的投影）。 */
   overflow: hidden;
 }
 .panel-head {
@@ -859,12 +862,12 @@ pre {
 .flow-input:focus { border-color: var(--accent); outline: none; }
 .flow-input:disabled { color: var(--muted-2); }
 .flow-editor { margin-top: 12px; }
-.step.is-active .step-card { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* 当前步骤：实心 accent 边框加粗到 2px（border-box 向内长，不会越出卡片或顶到顶栏）。 */
+.step.is-active .step-card { border-color: var(--accent); border-width: 2px; }
 .step.is-active .step-index {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .step.is-done .step-index { border-color: var(--success-border); background: var(--accent-soft); color: var(--success-text); }
 .step.is-done .step-state { color: var(--success-text); }
