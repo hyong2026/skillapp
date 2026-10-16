@@ -9,6 +9,7 @@ import { openConfirmDialog, openMessageDialog } from '../lib/dialogs.js';
 import { render } from '../lib/router.js';
 
 function templateDefinitionPanel(template) {
+  // 模板里只有已映射的条目，所以这两张表天然与飞书表里的列一一对应。
   const inputs = Array.isArray(template?.mapping?.inputs) ? template.mapping.inputs : [];
   const outputs = Array.isArray(template?.mapping?.outputs) ? template.mapping.outputs : [];
   return togglePanel('Template Definition', 'JSON', () => h('div', { className: 'contract-body' }, [

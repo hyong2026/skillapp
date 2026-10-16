@@ -105,7 +105,7 @@ Run Item:  queued → running | succeeded | failed          （dry-run 用 dry-r
 
 三个词的含义：**Template** 是可运行的定义，它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；`.data/mappings/<Skill Name>.mapping.json` 是 Mapping 的草案，初始化阶段（分析 → 绑定）的中间物。
 
-Mapping 的每个输入 / 输出都可以标 `mapped: false`：**不建列、不读取、不回写**，缺省即参与映射。必填输入不允许未映射——读不到值只能逐行失败。
+Mapping 的每个输入 / 输出都可以标 `mapped: false`：**不建列、不读取、不回写，也不写进 Template**，缺省即参与映射。必填输入不允许未映射——读不到值只能逐行失败。
 
 三条不变量：
 

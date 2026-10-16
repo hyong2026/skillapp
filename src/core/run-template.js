@@ -10,7 +10,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { lark } from './lark.js';
-import { isMapped } from './mapping.js';
 import { skillHash } from './skill-hash.js';
 import { DATA_DIR, RUNS_DIR } from './paths.js';
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
@@ -177,6 +176,9 @@ function buildArgv(cmd, vars) {
   return argv;
 }
 
+/** cmd 里的内置变量，不是输入列（与 bind-table 的 checkCmd 保持一致）。 */
+const BUILTIN_VARS = new Set(['outdir', 'skill']);
+
 /** cmd 里以单独变量出现（`{key}` / `{key...}`）的输入必须有值——未映射就没法满足。 */
 function requiredKeysInCmd(cmd) {
   const keys = [];
@@ -270,9 +272,10 @@ function preflight(tpl) {
     throw new Error(`Skill hash mismatch; run refused:\n  template = ${tpl.skill.hash}\n  on-disk  = ${live}\n  Reload: ${reload}`);
   }
 
-  // 未映射的输入不会被读取，cmd 却要它当位置参数时只能逐行报 undefined——提前说清楚。
-  const unmappedKeys = new Set(tpl.mapping.inputs.filter((f) => !isMapped(f)).map((f) => f.key));
-  const orphans = [...new Set(requiredKeysInCmd(tpl.mapping.cmd).filter((key) => unmappedKeys.has(key)))];
+  // 模板里只有已映射的输入；cmd 却把它当位置参数用时只能逐行报 undefined——提前说清楚。
+  const mappedKeys = new Set(tpl.mapping.inputs.map((f) => f.key));
+  const orphans = [...new Set(requiredKeysInCmd(tpl.mapping.cmd)
+    .filter((key) => !BUILTIN_VARS.has(key) && !mappedKeys.has(key)))];
   if (orphans.length) {
     throw new Error(`Input is not mapped but cmd needs it:\n  - ${orphans.join('\n  - ')}\n  Fix: map the input, or drop its variable from cmd`);
   }
@@ -291,17 +294,16 @@ function preflight(tpl) {
     return true;
   };
 
-  const inputs = tpl.mapping.inputs.filter(isMapped).filter(stillThere).map(named);
-  const outputs = tpl.mapping.outputs.filter(isMapped).filter(stillThere).map(named);
+  const inputs = tpl.mapping.inputs.filter(stillThere).map(named);
+  const outputs = tpl.mapping.outputs.filter(stillThere).map(named);
 
-  for (const f of tpl.mapping.inputs.filter(isMapped)) {
+  for (const f of tpl.mapping.inputs) {
     if (f.required && !byId.has(f.field_id)) problems.push(`Required input is missing: ${named(f).field_name} (${f.field_id})`);
   }
   if (!byId.has(tpl.target.primary_field_id)) problems.push(`Primary field is missing: ${tpl.target.primary_field_id}`);
   if (problems.length) throw new Error(`Template does not match the current table; run refused:\n  - ${problems.join('\n  - ')}`);
 
   const dropped = [...tpl.mapping.inputs, ...tpl.mapping.outputs]
-    .filter(isMapped)
     .filter((f) => !byId.has(f.field_id))
     .map(named);
   return { skillDir, inputs, outputs, dropped };

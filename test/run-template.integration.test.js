@@ -8,7 +8,7 @@
  *   - --incremental 必须感知 Skill / Mapping 版本变化
  *   - 飞书文本列里的 Markdown 链接会归一成裸 URL
  *   - stdout / stderr 原样落成 .log 文本
- *   - 未映射（mapped: false）的列不读取、不回写；被 cmd 当位置参数用时提前报错
+ *   - 未映射（mapped: false）的条目不进 Template：不读取、不回写；被 cmd 当位置参数用时提前报错
  */
 
 import assert from 'node:assert';
@@ -30,7 +30,6 @@ const FIELDS = [
   { id: 'fldOut', name: 'out: 结果', type: 'text' },
 ];
 /** 未映射场景要有一列「表里有、但不参与」的列，才能证明它真的没被读写 */
-const SKIP_FIELD = { id: 'fldSkip', name: 'out: 跳过', type: 'text' };
 
 /** 飞书文本列里的链接长这样：`[标题](URL)` */
 const LINK_CELL = '[外包负责需求单](https://stub.feishu.cn/wiki/Tok?table=t&view=v)';
@@ -69,23 +68,15 @@ function makeFixture(mode) {
           : mode === 'unmapped-cmd'
             ? 'node {skill.entry} {text} -o {outdir}'
             : 'node {skill.entry} -o {outdir}',
+      // 未映射（mapped: false）的条目根本不进 Template：`unmapped-*` 只是少一条映射项。
       inputs: mode === 'pagination'
         ? [{ key: 'text', field_id: 'fldIn', type: 'text', default: 'x' }]
         : mode === 'link-cell'
           ? [{ key: 'target_url', field_id: 'fldIn', type: 'text', required: true }]
-          : mode === 'unmapped-input'
-            ? [{ key: 'skipped', field_id: 'fldSkip', type: 'text', mapped: false, default: 'x' }]
-            : mode === 'unmapped-cmd'
-              ? [{ key: 'text', field_id: 'fldIn', type: 'text', mapped: false }]
-              : [],
+          : [],
       outputs: mode === 'no-writeback'
         ? []
-        : mode === 'unmapped-output'
-          ? [
-            { key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' },
-            { key: 'skipped', field_id: 'fldSkip', type: 'text', from: 'stdout.value', mapped: false },
-          ]
-          : [{ key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' }],
+        : [{ key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' }],
     },
     limits: { timeout_s: 5 },
   };
@@ -103,14 +94,11 @@ function makeFixture(mode) {
     }, null, 2));
   }
 
-  const unmapped = mode.startsWith('unmapped');
-  const fields = unmapped ? [...FIELDS, SKIP_FIELD] : FIELDS;
-  const cell = (values) => (unmapped ? [...values, ''] : values);
   const rows = mode === 'pagination'
-    ? Array.from({ length: 201 }, (_, i) => ({ record_id: `rec${i + 1}`, values: cell(['', '', '']) }))
-    : [{ record_id: 'rec1', values: cell(['', LINK_CELL, '']) }];
+    ? Array.from({ length: 201 }, (_, i) => ({ record_id: `rec${i + 1}`, values: ['', '', ''] }))
+    : [{ record_id: 'rec1', values: ['', LINK_CELL, ''] }];
 
-  return { root, templatePath, fields, rows };
+  return { root, templatePath, fields: FIELDS, rows };
 }
 
 /** 假的多维表格：内存表，记下每次调用的分页参数与回读次数。 */
@@ -161,7 +149,7 @@ async function runWorker(mode) {
   process.env.SKILLAPP_ROOT = root;
   process.env.SKILLAPP_DATA_DIR = path.join(root, '.data');
   const fakePath = path.join(root, 'fake-lark.cjs');
-  fs.writeFileSync(fakePath, fakeLarkSource(fields, rows));
+  fs.writeFileSync(fakePath, fakeLarkSource(FIELDS, rows));
   process.env.SKILLAPP_LARK_MODULE = fakePath;
 
   const stdout = [];
@@ -269,7 +257,7 @@ if (process.argv.includes('--worker')) {
 
   test('record-list 会翻完所有页，且不再逐行 record-get', () => {
     const out = scenario('pagination');
-    assert.equal(out.exitCode, null);
+    assert.equal(out.exitCode, null, out.errors.join('\n'));
     assert.equal(out.dryRows, 201);
     assert.equal(out.getCalls, 0, '已经拿到列表 cells，不应再逐行 record-get');
     assert.deepEqual(out.listCalls.map((call) => [call.limit, call.offset]), [[200, 0], [200, 200]]);
@@ -278,7 +266,7 @@ if (process.argv.includes('--worker')) {
 
   test('--incremental 会因 Skill / Mapping 版本变化而重跑', () => {
     const out = scenario('incremental');
-    assert.equal(out.exitCode, null);
+    assert.equal(out.exitCode, null, out.errors.join("\n"));
     assert.equal(out.noRows, false);
     assert.equal(out.dryRows, 1);
     assert.equal(out.getCalls, 0);
@@ -286,7 +274,7 @@ if (process.argv.includes('--worker')) {
 
   test('零输出列：照样读输入、执行 Skill，不回写也不算失败', () => {
     const out = scenario('no-writeback');
-    assert.equal(out.exitCode, null);
+    assert.equal(out.exitCode, null, out.errors.join("\n"));
     assert.equal(out.finished, true, 'CLI 应报「完成: 1 成功 / 0 失败」');
     assert.equal(out.batchUpdates, 0, '没有输出列时一次回写都不该发生');
     assert.equal(out.runStatus, 'completed');
@@ -295,7 +283,7 @@ if (process.argv.includes('--worker')) {
 
   test('飞书文本列里的 Markdown 链接会归一成裸 URL', () => {
     const out = scenario('link-cell');
-    assert.equal(out.exitCode, null);
+    assert.equal(out.exitCode, null, out.errors.join("\n"));
     const argv = JSON.parse(out.dryArgv);
     assert.ok(argv.includes('https://stub.feishu.cn/wiki/Tok?table=t&view=v'),
       `argv 里应是裸 URL：${out.dryArgv}`);
@@ -304,7 +292,7 @@ if (process.argv.includes('--worker')) {
 
   test('Skill 子进程的 cwd 是内容层根（lark-cli 的写盘白名单要它做祖先）', () => {
     const out = scenario('cwd');
-    assert.equal(out.exitCode, null);
+    assert.equal(out.exitCode, null, out.errors.join("\n"));
     assert.equal(out.updates.length, 1, '应回写一次');
     assert.match(out.inputHashes[0], /^sha256:[0-9a-f]{16}$/, 'input_hash 与其他 hash 一样带算法前缀');
     // 进程里拿到的是解析过符号链接的真实路径（macOS 上 /var → /private/var）
@@ -313,7 +301,7 @@ if (process.argv.includes('--worker')) {
 
   test('stdout / stderr 原样落成 .log 文本', () => {
     const out = scenario('logs');
-    assert.equal(out.exitCode, null);
+    assert.equal(out.exitCode, null, out.errors.join("\n"));
     assert.equal(out.logReadError, null);
     assert.deepEqual(out.logs.recordFiles, ['artifacts', 'logs']);
     assert.deepEqual(out.logs.logFiles, ['stderr.log', 'stdout.log']);
@@ -321,9 +309,9 @@ if (process.argv.includes('--worker')) {
     assert.equal(out.logs.stderr, 'warn-line\n', 'stderr 原样落盘');
   });
 
-  test('未映射的输入：不读、不传参，运行照常', () => {
+  test('未映射的输入（模板里没有它）：不读、不传参，运行照常', () => {
     const out = scenario('unmapped-input');
-    assert.equal(out.exitCode, null);
+    assert.equal(out.exitCode, null, out.errors.join("\n"));
     assert.deepEqual(out.listCalls[0].projection, [], '未映射的输入不该出现在读取列里');
     const argv = JSON.parse(out.dryArgv);
     assert.deepEqual(argv.slice(0, 2).map((part, i) => (i === 0 ? part : part.endsWith('entry.js'))), ['node', true],
@@ -332,15 +320,15 @@ if (process.argv.includes('--worker')) {
     assert.ok(!argv.includes('x'), '默认值也不该传出去');
   });
 
-  test('未映射的输出：不解析、不回写，其他输出照常', () => {
+  test('未映射的输出（模板里没有它）：只回写映射的那一列', () => {
     const out = scenario('unmapped-output');
-    assert.equal(out.exitCode, null);
+    assert.equal(out.exitCode, null, out.errors.join("\n"));
     assert.equal(out.batchUpdates, 1, '只该回写映射的那一列');
     assert.deepEqual(out.updates[0].update_records.rec1, { fldOut: 'ok' });
     assert.equal(out.runStatus, 'completed');
   });
 
-  test('未映射的输入被 cmd 当位置参数用：运行前就说清楚，别等逐行报 undefined', () => {
+  test('模板里没有的输入被 cmd 当位置参数用：运行前就说清楚，别等逐行报 undefined', () => {
     const out = scenario('unmapped-cmd');
     assert.equal(out.exitCode, 1, '应以退出码 1 结束');
     const text = out.errors.join('\n');

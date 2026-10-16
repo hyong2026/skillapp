@@ -39,7 +39,7 @@
 - 标量输出：按 `from` 表达式（只支持 `stdout.xxx`，可带 `/ 1024` 这类除法）取值后一次性 `record-batch-update`。
 - 附件输出：先清空该列再逐个上传（上传是追加语义）。
 - **没有输出列也能跑**：照常读输入、执行 Skill，只是不回写，Run 记为 `completed`。
-- 未映射（`mapped: false`）的列不读、不写；`cmd` 里以 `{key}` 形式用到未映射的输入会在运行前直接报错。
+- 未映射（`mapped: false`）的列不建、不读、不写，**也不写进 Template**；`cmd` 里以 `{key}` 形式用到模板里没有的输入会在运行前直接报错。
 
 ## 列命名与删列
 
@@ -121,7 +121,7 @@
 ```
 
 支持的类型：`text / number / datetime / checkbox / attachment / select`。
-模板（Template）里同样一份 Mapping，但每个条目多了对齐结果 `field_id`，并带 `template_id` / `created_at` / `target`。
+模板（Template）里的 Mapping **只保留已映射的条目**（未勾选的不进），每个条目多了对齐结果 `field_id`，并带 `template_id` / `created_at` / `target`。
 
 ## 预览（dry-run）
 

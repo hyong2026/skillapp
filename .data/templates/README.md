@@ -13,7 +13,7 @@ mappings/<Skill Name>.mapping.json  →  bind-table.js  →  templates/<Skill Na
 | `template_id` | UUID，Run / Operations 引用它 |
 | `skill` | `path`（`skills/<Skill Name>`）+ 内容 `hash` + `entry` |
 | `target` | `base_token` / `table_id` / `view_id` / `primary_field_id` |
-| `mapping` | Mapping 的落地版：每条多了对齐结果 `field_id` |
+| `mapping` | Mapping 的落地版：**只含已映射的条目**（未勾选的不进），每条多了对齐结果 `field_id` |
 | `limits` | `max_rows_per_run` / `timeout_s` |
 | `archived_at` | 归档时间；有它 = 冻结 |
 

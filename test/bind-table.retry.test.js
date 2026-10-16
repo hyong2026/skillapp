@@ -272,15 +272,13 @@ if (process.argv.includes('--worker')) {
     assert.equal(out.templateWritten, false, '失败时不应写 Template');
   });
 
-  test('未映射的输出不建列、不进列序，但标记要留在 Template 里', () => {
+  test('未映射的输出：不建列、不进列序，也不写进 Template', () => {
     const out = scenario(0, true);
     assert.equal(out.exitCode, null, '不该退出');
     assert.equal(out.created, EXPECTED_CREATED - 1, '未映射的列不该被创建');
     assert.deepEqual(out.order, UNMAPPED_ORDER, '未映射的列不该出现在列序里');
-    const entry = out.template.mapping.outputs.find((item) => item.key === 'tiles');
-    assert.equal(entry.mapped, false, '未映射的标记要写进 Template');
-    assert.equal(entry.field_id, null, '没建列自然没有 field_id');
-    const kept = out.template.mapping.outputs.find((item) => item.key === 'tile_count');
-    assert.ok(kept.field_id, '其余输出照常拿到 field_id');
+    assert.deepEqual(out.template.mapping.outputs.map((item) => item.key), ['tile_count'],
+      'Template 里只留已映射的输出');
+    assert.ok(out.template.mapping.outputs[0].field_id, '映射的输出照常拿到 field_id');
   });
 }

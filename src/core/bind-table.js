@@ -186,7 +186,6 @@ const inputEntry = (spec, fieldId) => ({
   key: spec.key,
   field_id: fieldId,
   type: spec.type,
-  ...(isMapped(spec) ? {} : { mapped: false }),
   ...(spec.required ? { required: true } : {}),
   ...(spec.default === undefined ? {} : { default: spec.default }),
   ...(spec.validate ? { validate: spec.validate } : {}),
@@ -198,7 +197,6 @@ const outputEntry = (spec, fieldId) => ({
   field_id: fieldId,
   type: spec.type,
   from: spec.from,
-  ...(isMapped(spec) ? {} : { mapped: false }),
   ...(spec.round === undefined ? {} : { round: spec.round }),
 });
 
@@ -213,7 +211,7 @@ function localIso() {
 }
 
 function buildTemplate({ io, ref, skillHashValue, target, primaryId, columns, prior, createId = false }) {
-  // 未映射的列不参与对齐，但仍要留住上一次的 field_id，重新勾选时才能复用原列。
+  // 复用上一次的 field_id，同名同类型的列不会被重复创建。
   const priorIds = new Map([...(prior?.mapping?.inputs || []), ...(prior?.mapping?.outputs || [])]
     .map((entry) => [entry.key, entry.field_id]));
   const idOf = (key) => columns.find((column) => column.key === key)?.field_id || priorIds.get(key) || null;
@@ -226,8 +224,10 @@ function buildTemplate({ io, ref, skillHashValue, target, primaryId, columns, pr
     target: { ...target, primary_field_id: primaryId },
     mapping: {
       cmd: io.cmd,
-      inputs: io.inputs.map((spec) => inputEntry(spec, idOf(spec.key))),
-      outputs: io.outputs.map((spec) => outputEntry(spec, idOf(spec.key))),
+      // 只写已映射的条目：Template = 飞书列，未勾选的（`mapped: false`）不进模板。
+      // Mapping 文件（IO Schema）才是勾选的唯一真源，重新绑定按它重建。
+      inputs: io.inputs.filter(isMapped).map((spec) => inputEntry(spec, idOf(spec.key))),
+      outputs: io.outputs.filter(isMapped).map((spec) => outputEntry(spec, idOf(spec.key))),
     },
     ...(io.limits ? { limits: io.limits } : {}),
   };

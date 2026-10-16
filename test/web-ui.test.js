@@ -716,7 +716,7 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
     assert.equal(remapped.status, 'completed', JSON.stringify(remapped.error));
   });
 
-  test('M3 重新分析会保留「未映射」的勾选，重新 Mapping 后才写进 Template', async () => {
+  test('M3 重新分析会保留「未映射」的勾选，但未映射的条目不进 Template', async () => {
     const before = await requestJson(ctx, '/api/skills/demo');
     const mapping = before.body.data.analysis.mapping;
     const saved = await requestJson(ctx, '/api/skills/demo/schema', {
@@ -740,7 +740,7 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
     });
     const applied = await waitForOperation(ctx, 'demo', 'bind-table');
     assert.equal(applied.status, 'completed', JSON.stringify(applied.error));
-    assert.equal(applied.result.template.mapping.outputs[0].mapped, false, '未映射的标记要写进 Template');
+    assert.deepEqual(applied.result.template.mapping.outputs, [], '未映射的输出不写进 Template');
     assert.ok(applied.result.order.includes('＊in: Title'), '必填输入照常建列');
     assert.ok(!applied.result.order.includes('out: Result'), '未映射的输出不建列');
   });

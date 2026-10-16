@@ -52,7 +52,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - 列表：`Template Name / Template ID / IO / Last Run / Created`；`Template Name` 是文件名 `<Skill Name>-<目标指纹>` 且带链接（链接锚点用 `template_id`）。
 - 右上角 `Show Archived`（默认不勾）：勾上后连归档的一起列出，归档行带 `Archived` 徽标。
 - 详情：面包屑 `Templates`，标题就是 Template Name；Summary 展示 Template ID、Skill Name、Skill Hash、Feishu Base URL、Created，归档后多一行 `Archived` 徽标。
-- `Template Definition` 展示完整 Inputs / Outputs 映射，`JSON` 开关看完整 Template JSON。
+- `Template Definition` 展示已映射的 Inputs / Outputs（与表里的列一一对应），`JSON` 开关看完整 Template JSON。
 - 右上角动作：`Preview`、`Run`（`All Rows` 勾选框决定 `all` / `incremental`）、`Archive` / `Unarchive`。
   - `Preview` 是 dry-run，弹窗反馈触发方式、表内行数、本次会处理的行数、目标表链接，底部一句英文提示说明"不执行、不回写、不产生 Run"；失败（如飞书未授权）也在弹窗里给出可操作提示。
   - 归档 = 冻结：文件保留、从列表消失、不能跑；解冻即恢复。两者都写进 Operations。
