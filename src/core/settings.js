@@ -5,7 +5,7 @@ import { parseEnv } from './load-env.js';
 import { AppError } from './errors.js';
 
 /**
- * 可改的白名单：只放「每次调用时读取」的 Analyze 配置，改完即时生效，不需要重启。
+ * 可改的白名单：只放「每次调用时读取」的配置（Analyze 分析器 + Run 并发数），改完即时生效。
  * 需要重启才生效的项（token / 内容目录 / 根目录 / lark 模块）只读展示，不开放编辑。
  */
 const EDITABLE = [
@@ -13,6 +13,7 @@ const EDITABLE = [
   { key: 'SKILLAPP_ANALYZE_MODEL', label: '分析模型', hint: '留空则用命令自带默认模型', placeholder: '(默认)' },
   { key: 'SKILLAPP_ANALYZE_REASONING_EFFORT', label: '推理强度', hint: 'low / medium / high', placeholder: 'low' },
   { key: 'SKILLAPP_ANALYZE_TIMEOUT_MS', label: '分析超时 (ms)', hint: '默认 900000', placeholder: '900000' },
+  { key: 'SKILLAPP_RUN_CONCURRENCY', label: 'Run 并发数', hint: '同时跑几行，默认 4，上限 8', placeholder: '4' },
 ];
 
 const READONLY = [

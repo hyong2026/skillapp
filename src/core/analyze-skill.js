@@ -1,13 +1,14 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { ROOT, DATA_DIR, SKILLS_DIR, MAPPINGS_DIR } from './paths.js';
 import { AppError } from './errors.js';
 import { readJson } from './json-file.js';
 import { assertRef } from './ref.js';
-import { readMapping, saveMapping } from './mapping.js';
+import { readMapping, saveMapping, validateMapping } from './mapping.js';
 
-function analyzerArgs() {
+function analyzerArgs(outputPath = null) {
   if (process.env.SKILLAPP_ANALYZE_ARGS) {
     let parsed;
     try {
@@ -27,26 +28,86 @@ function analyzerArgs() {
     '--color', 'never',
     '-C', ROOT,
     '--add-dir', DATA_DIR,
+    // 不把仓库 AGENTS.md 注入分析器上下文：那是给开发 Agent 看的规则，与"分析技能"无关。
+    '-c', 'project_doc_max_bytes=0',
   ];
   if (process.env.SKILLAPP_ANALYZE_MODEL) args.push('-m', process.env.SKILLAPP_ANALYZE_MODEL);
   const effort = process.env.SKILLAPP_ANALYZE_REASONING_EFFORT || 'low';
   args.push('-c', `model_reasoning_effort="${effort}"`);
+  // 结果从「最后一条消息」收：模型不用再花一个回合去写文件。
+  if (outputPath) args.push('-o', outputPath);
   return args;
 }
 
-function promptFor(ref, skillDir, mappingPath) {
-  return `Use the project skill analyze-skill.
+/**
+ * 分析器上下文：把「规则 + 文件清单 + SKILL.md」直接内联进 prompt。
+ * 好处是模型不必先花回合去探索目录、找样例 mapping，也不会在 node_modules 里打转（这里只把它排除在清单外）。
+ */
+const SKIP_DIRS = new Set(['node_modules', '.git', '__pycache__', '.venv', 'venv', 'dist', 'build']);
 
-Analyze the loaded Skill at:
-${skillDir}
+function fileInventory(dir, prefix = '', out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) fileInventory(path.join(dir, entry.name), rel, out);
+    else out.push(rel);
+  }
+  return out.sort();
+}
 
-Loaded ref: ${ref}
+function analyzerRules() {
+  return fs.readFileSync(path.join(ROOT, '.agents', 'skills', 'analyze-skill', 'SKILL.md'), 'utf8');
+}
 
-Follow .agents/skills/analyze-skill/SKILL.md exactly. Inspect the Skill implementation, not just SKILL.md.
-Write exactly this file and do not modify any other repository file:
-- ${mappingPath}
+function promptFor(ref, skillDir, mappingPath, { outputPath = null } = {}) {
+  const skillMd = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+  const files = fileInventory(skillDir);
+  const delivery = outputPath
+    ? `最后一条消息**只放 Mapping JSON 本身**（不要代码块围栏、不要任何前后解释），SkillApp 会自己落盘。`
+    : `把 Mapping JSON 写进这个文件，不要修改任何其它文件：\n- ${mappingPath}`;
+  return `分析这个已装载的 Skill，产出一份可执行的 Mapping。
 
-Write the complete Mapping JSON consumed by the mapping step. Every judgement call must already be applied in it (columns, types, required, defaults, transforms) — there is no separate questions list.`;
+Skill 根目录：${skillDir}
+ref：${ref}
+
+规则（完整，不需要再去读文件核对）：
+${analyzerRules()}
+
+该 Skill 的文件清单（已排除 node_modules 等无关目录；真正的入口就在其中）：
+${files.map((file) => `- ${file}`).join('\n')}
+
+SKILL.md 内容：
+${skillMd}
+
+交付要求：
+- 以实现为准：按上面的清单读入口实现即可，**不要探索仓库、不要搜索其它 *.mapping.json 样例、不要执行 find /、不要用 cat -A / od / hexdump 反复看同一个文件**。
+- 所有判断都已经落进 Mapping（列、类型、必填、默认值、transform），没有独立报告、没有 questions。
+- ${delivery} 这与 analyze-skill 规则里"写 .data/mappings/<ref>.mapping.json"的分工不同：落盘由 SkillApp 负责。`;
+}
+
+/** 从文本里取 JSON：容忍 ```json 围栏，取最外层 `{...}`。 */
+function parseJsonBlock(text) {
+  const raw = String(text || '').replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '');
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+/** 分析结果：优先取 --output-last-message（单回合交付）；兜底读模型自己写的 mapping 文件。 */
+function analyzerMapping(ref, outputPath) {
+  const message = outputPath && fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8') : '';
+  const parsed = parseJsonBlock(message);
+  if (parsed) return validateMapping(parsed);
+  try {
+    return readMapping(ref);
+  } catch {
+    return null;
+  }
 }
 
 function stopChild(child, signal) {
@@ -89,7 +150,11 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
   fs.rmSync(mappingPath, { force: true });
 
   const command = process.env.SKILLAPP_ANALYZE_COMMAND || 'codex';
-  const args = [...analyzerArgs(), promptFor(ref, skillDir, mappingPath)];
+  // 覆盖了 SKILLAPP_ANALYZE_ARGS 时不塞 -o（那时只能靠模型自己写文件），prompt 也跟着换回写文件。
+  const outputPath = process.env.SKILLAPP_ANALYZE_ARGS
+    ? null
+    : path.join(os.tmpdir(), `skillapp-analyze-${process.pid}-${Date.now()}.json`);
+  const args = [...analyzerArgs(outputPath), promptFor(ref, skillDir, mappingPath, { outputPath })];
   const timeoutMs = Number(process.env.SKILLAPP_ANALYZE_TIMEOUT_MS || 15 * 60 * 1000);
   const effectiveTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15 * 60 * 1000;
 
@@ -150,15 +215,17 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
         return;
       }
       try {
-        const parsedMapping = readMapping(ref);
+        const parsedMapping = analyzerMapping(ref, outputPath);
         if (!parsedMapping) {
-          throw new AppError('ANALYZER_INVALID_RESULT', 'Analyzer did not write the Mapping', 'Retry the analysis', 502);
+          throw new AppError('ANALYZER_INVALID_RESULT', 'Analyzer did not return a Mapping', 'Retry the analysis', 502);
         }
         const hash = readJson(path.join(skillDir, 'source.json')).hash;
         const mapping = saveMapping(ref, keepUnmappedFlags(parsedMapping, priorMapping), hash);
         finish(resolve, { ref, mapping });
       } catch (err) {
         finish(reject, err);
+      } finally {
+        if (outputPath) fs.rmSync(outputPath, { force: true });
       }
     });
   });

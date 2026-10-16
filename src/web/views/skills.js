@@ -53,7 +53,7 @@ function skillActions(ref, analysis, hasMapping, activeOperations, setAnalysisLo
 
   const mapping = actionButton(activeOperations.bind ? 'Binding...' : 'Bind Table', 'mapping', 'button');
   mapping.disabled = !hasMapping || Boolean(activeOperations.bind);
-  mapping.title = hasMapping ? 'Bind this IO Schema to a Feishu table and create a Template' : 'Analyze the Skill first';
+  mapping.title = hasMapping ? 'Bind this IO Schema to a Lark table and create a Template' : 'Analyze the Skill first';
   if (activeOperations.bind) mapping.replaceChildren(icon('spinner', 'icon spinner'), h('span', { textContent: 'Binding...' }));
   mapping.addEventListener('click', () => openMappingDialog(ref));
 
@@ -62,7 +62,7 @@ function skillActions(ref, analysis, hasMapping, activeOperations, setAnalysisLo
   unload.addEventListener('click', async () => {
     const ok = await openConfirmDialog({
       title: 'Unload Skill',
-      message: `Unload "${ref}"? The loaded copy, its IO Schema and its Templates are removed. Feishu columns and past Runs are kept.`,
+      message: `Unload "${ref}"? The loaded copy, its IO Schema and its Templates are removed. Lark columns and past Runs are kept.`,
       confirmText: 'Unload',
       danger: true,
     });

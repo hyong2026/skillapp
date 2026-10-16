@@ -38,7 +38,7 @@ function subjectLink(subject) {
   ]);
 }
 
-function feishuBaseLink(target = {}) {
+function larkBaseLink(target = {}) {
   if (!target.base_token) return '—';
   const url = new URL(`https://my.feishu.cn/base/${encodeURIComponent(target.base_token)}`);
   if (target.table_id) url.searchParams.set('table', target.table_id);
@@ -66,7 +66,7 @@ export {
   skillLink,
   templateLink,
   subjectLink,
-  feishuBaseLink,
+  larkBaseLink,
   artifactUrl,
   isImage,
 };

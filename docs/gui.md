@@ -45,24 +45,26 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - `IO Schema` 默认展示结构化 Inputs / Outputs（分析产出的 IO 契约，还没绑定到表），`JSON` 开关看原文。
   - 行首勾选框决定该列是否参与映射：取消勾选 = 不建列、不读取、不回写，整行退成次要色；必填输入的勾选框默认勾上且不可改。
   - 列名、勾选、排序都是**即时保存、不重绘页面**（只重建这张表，也不弹提示）；但要**重新执行一次 `Bind Table`** 才会写进 Template。
-- 右上角动作：`Analyze / Re-analyze`（持久化任务，刷新后仍显示 Loading）、`Mapping`（填 Feishu Base URL，启动 Mapping 任务）、`Unload`（弹框确认后删除本地副本、Mapping、Template 与关联 Run；飞书列不删）。
+- 右上角动作：`Analyze / Re-analyze`（持久化任务，刷新后仍显示 Loading）、`Bind Table`（填 Lark Base URL，启动绑定任务）、`Unload`（弹框确认后删除本地副本、Mapping、Template 与关联 Run；飞书列不删）。
 
 ### Templates
 
 - 列表：`Template Name / Template ID / IO / Last Run / Created`；`Template Name` 是文件名 `<Skill Name>-<目标指纹>` 且带链接（链接锚点用 `template_id`）。
 - 右上角 `Show Archived`（默认不勾）：勾上后连归档的一起列出，归档行带 `Archived` 徽标。
-- 详情：面包屑 `Templates`，标题就是 Template Name；Summary 展示 Template ID、Skill Name、Skill Hash、Feishu Base URL、Created，归档后多一行 `Archived` 徽标。
+- 详情：面包屑 `Templates`，标题就是 Template Name；Summary 展示 Template ID、Skill Name、Skill Hash、Lark Base URL、Created，归档后多一行 `Archived` 徽标。
 - `Template Definition` 展示已映射的 Inputs / Outputs（与表里的列一一对应），`JSON` 开关看完整 Template JSON。
-- 右上角动作：`Preview`、`Run`（`All Rows` 勾选框决定 `all` / `incremental`）、`Archive` / `Unarchive`。
-  - `Preview` 是 dry-run，弹窗反馈触发方式、表内行数、本次会处理的行数、目标表链接，底部一句英文提示说明"不执行、不回写、不产生 Run"；失败（如飞书未授权）也在弹窗里给出可操作提示。
+- 右上角动作：`Run`、`Archive` / `Unarchive`。
+  - `Run` 先做一次 dry-run 预览。弹框固定列出 `Lark Base URL / Trigger / Rows in table / Rows to process`（未加载出来的值是 `—`；`Lark Base URL` 打开时就按 Target 填好，不依赖预览、勾选 All Rows 也不会刷新，长链接整段换行）；**`All Rows` 勾选框在弹框左下角**，切换即重新预览、弹框高度不变，再点弹框里的 `Run` 才真正提交。失败（如飞书未授权）也在弹框里给出可操作提示。没有 Preview 按钮——预览已经成为 Run 的第一步。
+  - 没有要跑的行时，`Rows to process` 会是 `0`，弹框里的 `Run` 也会被禁用。
   - 归档 = 冻结：文件保留、从列表消失、不能跑；解冻即恢复。两者都写进 Operations。
 
 ### Runs
 
 - 列表：`Run ID / Status / Template Name / Trigger / Succeeded / Total / Started`。
-- 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Error、Work Hash）、`Run Items` 表、Live Output。
+- 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Error、Work Hash）、`Run Items` 表、Live Output（stdout/stderr 带行号，日志整段是 JSON 时做语法高亮，纯文本原样显示）。
 - Run Item 详情：状态、阶段、耗时、错误、Input Hash、Artifacts 卡片与 stdout/stderr 日志。
 - 运行中的 Run 可 `Cancel`；终态且有失败行时可 `Retry`（等价于再跑一次增量，产生新 Run）。
+- 详情页靠 SSE 实时重画：重画**不重播入场动画**（否则每次事件都闪一下 2px/透明度，看着像抖动），日志按块推到页面时**合并成 120ms 一次重画**。
 
 ### Operations
 
@@ -74,14 +76,15 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 - `Appearance`：`Theme` 分段控件 `Dark | Light`，默认 Dark。切换即时生效，只存本浏览器（`localStorage`），不进服务端配置；首屏由独立的 `theme-boot.js` 先落主题（CSP 只允许 `script-src 'self'`，所以不用内联脚本），不闪。浅色主题在 `styles.css` 的 `:root[data-theme="light"]` 里只覆盖同名变量，logo 也随之切到 `logo-light.svg`。
 - `Runtime`：App URL、Repo Root、Node Version（只读）。
-- 分析器白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），暂无对应界面。
+- 白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS` 与 `SKILLAPP_RUN_CONCURRENCY`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），暂无对应界面。
 - 应用重启与飞书授权初始化**尚未实现**：授权走 `lark-cli auth login`。
 
 ## 消息区（Messages）
 
 侧边栏底部固定一块消息区，是"所有异步操作"的实时集合：
 
-- 最多显示 3 条（进行中优先），有任务时才出现；窄屏隐藏。
+- **只露出最近 3 条**（进行中优先），同一块区域里其余消息用垂直滚动条看；有任务时才出现；窄屏隐藏。
+- 鼠标移入（或键盘焦点进入）消息区时，标题右侧出现 `Clear`：一键清空当前所有消息（和 ✕ 一样只影响本机 localStorage，Operations 记录不动；之后新来的消息照常出现）。
 - 每条：操作类型 + 状态徽标 + 对象名（**优先显示 Template Name / Skill Name，不显示 ID**）。
 - 进行中的可以 `Cancel`；跑完的可以整行点进对应详情页（Run / Template / Skill），或点 ✕ 手工关掉（只影响本机这块面板，Operations 页的记录不动，关闭状态存 localStorage）。
 - 数据来自全局 SSE `GET /api/operations/events`：连上先给一次全量快照，之后逐条推摘要，**不轮询**；断线每 2 秒重连（重连会再拿一次快照），只有在流不可用且手上还没数据时才兜底拉一次列表。

@@ -5,7 +5,7 @@
  * 而下载目录位于 .data/runs/ 之下——cwd 必须是它的祖先，调用才不会被白名单拒绝。
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { DATA_DIR } from './paths.js';
 
@@ -22,20 +22,24 @@ function parseOutput(stdout) {
   return JSON.parse(start >= 0 && end > start ? text.slice(start, end + 1) : text);
 }
 
-function defaultLark(args) {
-  const r = spawnSync('lark-cli', args, { encoding: 'utf8', cwd: DATA_DIR });
-  if (r.status !== 0) {
-    throw new Error(`lark-cli ${args.slice(0, 3).join(' ')} failed: ${(r.stderr || r.stdout).trim()}`);
+/** 同步与异步两条路共用的结果判定：退出码、JSON 解析、`ok: false`。 */
+function checkResult(args, status, stdout, stderr) {
+  if (status !== 0) {
+    throw new Error(`lark-cli ${args.slice(0, 3).join(' ')} failed: ${String(stderr || stdout || '').trim()}`);
   }
-
   let out;
   try {
-    out = parseOutput(r.stdout);
+    out = parseOutput(stdout);
   } catch {
-    throw new Error(`lark-cli returned invalid JSON: ${String(r.stdout).slice(0, 300)}`);
+    throw new Error(`lark-cli returned invalid JSON: ${String(stdout).slice(0, 300)}`);
   }
   if (out.ok === false) throw new Error(`lark-cli error: ${JSON.stringify(out).slice(0, 300)}`);
   return out;
+}
+
+function defaultLark(args) {
+  const r = spawnSync('lark-cli', args, { encoding: 'utf8', cwd: DATA_DIR });
+  return checkResult(args, r.status, r.stdout, r.stderr);
 }
 
 function loadImplementation() {
@@ -48,10 +52,44 @@ function loadImplementation() {
 }
 
 let implementation;
+let asyncImplementation;
 
 function lark(args) {
   if (!implementation) implementation = loadImplementation();
   return implementation(args);
 }
 
-export { lark, parseOutput };
+/**
+ * 异步版：`spawnSync` 会阻塞事件循环，Run 的并发会因此退化成串行（下载 / 上传 / 回写
+ * 只能排队）。需要真正并行的调用点用这个。
+ * 注入的假实现若只有同步版，就包一层 Promise——语义不变，测试不用改。
+ */
+function larkAsync(args) {
+  if (asyncImplementation === undefined) {
+    if (process.env.SKILLAPP_LARK_MODULE) {
+      const mod = require(process.env.SKILLAPP_LARK_MODULE);
+      asyncImplementation = typeof mod?.larkAsync === 'function' ? mod.larkAsync : null;
+    } else {
+      asyncImplementation = null;
+    }
+  }
+  if (asyncImplementation) return Promise.resolve(asyncImplementation(args));
+  if (process.env.SKILLAPP_LARK_MODULE) return Promise.resolve(lark(args));
+  return new Promise((resolve, reject) => {
+    const child = spawn('lark-cli', args, { cwd: DATA_DIR });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+    child.on('error', reject);
+    child.on('close', (status) => {
+      try {
+        resolve(checkResult(args, status, stdout, stderr));
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+export { lark, larkAsync, parseOutput };

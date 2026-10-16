@@ -427,7 +427,7 @@ function editableSchemaTable(kind, specs, canEdit, onSave) {
         type: 'checkbox',
         checked: !unmapped,
         disabled: !canEdit || locked,
-        title: locked ? 'Required: must stay mapped' : 'Map to the Feishu table',
+        title: locked ? 'Required: must stay mapped' : 'Map to the Lark table',
       });
       checkbox.setAttribute('aria-label', `Map ${spec.label || spec.key}`);
       checkbox.addEventListener('change', () => {

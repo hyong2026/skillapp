@@ -117,10 +117,10 @@ function codeBlock(value) {
     : numberedBlock(toLines(text), { highlight: true });
 }
 
-/** 日志是纯文本：原样展示，不做 JSON 高亮。 */
+/** 日志原样展示（带行号）：整段就是 JSON 时顺手做语法高亮，纯文本保持原样。 */
 function textBlock(value) {
   if (!value) return h('span', { className: 'muted', textContent: 'No output' });
-  return numberedBlock(toLines(value));
+  return numberedBlock(toLines(value), { highlight: jsonText(value) !== null });
 }
 
 export {

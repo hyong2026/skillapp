@@ -93,7 +93,7 @@ function resolveTarget(input = {}) {
   const base = input.base || input.base_token;
   const table = input.table || input.table_id;
   if (!base || !table) {
-    throw new AppError('INVALID_TARGET', 'A Feishu Base URL or Base/Table pair is required', 'Paste a Feishu Base URL with table and view parameters');
+    throw new AppError('INVALID_TARGET', 'A Lark Base URL or Base/Table pair is required', 'Paste a Lark Base URL with table and view parameters');
   }
   return { base_token: base, table_id: table, view_id: input.view || input.view_id || null };
 }

@@ -11,7 +11,7 @@ import { api, startOperation } from '../lib/api.js';
 import { editableSchemaTable, kv, loadingPanel, section, viewTitle } from '../lib/components.js';
 import { actionButton, fragment, h, icon, setNotice } from '../lib/dom.js';
 import { encoded, formatDate } from '../lib/format.js';
-import { feishuBaseLink, hashLink } from '../lib/links.js';
+import { larkBaseLink, hashLink } from '../lib/links.js';
 
 const STEPS = [
   ['load', '1', 'Load Skill'],
@@ -52,7 +52,7 @@ async function homeView() {
   });
   const loadButton = actionButton('Load', 'load', 'button primary');
   const loadResult = h('div', { className: 'step-result' });
-  const loadStep = stepSection('load', '1', 'Load Skill', h('div', { className: 'flow-row' }, [pathInput, loadButton]), 'The Skill is copied into SkillApp and pinned by its content fingerprint.');
+  const loadStep = stepSection('load', '1', 'Load Skill', h('div', { className: 'flow-row' }, [pathInput, loadButton]), 'Copies the Skill into SkillApp and pins it by content fingerprint.');
   loadStep.section.querySelector('.step-card').append(loadResult);
 
   const runLoad = async () => {
@@ -85,10 +85,8 @@ async function homeView() {
 
   // ---------- 2. Analyze + IO Schema ----------
   const analyzeButton = actionButton('Analyze', 'analyze', 'button primary');
-  const analyzeResult = h('div', { className: 'step-result' });
   const analyzeSlot = h('div');
-  const analyzeStep = stepSection('analyze', '2', 'Analyze IO', analyzeSlot, 'The analyzer reads the Skill and writes the IO Schema. Rename fields, drag to reorder, or uncheck the ones you do not want bound - changes save as you go.');
-  analyzeStep.section.querySelector('.step-card').append(analyzeResult);
+  const analyzeStep = stepSection('analyze', '2', 'Analyze IO', analyzeSlot, 'Reads the Skill and writes the IO Schema below. Rename, reorder or uncheck fields - saved as you go.');
 
   const saveMapping = async () => {
     await api(`/api/skills/${encoded(state.ref)}/schema`, { method: 'PUT', body: { mapping: state.mapping } });
@@ -139,17 +137,17 @@ async function homeView() {
     className: 'flow-input',
     type: 'text',
     placeholder: 'https://my.feishu.cn/base/...?table=...&view=...',
-    'aria-label': 'Feishu Base URL',
+    'aria-label': 'Lark Base URL',
   });
   const bindButton = actionButton('Bind', 'mapping', 'button primary');
   const bindResult = h('div', { className: 'step-result' });
-  const bindStep = stepSection('bind', '3', 'Bind Table', h('div', { className: 'flow-row' }, [urlInput, bindButton]), 'Binding writes the Schema onto that table: it creates the missing columns, sets their order, and produces a Template. One table (with its view) has one Template.');
+  const bindStep = stepSection('bind', '3', 'Bind Table', h('div', { className: 'flow-row' }, [urlInput, bindButton]), 'Creates the missing columns in that table, orders them, and produces a Template. One table (with its view) has one Template.');
   bindStep.section.querySelector('.step-card').append(bindResult);
 
   const runBind = async () => {
     const url = urlInput.value.trim();
     if (!url) {
-      setNotice('Enter a Feishu Base URL', true);
+      setNotice('Enter a Lark Base URL', true);
       urlInput.focus();
       return;
     }
@@ -175,9 +173,7 @@ async function homeView() {
   // 第一次使用只给一个 Run：不加 All Rows（全量）与 Preview（dry-run），
   // 默认就是增量——只跑没成功过、或输入/版本变过的行，可安全重复点。
   const runButton = actionButton('Run', 'run', 'button primary');
-  const runResult = h('div', { className: 'step-result' });
-  const runStep = stepSection('run', '4', 'Run Template', h('div', { className: 'flow-row' }, runButton), 'Fill the input columns in the Feishu table first, then run. Only rows that never succeeded (or changed) are processed.');
-  runStep.section.querySelector('.step-card').append(runResult);
+  const runStep = stepSection('run', '4', 'Run Template', h('div', { className: 'flow-row' }, runButton), 'Fill the input columns in the table, then Run - you land on the Run page for live results. Only rows that never succeeded (or changed) are processed.');
 
   runButton.addEventListener('click', async () => {
     if (!state.template) return;
@@ -229,9 +225,6 @@ async function homeView() {
     loadButton.disabled = Boolean(state.ref) || state.busy === 'load';
 
     paintAnalyze();
-    fill(analyzeResult, state.mapping
-      ? h('span', { className: 'step-hint', textContent: `IO Schema ready - ${state.mapping.inputs.length} inputs / ${state.mapping.outputs.length} outputs.` })
-      : null);
 
     urlInput.disabled = !state.mapping || Boolean(state.template) || state.busy === 'bind';
     bindButton.disabled = !state.mapping || Boolean(state.template) || state.busy === 'bind';
@@ -239,18 +232,12 @@ async function homeView() {
       ? kv([
         ['Template', hashLink(state.template.name || state.template.template_id, `#templates/${encoded(state.template.template_id)}`)],
         ['Template ID', h('span', { className: 'mono', textContent: state.template.template_id || '—' })],
-        ['Feishu Base URL', feishuBaseLink(state.template.target)],
+        ['Lark Base URL', larkBaseLink(state.template.target)],
         ['Created', formatDate(state.template.created_at)],
       ])
       : null);
 
     runButton.disabled = !state.template;
-    fill(runResult, state.template
-      ? h('p', { className: 'step-hint' }, [
-        h('span', { textContent: 'Open the table, fill the input columns, then run: ' }),
-        feishuBaseLink(state.template.target),
-      ])
-      : null);
 
   }
 

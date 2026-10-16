@@ -9,13 +9,25 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { lark } from './lark.js';
+import { lark, larkAsync } from './lark.js';
 import { skillHash } from './skill-hash.js';
 import { DATA_DIR, RUNS_DIR } from './paths.js';
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
 const RECORD_PAGE_SIZE = 200; // JSON 模式 record-list 的上限
+const RUN_CONCURRENCY_DEFAULT = 4;
+const RUN_CONCURRENCY_MAX = 8;
 
 const TERMINAL_STATUSES = new Set(['completed', 'partial', 'failed', 'canceled', 'interrupted']);
+
+/**
+ * 同一 Run 内同时跑几行：`SKILLAPP_RUN_CONCURRENCY`（`.env` / Settings 里改，默认 4）。
+ * 每次调用时读取，所以改完不必重启；上限 8——再高只会让飞书接口和本机 CPU 互相排队。
+ */
+function runConcurrency() {
+  const value = Number.parseInt(process.env.SKILLAPP_RUN_CONCURRENCY ?? '', 10);
+  if (!Number.isFinite(value) || value < 1) return RUN_CONCURRENCY_DEFAULT;
+  return Math.min(value, RUN_CONCURRENCY_MAX);
+}
 
 function atomicWriteJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -42,8 +54,8 @@ const tableFlags = (tpl, ...rest) => [
   ...rest,
 ];
 
-function updateRow(tpl, recordId, patch) {
-  lark(['base', '+record-batch-update', ...tableFlags(tpl,
+async function updateRow(tpl, recordId, patch) {
+  await larkAsync(['base', '+record-batch-update', ...tableFlags(tpl,
     '--json', JSON.stringify({ update_records: { [recordId]: patch } }))]);
 }
 
@@ -74,10 +86,11 @@ function readRows(tpl, fieldIds) {
   return rows;
 }
 
-const download = (tpl, recordId, att, dest) => lark(['base', '+record-download-attachment', ...tableFlags(tpl,
+// 按行发生的调用一律走异步版：并行时它们才能真正重叠（详见 larkAsync 的说明）。
+const download = (tpl, recordId, att, dest) => larkAsync(['base', '+record-download-attachment', ...tableFlags(tpl,
   '--record-id', recordId, '--file-token', att.file_token, '--output', dest, '--overwrite')]);
 
-const upload = (tpl, recordId, fieldId, files) => lark(['base', '+record-upload-attachment', ...tableFlags(tpl,
+const upload = (tpl, recordId, fieldId, files) => larkAsync(['base', '+record-upload-attachment', ...tableFlags(tpl,
   '--record-id', recordId, '--field-id', fieldId, ...files.flatMap((f) => ['--file', f]))]);
 
 // ─── 取值与命令组装 ───────────────────────────────────────────────────────
@@ -321,7 +334,7 @@ function unwrapLinkMarkup(value) {
 }
 
 /** 校验输入、下载附件、组装命令。返回 cmd 变量；校验不过则返回错误信息。 */
-function prepareInputs(ctx, recordId, recordDir, cells) {
+async function prepareInputs(ctx, recordId, recordDir, cells) {
   const { tpl, skillDir } = ctx;
   // 入口给绝对路径：Skill 进程的 cwd 是内容层根，不是 Skill 目录（见 spawnSkill 的说明）。
   const vars = { skill: { ...tpl.skill, entry: path.resolve(skillDir, tpl.skill.entry) } };
@@ -345,15 +358,15 @@ function prepareInputs(ctx, recordId, recordDir, cells) {
       fs.mkdirSync(dir, { recursive: true });
       const seen = new Map();
       if (!ctx.dryRun && atts.length) ctx.emit({ type: 'item-stage', record_id: recordId, stage: 'download' });
-      vars[inp.key] = atts.map((att) => {
+      // 同一行的多个附件一起下（Promise.all 保序），不同行之间也互不阻塞。
+      vars[inp.key] = await Promise.all(atts.map((att) => {
         const n = (seen.get(att.name) || 0) + 1;
         seen.set(att.name, n);
         const ext = path.extname(att.name);
         const name = n === 1 ? att.name : `${path.basename(att.name, ext)}-${n}${ext}`;
         const dest = path.join(dir, name);
-        if (!ctx.dryRun) download(tpl, recordId, att, dest);
-        return dest;
-      });
+        return ctx.dryRun ? dest : download(tpl, recordId, att, dest).then(() => dest);
+      }));
       continue;
     }
 
@@ -381,7 +394,7 @@ function prepareInputs(ctx, recordId, recordDir, cells) {
  * 附件类型的输出即产物——它只能靠上传文件写入，所以按类型判定，不需要额外标记。
  * 同一个解析式返回数组（一组文件）或字符串（单个文件）都可以。
  */
-function writeBack(ctx, item, stdout) {
+async function writeBack(ctx, item, stdout) {
   const { tpl, outputs } = ctx;
   const scalars = {};
   for (const o of outputs) {
@@ -396,18 +409,18 @@ function writeBack(ctx, item, stdout) {
     const files = [].concat(evalFrom(o.from, stdout));
     item.stage = 'writeback';
     ctx.emit({ type: 'item-stage', record_id: item.record_id, stage: 'writeback' });
-    updateRow(tpl, item.record_id, { [o.field_id]: null }); // 上传是追加语义，先清空
+    await updateRow(tpl, item.record_id, { [o.field_id]: null }); // 上传是追加语义，先清空
     item.stage = 'upload';
     ctx.emit({ type: 'item-stage', record_id: item.record_id, stage: 'upload' });
     for (let i = 0; i < files.length; i += UPLOAD_CHUNK) {
-      upload(tpl, item.record_id, o.field_id, files.slice(i, i + UPLOAD_CHUNK));
+      await upload(tpl, item.record_id, o.field_id, files.slice(i, i + UPLOAD_CHUNK));
     }
   }
 
   if (Object.keys(scalars).length) {
     item.stage = 'writeback';
     ctx.emit({ type: 'item-stage', record_id: item.record_id, stage: 'writeback' });
-    updateRow(tpl, item.record_id, scalars);
+    await updateRow(tpl, item.record_id, scalars);
   }
 }
 
@@ -466,7 +479,7 @@ async function runRow(ctx, row) {
   item.input_hash = fingerprintOf(ctx.inputs, cells);
 
   // 2) 校验输入并组装命令
-  const { vars, error } = prepareInputs(ctx, recordId, recordDir, cells);
+  const { vars, error } = await prepareInputs(ctx, recordId, recordDir, cells);
   if (error) return fail(error);
 
   item.stage = 'exec';
@@ -508,7 +521,7 @@ async function runRow(ctx, row) {
 
   // 4) 回写
   try {
-    writeBack(ctx, item, stdout);
+    await writeBack(ctx, item, stdout);
   } catch (err) {
     return { ...item, status: 'failed', error: err.message };
   }
@@ -630,23 +643,31 @@ async function runTemplate({
     emit,
   };
 
-  for (let index = 0; index < selected.rows.length; index++) {
-    const row = selected.rows[index];
-    const queued = run.items[index];
-    queued.status = 'running';
-    queued.stage = 'validate';
-    run.completed = index;
-    persist(run);
-    await emit({ type: 'item-started', record_id: row.record_id, item: queued, run });
+  // 行与行之间互不影响（每行读自己的单元格、写自己的记录、产物在自己的目录里），
+  // 所以可以并发：开 N 个 worker 抢同一个行号游标，跑完一行再领下一行。
+  const workers = Math.max(1, Math.min(runConcurrency(), selected.rows.length));
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= selected.rows.length) return;
+      const row = selected.rows[index];
+      const queued = run.items[index];
+      queued.status = 'running';
+      queued.stage = 'validate';
+      persist(run);
+      await emit({ type: 'item-started', record_id: row.record_id, item: queued, run });
 
-    const item = await runRow(ctx, row);
-    run.items[index] = item;
-    run.completed = index + 1;
-    run.succeeded = run.items.filter((entry) => entry.status === 'succeeded' || entry.status === 'dry-run').length;
-    run.failed = run.items.filter((entry) => entry.status === 'failed').length;
-    persist(run);
-    await emit({ type: 'item-finished', record_id: row.record_id, item, run });
-  }
+      const item = await runRow(ctx, row);
+      run.items[index] = item;
+      run.completed = run.items.filter((entry) => entry.status !== 'queued' && entry.status !== 'running').length;
+      run.succeeded = run.items.filter((entry) => entry.status === 'succeeded' || entry.status === 'dry-run').length;
+      run.failed = run.items.filter((entry) => entry.status === 'failed').length;
+      persist(run);
+      await emit({ type: 'item-finished', record_id: row.record_id, item, run });
+    }
+  };
+  await Promise.all(Array.from({ length: workers }, worker));
 
   run.status = finalStatus(run, selected.dryRun);
   run.finished_at = new Date().toISOString();

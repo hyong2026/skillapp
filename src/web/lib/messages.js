@@ -68,6 +68,7 @@ function messageRow(operation, { onCancel, onClose }) {
   const label = TYPE_LABELS[operation.type] || operation.type;
   const subject = operation.subject?.label || operation.subject?.id || '';
   const actions = h('div', { className: 'message-actions' });
+  let row = null;
 
   if (active) {
     const cancel = h('button', {
@@ -86,13 +87,13 @@ function messageRow(operation, { onCancel, onClose }) {
       'aria-label': `Dismiss ${label}`,
       onClick: (event) => {
         event.stopPropagation();
-        onClose(operation);
+        onClose(operation, row);
       },
     }, icon('close'));
     actions.append(close);
   }
 
-  const row = h('div', { className: 'message' }, [
+  row = h('div', { className: 'message' }, [
     h('div', { className: 'message-main' }, [
       h('div', { className: 'message-title' }, [
         h('span', { className: 'message-type', textContent: label }),
@@ -102,6 +103,7 @@ function messageRow(operation, { onCancel, onClose }) {
     ]),
     actions,
   ]);
+  row.dataset.operationId = operation.operation_id;
 
   // 跑完的任务：整行可点，直接进对应详情页（进行中的不给点，避免误跳）。
   const hash = active ? null : detailHash(operation);
@@ -122,21 +124,39 @@ function messageRow(operation, { onCancel, onClose }) {
 }
 
 function renderMessages(container, operations, handlers) {
+  // 渲染全部（不过滤成 3 条）：滚动区只露出最近 MAX_ROWS 条，其余往下滚。
   const visible = operations
     .filter((operation) => !dismissed.has(operation.operation_id))
-    .sort((a, b) => Number(ACTIVE.has(b.status)) - Number(ACTIVE.has(a.status)))
-    .slice(0, MAX_ROWS);
+    .sort((a, b) => Number(ACTIVE.has(b.status)) - Number(ACTIVE.has(a.status)));
 
   if (!visible.length) {
     container.replaceChildren();
     container.hidden = true;
     return;
   }
+  const rows = visible.map((operation) => messageRow(operation, handlers));
+  const list = h('div', { className: 'messages-list' }, rows);
+  // 整块是重画的，所以先把滚动位置接过来：删掉一条（或新推一条）后停在原处，不跳回顶部。
+  const previousScroll = container.querySelector('.messages-list')?.scrollTop ?? 0;
   container.hidden = false;
   container.replaceChildren(
-    h('div', { className: 'messages-head', textContent: 'Messages' }),
-    ...visible.map((operation) => messageRow(operation, handlers)),
+    h('div', { className: 'messages-head' }, [
+      h('span', { textContent: 'Messages' }),
+      h('button', {
+        className: 'messages-clear',
+        type: 'button',
+        textContent: 'Clear',
+        onClick: () => handlers.onClear(),
+      }),
+    ]),
+    list,
   );
+  // 可见高度 = 最近 MAX_ROWS 条的真实行高（字号/主题变了照样对），多出来的靠滚动条看。
+  const gap = 6;
+  const shown = rows.slice(0, MAX_ROWS);
+  list.style.maxHeight = `${shown.reduce((sum, row) => sum + row.offsetHeight, 0)
+    + gap * Math.max(0, shown.length - 1)}px`;
+  if (previousScroll) list.scrollTop = previousScroll;
 }
 
 /** 新的一条覆盖旧的同 ID 记录，并按创建时间倒序排好（服务端也是这个顺序）。 */
@@ -165,9 +185,20 @@ function initMessages() {
       }
       paint();
     },
-    onClose(operation) {
+    // 关掉一条 = 从 DOM 里删掉这一行，不重画列表，滚动位置自然保持。
+    onClose(operation, row) {
       dismiss(operation.operation_id);
-      paint();
+      row?.remove();
+      if (!container.querySelector('.message')) {
+        container.replaceChildren();
+        container.hidden = true;
+      }
+    },
+    // 一键清空：全部标记为已关闭（只影响本机面板），清掉列表即可，之后新来的照常出现。
+    onClear() {
+      for (const operation of operations) dismiss(operation.operation_id);
+      container.replaceChildren();
+      container.hidden = true;
     },
   };
   // 只有在流连不上、而且手上还没有任何数据时兜底拉一次，绝不是轮询。

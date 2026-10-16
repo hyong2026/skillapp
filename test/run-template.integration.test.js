@@ -48,6 +48,16 @@ function makeFixture(mode) {
   fs.writeFileSync(path.join(skillDir, 'entry.js'), mode === 'no-writeback'
     // 结果落在别处（例如输入里给的表格）的 Skill：不吐 JSON、也没有输出列
     ? 'process.stdout.write("done — the result is in the linked sheet\\n");\n'
+    // 并发场景：把「开始 / 结束」按行记进同一份时间线，用来判断两行是否重叠
+    : mode === 'concurrent'
+      ? `const fs = require('fs');\n`
+        + `const outdir = process.argv[process.argv.indexOf('-o') + 1];\n`
+        + `const record = outdir.split('/').slice(-2)[0];\n`
+        + `fs.appendFileSync(${JSON.stringify(path.join(root, 'timeline.log'))}, record + ' start ' + Date.now() + '\\n');\n`
+        + `setTimeout(() => {\n`
+        + `  fs.appendFileSync(${JSON.stringify(path.join(root, 'timeline.log'))}, record + ' end ' + Date.now() + '\\n');\n`
+        + `  process.stdout.write(JSON.stringify({ value: 'ok' }) + '\\n');\n`
+        + `}, 300);\n`
     // 报告自己看到的 cwd：用来钉住「Skill 子进程的 cwd = 内容层根」
     : mode === 'cwd'
       ? 'process.stdout.write(JSON.stringify({ value: process.cwd() }) + "\\n");\n'
@@ -96,6 +106,8 @@ function makeFixture(mode) {
 
   const rows = mode === 'pagination'
     ? Array.from({ length: 201 }, (_, i) => ({ record_id: `rec${i + 1}`, values: ['', '', ''] }))
+    : mode === 'concurrent'
+      ? ['rec1', 'rec2'].map((record_id) => ({ record_id, values: ['', '', ''] }))
     : [{ record_id: 'rec1', values: ['', LINK_CELL, ''] }];
 
   return { root, templatePath, fields: FIELDS, rows };
@@ -107,9 +119,18 @@ function fakeLarkSource(fields, rows) {
 
 const FIELDS = ${JSON.stringify(fields)};
 const rows = ${JSON.stringify(rows)};
-const state = { rows, listCalls: [], getCalls: 0, batchUpdates: 0, updates: [] };
+const state = { rows, listCalls: [], getCalls: 0, batchUpdates: 0, updates: [], asyncCalls: [] };
 
 exports.state = state;
+// 异步实现：回写故意慢一拍并记下窗口，用来证明按行调用真的走的是异步路径（不阻塞事件循环）。
+exports.larkAsync = async (args) => {
+  const cmd = args[1];
+  const started = Date.now();
+  if (cmd === '+record-batch-update') await new Promise((resolve) => setTimeout(resolve, 150));
+  const out = exports.lark(args);
+  state.asyncCalls.push({ cmd, started, ended: Date.now() });
+  return out;
+};
 exports.lark = (args) => {
   const cmd = args[1];
   const flag = (name) => { const i = args.indexOf(name); return i < 0 ? null : args[i + 1]; };
@@ -163,7 +184,7 @@ async function runWorker(mode) {
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
   process.argv = ['node', RUN_TEMPLATE, templatePath];
-  if (!['logs', 'no-writeback', 'cwd', 'unmapped-output'].includes(mode)) process.argv.push('--dry-run');
+  if (!['logs', 'no-writeback', 'cwd', 'unmapped-output', 'concurrent'].includes(mode)) process.argv.push('--dry-run');
   if (mode === 'incremental') process.argv.push('--incremental');
 
   let exitCode = null;
@@ -222,6 +243,7 @@ async function runWorker(mode) {
     getCalls: table.getCalls,
     batchUpdates: table.batchUpdates,
     updates: table.updates,
+    asyncCalls: table.asyncCalls,
     dataDir: process.env.SKILLAPP_DATA_DIR,
     runStatus,
     runItems,
@@ -230,6 +252,13 @@ async function runWorker(mode) {
     dryArgv: (stdout.find((line) => line.includes('argv: ')) || '').split('argv: ')[1] || null,
     noRows: stdout.some((line) => line.includes('没有符合条件的行')),
     finished: stdout.some((line) => line.includes('完成: 1 成功 / 0 失败')),
+    timeline: mode === 'concurrent'
+      ? fs.readFileSync(path.join(root, 'timeline.log'), 'utf8').trim().split('\n')
+        .map((line) => {
+          const [recordId, phase, at] = line.split(' ');
+          return { recordId, phase, at: Number(at) };
+        })
+      : null,
     logs,
     logReadError,
   }) + '\n');
@@ -243,10 +272,11 @@ if (process.argv.includes('--worker')) {
 } else {
   const { test } = await import('node:test');
 
-  const scenario = (mode) => {
+  const scenario = (mode, env = {}) => {
     const r = spawnSync(process.execPath, [import.meta.filename, '--worker', '--mode', mode], {
       encoding: 'utf8',
       timeout: 120000,
+      env: { ...process.env, ...env },
     });
     const line = (r.stdout || '').split('\n').find((candidate) => candidate.startsWith(MARKER));
     assert.ok(line, `worker 没有给出结果（exit=${r.status}）:\n${r.stdout}\n${r.stderr}`);
@@ -342,5 +372,34 @@ if (process.argv.includes('--worker')) {
     assert.equal(out.exitCode, 1, '应以退出码 1 结束');
     assert.match(out.errors.join('\n'), /Template is archived/);
     assert.equal(out.listCalls.length, 0, '不该读表');
+  });
+
+  test('并发：同一 Run 内按 SKILLAPP_RUN_CONCURRENCY 同时跑多行', () => {
+    // 技能脚本把每行的开始 / 结束时刻写进同一份时间线，两行区间重叠即为真并发。
+    const overlaps = (timeline) => {
+      const spans = new Map();
+      for (const { recordId, phase, at } of timeline) {
+        spans.set(recordId, { ...spans.get(recordId), [phase]: at });
+      }
+      const all = [...spans.values()];
+      return all.some((a, i) => all.some((b, j) => i !== j && a.start < b.end && b.start < a.end));
+    };
+
+    const serial = scenario('concurrent', { SKILLAPP_RUN_CONCURRENCY: '1' });
+    assert.equal(serial.exitCode, null, serial.errors.join('\n'));
+    assert.equal(serial.runStatus, 'completed');
+    assert.equal(serial.batchUpdates, 2, '两行各回写自己的记录');
+    assert.ok(!overlaps(serial.timeline), `并发数 1 时两行不该重叠：${JSON.stringify(serial.timeline)}`);
+
+    const parallel = scenario('concurrent', { SKILLAPP_RUN_CONCURRENCY: '2' });
+    assert.equal(parallel.exitCode, null, parallel.errors.join('\n'));
+    assert.equal(parallel.runStatus, 'completed');
+    assert.ok(overlaps(parallel.timeline), `并发数 2 时两行应重叠：${JSON.stringify(parallel.timeline)}`);
+
+    // 按行的飞书调用必须走异步实现，否则两条回写会前后排队（旧行为）。
+    const writes = parallel.asyncCalls.filter((call) => call.cmd === '+record-batch-update');
+    assert.equal(writes.length, 2, '两行的回写都该走 larkAsync');
+    assert.ok(writes[0].started < writes[1].ended && writes[1].started < writes[0].ended,
+      `两行的回写窗口应重叠：${JSON.stringify(writes)}`);
   });
 }

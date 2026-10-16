@@ -18,10 +18,15 @@ function splitViewHead(content) {
   return { head: nodes[index], nodes: nodes.filter((_, i) => i !== index) };
 }
 
-function renderViewContent(content) {
+/**
+ * `animate: false` 给会被 SSE 反复重画的视图用（Run 详情）：入场动画每次都重播的话，
+ * 页面会一遍遍变淡、平移 2px，看起来就是在抖。
+ */
+function renderViewContent(content, { animate = true } = {}) {
   const { head, nodes } = splitViewHead(content);
   if (head) viewHeadSlot().replaceChildren(head);
-  document.getElementById('app').replaceChildren(h('div', { className: 'view-body-inner' }, nodes));
+  const className = animate ? 'view-body-inner' : 'view-body-inner is-live';
+  document.getElementById('app').replaceChildren(h('div', { className }, nodes));
 }
 
 /**

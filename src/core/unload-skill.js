@@ -91,7 +91,7 @@ function planUnload(input = {}) {
     removals: unique.map((item) => ({ path: relative(item.path), kind: item.kind })),
     templates,
     runs: runs.map((item) => path.basename(item)),
-    feishu_columns_remain: !input.all,
+    lark_columns_remain: !input.all,
   };
   plan.plan_hash = hashPlan({ ...plan, removals: removePaths, runs: plan.runs.slice().sort() });
   return plan;

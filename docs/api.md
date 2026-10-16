@@ -61,7 +61,7 @@ GET    /api/settings
 }
 ```
 
-`/api/settings` 返回 `env_file`（`.env` 路径）、`runtime`（Node 版本、内容根、仓库根、是否需要令牌）、`editable`（白名单四项，带当前值与来源）和 `readonly`（`SKILLAPP_WEB_TOKEN` / `SKILLAPP_DATA_DIR` / `SKILLAPP_ROOT` / `SKILLAPP_LARK_MODULE`；secret 只返回是否已设置）。
+`/api/settings` 返回 `env_file`（`.env` 路径）、`runtime`（Node 版本、内容根、仓库根、是否需要令牌）、`editable`（白名单五项：分析器四项 + `SKILLAPP_RUN_CONCURRENCY`，带当前值与来源）和 `readonly`（`SKILLAPP_WEB_TOKEN` / `SKILLAPP_DATA_DIR` / `SKILLAPP_ROOT` / `SKILLAPP_LARK_MODULE`；secret 只返回是否已设置）。
 
 ### 写入
 
@@ -124,7 +124,7 @@ dry-run：只核对不执行。返回
 }
 ```
 
-需要飞书授权时返回 `424 LARK_AUTH_REQUIRED`，`action` 给出 `lark-cli auth login` 这类处置。
+需要飞书授权时返回 `424 LARK_AUTH_REQUIRED`，`action` 给出 `lark-cli auth login` 这类处置。图形控制台的 **Run** 在提交前会先调它一次（弹框里显示会影响多少行，`All Rows` 切换时重调）。
 
 ### `POST /api/runs`
 
@@ -139,7 +139,7 @@ dry-run：只核对不执行。返回
 
 ### `PUT /api/settings`
 
-只接受白名单键（`SKILLAPP_ANALYZE_COMMAND` / `_MODEL` / `_REASONING_EFFORT` / `_TIMEOUT_MS`），写入仓库根 `.env`（保留注释与行序）并立即生效；其余键只读返回。
+只接受白名单键（`SKILLAPP_ANALYZE_COMMAND` / `_MODEL` / `_REASONING_EFFORT` / `_TIMEOUT_MS` / `SKILLAPP_RUN_CONCURRENCY`），写入仓库根 `.env`（保留注释与行序）并立即生效；其余键只读返回。
 
 ## SSE
 

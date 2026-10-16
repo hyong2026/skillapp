@@ -3,9 +3,9 @@ import {
   dataPanel, dataTable, head, kv, mappingInputRows, mappingOutputRows, pagedTable, panel, section, togglePanel, viewTitle,
 } from '../lib/components.js';
 import { actionButton, fragment, h, icon, setNotice } from '../lib/dom.js';
-import { codeBlock, encoded, formatDate, statusBadge, triggerLabel } from '../lib/format.js';
-import { feishuBaseLink, hashLink, skillLink } from '../lib/links.js';
-import { openConfirmDialog, openMessageDialog } from '../lib/dialogs.js';
+import { codeBlock, encoded, formatDate, statusBadge } from '../lib/format.js';
+import { larkBaseLink, hashLink, skillLink } from '../lib/links.js';
+import { openConfirmDialog, openRunDialog } from '../lib/dialogs.js';
 import { render } from '../lib/router.js';
 
 function templateDefinitionPanel(template) {
@@ -70,71 +70,26 @@ async function templatesView() {
 }
 
 function runControl(template) {
-  const allRows = h('input', { type: 'checkbox' });
-  const allRowsField = h('label', { className: 'run-option' }, [
-    allRows,
-    h('span', { textContent: 'All Rows' }),
-  ]);
   const button = actionButton('Run', 'run', 'button primary');
-  const preview = actionButton('Preview', 'code', 'button');
-  const trigger = () => (allRows.checked ? 'all' : 'incremental');
-  // 只核对，不执行：把「会动哪些行、哪些列会被跳过」先弹给用户看。
-  preview.addEventListener('click', async () => {
-    preview.disabled = true;
-    setNotice('');
-    try {
-      const data = await api(`/api/templates/${encoded(template.template_id)}/preview`, {
-        method: 'POST',
-        body: { trigger: trigger() },
-      });
-      openMessageDialog({
-        title: 'Preview',
-        rows: [
-          ['Trigger', triggerLabel(data.trigger)],
-          ['Rows in table', String(data.total)],
-          ['Rows to process', String(data.selected)],
-          ['Feishu Base URL', feishuBaseLink(data.target)],
-        ],
-        hint: 'Dry run only - nothing runs, nothing is written back, no Run is recorded.',
-      });
-    } catch (error) {
-      openMessageDialog({ title: 'Preview failed', rows: [], hint: error.message });
-    } finally {
-      preview.disabled = false;
-    }
-  });
   // 归档即冻结：必须先解冻才跑。
   if (template.archived_at) {
-    allRows.disabled = true;
     button.disabled = true;
-    preview.disabled = true;
     button.title = 'Archived templates are frozen; unarchive to run';
-    preview.title = 'Archived templates are frozen; unarchive to run';
+    return button;
   }
+  // Run 之前先预览：弹框里给出「会影响多少行」，并让用户在这里决定要不要 All Rows；
+  // 确认后弹框自己提交 Run，成功后带回 Run 记录用于跳转。
   button.addEventListener('click', async () => {
     button.disabled = true;
     setNotice('');
     try {
-      const ok = !allRows.checked || await openConfirmDialog({
-        title: 'Run all rows',
-        message: 'Run every row and write the results back to the Feishu table?',
-        confirmText: 'Run',
-      });
-      if (!ok) return;
-      const run = await api('/api/runs', {
-        method: 'POST',
-        body: {
-          template_id: template.template_id,
-          trigger: allRows.checked ? 'all' : 'incremental',
-        },
-      });
-      location.hash = `runs/${encoded(run.run_id)}`;
-    } catch (error) {
-      setNotice(error.message, true);
+      const run = await openRunDialog({ templateId: template.template_id, target: template.target });
+      if (run) location.hash = `runs/${encoded(run.run_id)}`;
+    } finally {
       button.disabled = false;
     }
   });
-  return h('div', { className: 'run-actions' }, [allRowsField, preview, button]);
+  return button;
 }
 
 /** 归档 / 解冻：走一次持久化操作，Operations 里能查到。 */
@@ -192,7 +147,7 @@ async function templateView(id) {
       ...(archived ? [['Status', h('span', { className: 'badge archived', textContent: `Archived · ${formatDate(template.archived_at)}` })]] : []),
       ['Skill Name', skillLink(skill.path)],
       ['Skill Hash', h('span', { className: 'mono', textContent: skill.hash || '—' })],
-      ['Feishu Base URL', feishuBaseLink(target)],
+      ['Lark Base URL', larkBaseLink(target)],
       ['Created', formatDate(template.created_at)],
     ]))),
     templateDefinitionPanel(template),

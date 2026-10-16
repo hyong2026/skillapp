@@ -33,7 +33,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 | `src/core/template.js` | Template 身份（Skill + 目标表）与文件名、按目标定位、归档状态 |
 | `src/core/unload-skill.js` | 卸载影响清单、plan hash 和受控删除 |
 | `src/core/run-template.js` | Run 预检、选行、执行、回写、进度与状态 |
-| `src/core/lark.js` | `lark-cli` 封装（可注入替身，测试用） |
+| `src/core/lark.js` | `lark-cli` 封装：同步 `lark`（一次性调用）与异步 `larkAsync`（按行调用，不阻塞事件循环）；可注入替身，测试用 |
 | `src/core/settings.js` | 设置白名单，读写仓库根 `.env` |
 | `src/server/app.js` | HTTP API、SSE、鉴权、同源写保护和静态资源 |
 | `src/server/task-runner.js` | 启动 worker、资源锁、状态事件、全局操作订阅、取消和中断恢复 |
@@ -130,7 +130,7 @@ queued → running → completed | failed | canceled | interrupted
 
 - 部署形态：单实例、可信环境，默认只监听 `127.0.0.1`。
 - Skill 来源：本地 Skill 根目录的绝对路径。
-- 分析来源：由 `analyze-skill` 产出；默认通过 `codex exec` 调用，可用 `SKILLAPP_ANALYZE_COMMAND` 替换。
+- 分析来源：由 `analyze-skill` 产出；默认通过 `codex exec` 调用，可用 `SKILLAPP_ANALYZE_COMMAND` 替换。为了少花回合，prompt 里**内联**了规则、文件清单（排除 `node_modules`）与 SKILL.md，结果用 `-o`（`--output-last-message`）从"最后一条消息"收、由 SkillApp 自己落盘；同时用 `-c project_doc_max_bytes=0` 关掉仓库 AGENTS.md 注入。模型与推理强度决定每回合延迟，是 analyze 耗时的主要变量。
 - 飞书身份：全站共用一个 `lark-cli` 身份。
 - Template 保留在本机文件系统，界面可查看完整 JSON。
 
@@ -138,7 +138,7 @@ queued → running → completed | failed | canceled | interrupted
 
 刻意留着的缺口，不是遗漏：
 
-- **串行执行，没有并发。** 逐行处理，也没有租约机制。多机或并行要先解决"谁拥有这一行"。
+- **并发只在本机、只在一个 Run 内。** 同一批同时跑 `SKILLAPP_RUN_CONCURRENCY` 行（默认 4、上限 8），没有租约机制：多机或跨实例并行要先解决"谁拥有这一行"。
 - **失败行会被 `--incremental` 反复捞出**（它就是「最近一次没成功」）。要让某行退出待运行，只能修输入。
 - **`.data/runs/` 只增不减**，产物、日志都在里面，目前没有清理策略。
 - **`--incremental` 每次读取全部历史文件。** 内存只保留每行最近状态；行数上万后仍需索引。

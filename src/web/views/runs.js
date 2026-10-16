@@ -113,25 +113,35 @@ async function runView(runId) {
   const initial = await api(`/api/runs/${encoded(runId)}`);
   const liveLogs = new Map();
   let currentRun = initial;
-  const refresh = (run) => {
+  let queued = false;
+  const refresh = (run, { animate = false } = {}) => {
     currentRun = run;
     // The run view repaints itself on every stream event, so it renders
     // directly and returns nothing for `render()` to place.
-    renderViewContent(runContent(runId, run, liveLogs));
+    renderViewContent(runContent(runId, run, liveLogs), { animate });
   };
-  refresh(initial);
+  // 日志是按块推的：合并成一帧一次重画，别让页面每秒重画几十次。
+  const refreshSoon = () => {
+    if (queued) return;
+    queued = true;
+    setTimeout(() => {
+      queued = false;
+      refresh(currentRun);
+    }, 120);
+  };
+  refresh(initial, { animate: true });
   watchRun(runId, (event) => {
     if (event.type === 'item-stage') {
       const item = (currentRun.items || []).find((entry) => entry.record_id === event.record_id);
       if (item) item.stage = event.stage;
-      refresh(currentRun);
+      refreshSoon();
       return;
     }
     if (event.type === 'item-log') {
       const streams = liveLogs.get(event.record_id) || { stdout: '', stderr: '' };
       streams[event.stream] = `${streams[event.stream]}${event.chunk}`.slice(-24000);
       liveLogs.set(event.record_id, streams);
-      refresh(currentRun);
+      refreshSoon();
       return;
     }
     if (event.run) refresh(event.run);

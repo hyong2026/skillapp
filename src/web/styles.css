@@ -247,13 +247,38 @@ button { cursor: pointer; }
   flex: 0 0 auto;
   display: grid;
   gap: 6px;
-  max-height: 44vh;
   padding-top: 12px;
-  overflow-y: auto;
   border-top: 1px solid var(--line);
 }
 .messages[hidden] { display: none; }
-.messages-head { color: var(--muted-2); font: 600 var(--text-2xs)/1.4 var(--font-mono); letter-spacing: .08em; text-transform: capitalize; }
+.messages-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted-2);
+  font: 600 var(--text-2xs)/1.4 var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: capitalize;
+}
+/* 「清空」只在鼠标移入（或键盘焦点进来）时露出，平时不占视觉。 */
+.messages-clear {
+  visibility: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-2);
+  font: inherit;
+  letter-spacing: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.messages:hover .messages-clear,
+.messages:focus-within .messages-clear { visibility: visible; }
+.messages-clear:hover { color: var(--accent); }
+/* 只露出最近三条，其余靠这条滚动条看（高度由 messages.js 按真实行高算）。 */
+.messages-list { display: grid; gap: 6px; overflow-y: auto; }
 .message {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -303,6 +328,8 @@ button { cursor: pointer; }
   padding: 0 24px 72px;
   animation: enter 180ms ease-out both;
 }
+/* Run 详情这种"被 SSE 反复重画"的视图不重播入场动画，否则每次重画都闪一下。 */
+.view-body-inner.is-live { animation: none; }
 /* Floating banner: never participates in layout, so showing it cannot shift
    the page (and therefore cannot move the scrollbar). */
 .notice {
@@ -758,6 +785,9 @@ pre {
 .modal-head h2 { margin: 0; font-size: var(--text-lg); }
 .modal-form { padding: 16px; }
 .modal-field { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: 12px; }
+/* 输入弹框（Load / Bind）：标签在输入框上方，输入框撑满弹框宽度。
+   消息弹框用的是 div.modal-field，仍是「左标签右值」两栏。 */
+label.modal-field { grid-template-columns: minmax(0, 1fr); gap: 5px; }
 .modal-field input {
   width: 100%;
   min-height: 40px;
@@ -772,6 +802,12 @@ pre {
 .modal-value { color: var(--text); overflow-wrap: anywhere; }
 .modal-text { margin: 0; color: var(--text); font-size: var(--text-xs); line-height: 1.6; }
 .modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+/* Run 弹框：`All Rows` 勾选框占左下角，按钮留在右下角。 */
+.modal-actions-option { margin-right: auto; }
+/* Run 弹框的摘要：值可能是多行（Lark Base URL 整段换行），标签与首行对齐更整齐；
+   空着的报错行不占高度（不留一条死白）。 */
+.modal-summary .modal-field { align-items: baseline; }
+.modal-error:empty { display: none; }
 .modal-hint {
   display: inline-flex;
   align-items: center;

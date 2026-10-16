@@ -117,7 +117,7 @@ Mapping 的每个输入 / 输出都可以标 `mapped: false`：**不建列、不
 
 已知边界（刻意留着，不是遗漏）完整清单见 [docs/architecture.md](docs/architecture.md#已知边界)，要点：
 
-- 串行执行、没有并发；`--incremental` 会反复捞出失败行；`.data/runs/` 只增不减。
+- 同一 Run 内按 `SKILLAPP_RUN_CONCURRENCY` 并发（默认 4、上限 8），跨实例无租约；`--incremental` 会反复捞出失败行；`.data/runs/` 只增不减。
 - 一张表（含视图）一份 Template；Template 不进 Git，克隆后无法还原。
 - 只支持 **JSON stdout** 的 Skill，且必须有可执行入口。
 

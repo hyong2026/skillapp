@@ -92,7 +92,10 @@ SKILLAPP_ANALYZE_COMMAND=codex          # 默认 codex
 SKILLAPP_ANALYZE_MODEL=<model>          # 可选，留空用命令自带默认
 SKILLAPP_ANALYZE_REASONING_EFFORT=low   # low / medium / high
 SKILLAPP_ANALYZE_TIMEOUT_MS=900000      # 默认 15 分钟
-SKILLAPP_ANALYZE_ARGS='[]'              # 高级：完全自定义分析器参数（JSON 数组）
+SKILLAPP_ANALYZE_ARGS='[]'              # 高级：完全自定义分析器参数（JSON 数组）；一旦设置，默认参数（含 -o 收结果、project_doc_max_bytes=0）全部失效，分析器需自己写出 mapping 文件
+
+# 执行（Run）
+SKILLAPP_RUN_CONCURRENCY=4              # 同一 Run 内同时跑几行，默认 4、上限 8；改完即时生效
 
 # 内容层与依赖
 SKILLAPP_ROOT=<dir>                     # 内容根，默认仓库根
@@ -100,7 +103,7 @@ SKILLAPP_DATA_DIR=<dir>                 # 内容目录，默认 <root>/.data
 SKILLAPP_LARK_MODULE=<path>             # 替换 lark 实现（测试用）
 ```
 
-图形控制台提供了这套配置的 HTTP 接口（白名单：`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`，写入仓库根 `.env` 并立即生效）；页面上的 **Settings** 目前只展示运行信息，见 [gui.md](gui.md#settings) 与 [api.md](api.md)。
+图形控制台提供了这套配置的 HTTP 接口（白名单：`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS` 与 `SKILLAPP_RUN_CONCURRENCY`，写入仓库根 `.env` 并立即生效）；页面上的 **Settings** 目前只展示运行信息，见 [gui.md](gui.md#settings) 与 [api.md](api.md)。
 
 ## 做同一件事的三种入口
 

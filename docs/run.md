@@ -34,6 +34,15 @@
 | `{key...}` | 展开成多个位置参数（一组文件） |
 | `{--flag key}` | 成对参数；值为空或该列已被删除时**整对省略** |
 
+## 并发
+
+同一 Run 内默认**同时跑 4 行**：开 N 个 worker 抢同一个行号游标，一行跑完再领下一行。
+
+- 并发数来自 `SKILLAPP_RUN_CONCURRENCY`（`.env`，或 `PUT /api/settings`；默认 4，上限 8），**每次 Run 开始时读取**：走 Settings 接口改，下一个 Run 就生效（手改 `.env` 仍需重启服务）。
+- 行与行之间没有共享状态：各读自己的单元格、各写自己的记录、产物在自己的 `<record_id>/artifacts/` 里；附件列也是"清自己那一格再上传"，所以不会互踩。
+- 飞书调用分两类：**按行**发生的（下载附件、回写、上传）走异步的 `larkAsync`，所以表 IO 也并行；**整表只做一次**的（`record-list`、`preflight` 的 `field-list`）走同步的 `lark`，在行开跑之前就做完了。同一行的多个附件也是一起下（`Promise.all`）。
+- 进度按完成数递增（`run.completed`），`item-started` / `item-finished` 事件会交错推送，行序仍按表格顺序落在 `run.json`。
+
 ## 写回
 
 - 标量输出：按 `from` 表达式（只支持 `stdout.xxx`，可带 `/ 1024` 这类除法）取值后一次性 `record-batch-update`。
@@ -126,3 +135,5 @@
 ## 预览（dry-run）
 
 `POST /api/templates/:id/preview` 与 `--dry-run` 只核对：会处理哪些行、共几行、哪些绑定列在表里已经找不到（`dropped`）、目标表是谁。不执行、不回写、不产生 Run。
+
+图形控制台的 **Run** 走的就是这条路：点 Run 先预览一次，弹框固定列出 `Lark Base URL / Trigger / Rows in table / Rows to process`（未加载出来时是 `—`，高度一开始就固定），`All Rows` 勾选也在弹框里、切换即重新预览（只刷新 Trigger 与行数），确认后再提交真正的 Run。
