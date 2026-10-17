@@ -21,6 +21,7 @@ const TASK_TYPES = new Set([
   'unload-skill',
   'archive-template',
   'unarchive-template',
+  'delete-run',
 ]);
 const TERMINAL_OPERATION_STATUSES = new Set(['completed', 'failed', 'canceled', 'interrupted']);
 
@@ -57,6 +58,7 @@ function summaryOfRun(run) {
     finished_at: run.finished_at || null,
     skill_hash: run.skill_hash || null,
     work_hash: run.work_hash || null,
+    deleted_at: run.deleted_at || null,
     total: run.total ?? items.length,
     completed: run.completed ?? items.filter((item) => item.status !== 'queued' && item.status !== 'running').length,
     succeeded: run.succeeded ?? items.filter((item) => item.status === 'succeeded').length,
@@ -376,6 +378,12 @@ class TaskRunner {
     if (job.done) return;
     job.done = true;
     this.releaseLocks(job.job.operation_id);
+    // delete-run 改的是磁盘上的 run.json：内存里那份 job 也要跟着标记，
+    // 否则它会以"没删过"的样子继续出现在列表里。
+    if (job.job.type === 'delete-run' && result?.run_id) {
+      const target = this.jobs.get(result.run_id);
+      if (target) target.run.deleted_at = result.deleted_at || new Date().toISOString();
+    }
     Object.assign(job.job, { status: 'completed', result, finished_at: new Date().toISOString(), error: null });
     this.persistOperation(job);
     this.emitOperation(job, { type: 'snapshot', operation: job.job });
@@ -432,9 +440,11 @@ class TaskRunner {
     return job.job;
   }
 
-  listRuns() {
-    const byId = new Map(this.model.listRuns().map((run) => [run.run_id, run]));
+  listRuns({ includeDeleted = false } = {}) {
+    const byId = new Map(this.model.listRuns({ includeDeleted }).map((run) => [run.run_id, run]));
     for (const job of this.jobs.values()) {
+      // 内存里的 job 都是本次进程起过/看过的 Run，逻辑删除过的就不再列出来。
+      if (!includeDeleted && job.run.deleted_at) continue;
       byId.set(job.run.run_id, summaryOfRun(job.run));
     }
     return [...byId.values()].sort((a, b) => String(b.started_at || b.run_id).localeCompare(String(a.started_at || a.run_id)));

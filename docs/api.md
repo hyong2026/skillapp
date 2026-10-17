@@ -35,20 +35,37 @@
 
 ```text
 GET    /api/status
-GET    /api/skills
+GET    /api/skills[?page=1]                     # 列表都是服务端分页，见下
 GET    /api/skills/:ref
-GET    /api/templates[?include_archived=1]      # include_archived=1 连归档一起返回
+GET    /api/templates[?page=1][&include_archived=1]   # include_archived=1 连归档一起返回
 GET    /api/templates/:id                       # id 可用 template_id 或文件名（Template Name）
-GET    /api/runs
+GET    /api/runs[?page=1][&trigger=incremental][&include_deleted=1]  # trigger 服务端过滤；逻辑删除的默认不列
 GET    /api/runs/:id
 GET    /api/runs/:id/events                     # SSE
 GET    /api/runs/:id/items/:recordId
 GET    /api/runs/:id/artifacts/:recordId/:file
-GET    /api/operations
+GET    /api/operations[?page=1][&type=bind-table]     # type 在服务端过滤
 GET    /api/operations/events                   # SSE：全局操作流
 GET    /api/operations/:operation_id
 GET    /api/operations/:operation_id/events     # SSE：单条操作的进度流
 GET    /api/settings
+```
+
+列表接口（`/api/skills`、`/api/templates`、`/api/runs`、`/api/operations`）都是服务端分页，
+每次只返回当前这一页；只有 `?page=` 一个参数，页长由服务端的 `SKILLAPP_PAGE_SIZE` 决定
+（默认 10，上限 200）。页号越界会夹到最后一页，不会给空页：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [],
+    "total": 85,
+    "page": 1,
+    "page_size": 10
+  },
+  "error": null
+}
 ```
 
 `/api/status` 只给计数（运行信息在 `/api/settings`）：
@@ -61,7 +78,7 @@ GET    /api/settings
 }
 ```
 
-`/api/settings` 返回 `env_file`（`.env` 路径）、`runtime`（Node 版本、内容根、仓库根、是否需要令牌）、`editable`（白名单五项：分析器四项 + `SKILLAPP_RUN_CONCURRENCY`，带当前值与来源）和 `readonly`（`SKILLAPP_WEB_TOKEN` / `SKILLAPP_DATA_DIR` / `SKILLAPP_ROOT` / `SKILLAPP_LARK_MODULE`；secret 只返回是否已设置）。
+`/api/settings` 返回 `env_file`（`.env` 路径）、`runtime`（Node 版本、内容根、仓库根、是否需要令牌）、`editable`（白名单六项：分析器四项 + `SKILLAPP_RUN_CONCURRENCY` + `SKILLAPP_PAGE_SIZE`，带当前值与来源）和 `readonly`（`SKILLAPP_WEB_TOKEN` / `SKILLAPP_DATA_DIR` / `SKILLAPP_ROOT` / `SKILLAPP_LARK_MODULE`；secret 只返回是否已设置）。
 
 ### 写入
 
@@ -75,6 +92,7 @@ DELETE /api/skills/:ref[?with_runs=1]   {}         # 默认只删副本 + IO Sch
 POST   /api/runs                        { template_id, trigger }
 POST   /api/runs/:id/cancel             {}
 POST   /api/runs/:id/retry              {}
+DELETE /api/runs/:id                    {}         # 逻辑删除这次 Run（写 deleted_at，文件保留）；正在跑的要先 cancel
 
 POST   /api/templates/:id/preview       { trigger }
 POST   /api/templates/:id/archive       {}

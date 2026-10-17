@@ -47,7 +47,10 @@ function loadingPanel(title, message, bodyClass = '') {
 }
 
 function dataPanel(body) {
-  return panel(null, body);
+  // 列表页的面板：按页面剩余高度自适应（表格自己滚、翻页条钉底），见 styles.css 的 .panel-fill。
+  const section = panel(null, body);
+  section.classList.add('panel-fill');
+  return section;
 }
 
 function head(title, description = '', actions = null) {
@@ -79,6 +82,81 @@ function viewTitle(title, crumbs = null) {
 
 function empty(message) {
   return h('div', { className: 'empty', textContent: message });
+}
+
+/**
+ * 下拉筛选：原生 <select> 的浮层由系统绘制，macOS 上宽度和分组样式都不受控
+ * （浮层总是比控件宽）。所以这里自绘浮层：宽度与控件一致，选项按业务对象分组。
+ * `groups` 形如 [{ label: 'Skill', values: ['load-skill', ...] }]；label 可省略（平铺不分组）。
+ * `any` 是"全部"那一项的文案。
+ */
+function selectMenu({ label, any = 'All Types', value = '', groups = [], onChange }) {
+  const wrapper = h('div', { className: 'select-menu' });
+  const shown = h('span', { className: 'truncate' });
+  const trigger = h('button', {
+    className: 'select-trigger',
+    type: 'button',
+    'aria-haspopup': 'menu',
+    'aria-expanded': 'false',
+    'aria-label': label,
+  }, [shown, icon('chevron')]);
+  const popup = h('div', { className: 'select-popup', role: 'menu', 'aria-label': label, hidden: true });
+  const options = [];
+
+  const setOpen = (open) => {
+    popup.hidden = !open;
+    trigger.setAttribute('aria-expanded', String(open));
+    document[open ? 'addEventListener' : 'removeEventListener']('pointerdown', onOutside, true);
+    if (open) popup.querySelector('[aria-checked="true"]')?.focus();
+  };
+  function onOutside(event) {
+    if (!wrapper.contains(event.target)) setOpen(false);
+  }
+
+  const addOption = (optionValue, text) => {
+    const option = h('button', {
+      className: 'select-option',
+      type: 'button',
+      role: 'menuitemradio',
+      'aria-checked': String(optionValue === value),
+      textContent: text,
+      onClick: () => {
+        for (const item of options) item.setAttribute('aria-checked', String(item === option));
+        shown.textContent = text;
+        setOpen(false);
+        trigger.focus();
+        onChange(optionValue);
+      },
+    });
+    options.push(option);
+    if (optionValue === value) shown.textContent = text;
+    return option;
+  };
+
+  popup.append(addOption('', any));
+  for (const group of groups) {
+    if (!group.values.length) continue;
+    // 没有领域分组的筛选（比如 Trigger）不画组标题，直接平铺。
+    if (group.label) popup.append(h('div', { className: 'select-group', role: 'presentation', textContent: group.label }));
+    for (const item of group.values) popup.append(addOption(item, item));
+  }
+
+  trigger.addEventListener('click', () => setOpen(popup.hidden));
+  popup.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      setOpen(false);
+      trigger.focus();
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    const index = options.indexOf(document.activeElement);
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    options[(index + step + options.length) % options.length].focus();
+  });
+
+  wrapper.append(trigger, popup);
+  return wrapper;
 }
 
 function kv(entries) {
@@ -123,81 +201,97 @@ function dataTable(headers, rows, label = 'Data Table', className = null) {
   return wrap;
 }
 
+// 页号只在当前模块内有效：切到别的模块由 router 调 resetPagedState() 清空，不跨模块、也不跨刷新。
+const pageState = {};
+
+function resetPagedState() {
+  for (const key of Object.keys(pageState)) delete pageState[key];
+}
+
+function rememberedPage(label) {
+  return Math.max(1, Number(pageState[label]) || 1);
+}
+
 /**
- * 分页列表：传统翻页（Prev / Next），每页 pageSize 条，默认看第 1 页（最新的在前）。
- * 只有一页时不画翻页条。数据本来就在本地，翻页只重画这张表，不再请求服务端。
+ * 服务端分页列表：每次只取当前这一页，`load(page)` 由调用方去请求（返回 `{ rows, total, page, page_size }`）。
+ * 首屏由视图 `await`，所以页面不会出现空表；翻页时保留旧数据、箭头禁用，表格不重排。
+ * `page` 可选：传了就从这一页开始（比如换了筛选条件要回到第 1 页），不传就用当前模块记住的页号。
  */
-const PAGE_STATE_KEY = 'skillapp.pages';
-
-function readPageState() {
-  try {
-    return JSON.parse(sessionStorage.getItem(PAGE_STATE_KEY) || '{}');
-  } catch {
-    return {};
-  }
-}
-
-// 每个列表记住自己翻到第几页：重画、来回切页面都还在那一页（刷新也保留）。
-const pageState = readPageState();
-
-function rememberPage(key, page) {
-  pageState[key] = page;
-  try {
-    sessionStorage.setItem(PAGE_STATE_KEY, JSON.stringify(pageState));
-  } catch {
-    // 隐私模式下写不了就算了，本次会话内仍然生效。
-  }
-}
-
-function pagedTable(headers, rows, { pageSize = 10, label = 'Data Table' } = {}) {
+async function pagedTable({ label = 'Data Table', headers, load, page = rememberedPage(label) }) {
   const slot = h('div');
-  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
-  // 记住的页号可能已经越界（列表变短了），夹回合法范围。
-  let page = Math.min(Math.max(1, Number(pageState[label]) || 1), pages);
+  const meta = h('span', { className: 'pager-meta' });
+  const pagerPage = h('span', { className: 'pager-page' });
+  const pagerGroup = h('div', { className: 'pager-group', role: 'group' });
+  const prev = h('button', {
+    className: 'icon-button',
+    type: 'button',
+    'aria-label': 'Previous page',
+    title: 'Previous page',
+  }, icon('prev'));
+  const next = h('button', {
+    className: 'icon-button',
+    type: 'button',
+    'aria-label': 'Next page',
+    title: 'Next page',
+  }, icon('next'));
+  pagerGroup.append(prev, pagerPage, next);
+  const pager = h('div', { className: 'table-pager' }, [meta, pagerGroup]);
 
-  const paint = () => {
-    const start = (page - 1) * pageSize;
-    // 只有列表自带滚动条与锁定表头；键盘要能滚，所以这里才需要可聚焦。
-    const list = dataTable(headers, rows.slice(start, start + pageSize), label);
-    list.classList.add('is-scrolling');
-    list.tabIndex = 0;
-    const children = [list];
+  let current = page;
+  let pages = 1;
+  let busy = false;
+  let list = null;
 
-    if (pages > 1) {
-      // 页码与翻页合成一个控件：两个箭头按钮夹着静止的页码，跟着列表左对齐的总数。
-      const prev = h('button', {
-        className: 'icon-button',
-        type: 'button',
-        'aria-label': 'Previous page',
-        title: 'Previous page',
-        onClick: () => { if (page > 1) { page -= 1; paint(); } },
-      }, icon('prev'));
-      const next = h('button', {
-        className: 'icon-button',
-        type: 'button',
-        'aria-label': 'Next page',
-        title: 'Next page',
-        onClick: () => { if (page < pages) { page += 1; paint(); } },
-      }, icon('next'));
-      prev.disabled = page <= 1;
-      next.disabled = page >= pages;
-      children.push(h('div', { className: 'table-pager' }, [
-        h('span', { className: 'pager-total', textContent: `${rows.length} total` }),
-        h('div', { className: 'pager-group', role: 'group', 'aria-label': `Page ${page} of ${pages}` }, [
-          prev,
-          h('span', { className: 'pager-page', textContent: `${page} / ${pages}` }),
-          next,
-        ]),
-      ]));
-    }
-
-    rememberPage(label, page);
-    // 注意：不能把 null 直接塞给 replaceChildren（会渲染成字面量 "null"）。
-    slot.replaceChildren(...children.filter(Boolean));
+  const sync = () => {
+    prev.disabled = busy || current <= 1;
+    next.disabled = busy || current >= pages;
+    pagerPage.textContent = `${current} / ${pages}`;
+    pagerGroup.setAttribute('aria-label', `Page ${current} of ${pages}`);
   };
 
-  paint();
+  const turn = async (target) => {
+    busy = true;
+    sync();
+    try {
+      const data = await load(target);
+      current = data.page;
+      pages = Math.max(1, Math.ceil(data.total / data.page_size));
+      // 左边一行：记录总数 + 竖线 + 每页条数（页长由服务端给，改了 Settings 下次取页就变）。
+      meta.replaceChildren(
+        'Total ',
+        h('b', { textContent: String(data.total) }),
+        h('span', { className: 'pager-size' }, ['Size ', h('b', { textContent: String(data.page_size) })]),
+      );
+      rememberPage(label, current);
+      const nextList = dataTable(headers, data.rows, label);
+      // 只有列表自带滚动条与锁定表头；键盘要能滚，所以这里才需要可聚焦。
+      nextList.classList.add('is-scrolling');
+      nextList.tabIndex = 0;
+      list?.remove();
+      list = nextList;
+      slot.replaceChildren(list, pager);
+    } finally {
+      busy = false;
+      sync();
+    }
+  };
+
+  const step = (delta) => {
+    const target = current + delta;
+    if (busy || target < 1 || target > pages) return;
+    // 翻页失败只提示，不把已经看到的这一页清空。
+    turn(target).catch((error) => setNotice(error.message, true));
+  };
+  prev.addEventListener('click', () => step(-1));
+  next.addEventListener('click', () => step(1));
+
+  // 首屏失败交给调用方（视图 → 路由器）去报错。
+  await turn(current);
   return slot;
+}
+
+function rememberPage(label, page) {
+  pageState[label] = page;
 }
 
 function editableText(value, onCommit, label = 'Field name') {
@@ -484,13 +578,14 @@ export {
   loadingPanel,
   dataPanel,
   head,
-  breadcrumb,
   viewTitle,
   empty,
   kv,
   section,
   dataTable,
   pagedTable,
+  resetPagedState,
+  selectMenu,
   editableSchemaTable,
   mappingInputRows,
   mappingOutputRows,

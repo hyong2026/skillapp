@@ -25,7 +25,7 @@
   --text: #e8eef7;
   --text-strong: #f8fafc;
   --muted: #94a3b8;
-  /* 面包屑 / Messages 标题 / Subject 前缀都用它，小字要过 AA（对最亮的面板也要 ≥4.5）。 */
+  /* 面包屑 / Messages 标题 / Subject 图标都用它，小字要过 AA（对最亮的面板也要 ≥4.5）。 */
   --muted-2: #78879a;
   --line: #24324a;
   --line-strong: #334155;
@@ -63,7 +63,6 @@
   --row-hover: rgba(22, 34, 56, .72);
   --badge-bg: rgba(27, 42, 67, .5);
   --empty-bg: rgba(22, 34, 56, .22);
-  --skeleton-shine: rgba(255, 255, 255, .045);
   --backdrop: rgba(2, 6, 23, .72);
   --code-bg: #080e19;
   --code-border: #22314a;
@@ -102,7 +101,7 @@
   --text: #1e293b;
   --text-strong: #0f172a;
   --muted: #64748b;
-  /* 面包屑 / Messages 标题 / Subject 前缀都用它，必须过 AA（对最浅的表面也要 ≥4.5）。 */
+  /* 面包屑 / Messages 标题 / Subject 图标都用它，必须过 AA（对最浅的表面也要 ≥4.5）。 */
   --muted-2: #65717e;
   --line: #e2e8f0;
   --line-strong: #cbd5e1;
@@ -139,7 +138,6 @@
   --row-hover: rgba(226, 232, 240, .6);
   --badge-bg: rgba(226, 232, 240, .6);
   --empty-bg: rgba(226, 232, 240, .4);
-  --skeleton-shine: rgba(15, 23, 42, .05);
   --backdrop: rgba(15, 23, 42, .45);
   --code-bg: #f1f5f9;
   --code-border: #e2e8f0;
@@ -318,16 +316,29 @@ button { cursor: pointer; }
   min-height: 0;
   overflow-y: auto;
   /* 关掉首尾的弹性回弹（macOS/触控板那种"滚一下又弹回去"的手感）以及滚动链，
-     滚到顶/底就停住。 */
+    滚到顶/底就停住。 */
   overscroll-behavior: none;
   scrollbar-gutter: stable both-edges;
+  /* 让视图内容撑满滚动区：列表面板才有"剩余高度"可以吃（内容更高的页面照旧整页滚）。 */
+  display: flex;
+  flex-direction: column;
 }
 .view-body-inner {
   width: min(1240px, 100%);
   margin: 0 auto;
   padding: 0 24px 72px;
   animation: enter 180ms ease-out both;
+  /* 撑满可视区（含内边距，border-box）：这样列表面板能按页面高度自适应，
+     多面板的页面照旧按内容高度排（子项不收缩、不拉伸）。 */
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
 }
+.view-body-inner > * { flex: 0 0 auto; }
+/* 列表页不要再叠加页面级底边距：面板自己带一档 24px（与左右内边距同档），
+   这样表格能一直撑到贴近页面底部。min-height: 0 是关键：否则弹性的最小内容高度
+   会把容器顶高几像素，列表页凭空多出一条整页滚动条。 */
+.view-body-inner:has(.panel-fill) { padding-bottom: 0; min-height: 0; }
 /* Run 详情这种"被 SSE 反复重画"的视图不重播入场动画，否则每次重画都闪一下。 */
 .view-body-inner.is-live { animation: none; }
 /* Floating banner: never participates in layout, so showing it cannot shift
@@ -512,19 +523,73 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 }
 .run-option input { width: 15px; height: 15px; accent-color: var(--accent); }
 
-/* Operations subject cell: icon + type label + link */
+/* 列表页头部的下拉筛选（目前只有 Operations 的 Type）。
+   自绘触发按钮 + 浮层：浮层左右与控件对齐（同宽），选项按业务对象分组。 */
+.select-menu { position: relative; display: inline-flex; }
+.select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  /* 容得下最长的选项（unarchive-template），所以浮层不会比控件宽。 */
+  min-width: 190px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: var(--text-xs);
+  transition: border-color 180ms ease, color 180ms ease;
+}
+.select-trigger:hover, .select-trigger[aria-expanded="true"] { border-color: var(--line-strong); color: var(--text-strong); }
+.select-trigger:focus-visible { border-color: var(--accent); outline: none; }
+.select-trigger .icon { flex: none; width: 12px; height: 12px; color: var(--muted-2); }
+.select-trigger .truncate { min-width: 0; }
+.select-trigger:hover .icon { color: var(--muted); }
+.select-popup {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+.select-popup[hidden] { display: none; }
+.select-group {
+  padding: 8px 8px 4px;
+  color: var(--muted-2);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: .08em;
+}
+.select-group:not(:first-child) { margin-top: 4px; border-top: 1px solid var(--line); }
+.select-option {
+  display: block;
+  width: 100%;
+  padding: 7px 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-xs);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-option:hover, .select-option:focus-visible { background: var(--surface-3); color: var(--text-strong); outline: none; }
+.select-option[aria-checked="true"] { background: var(--accent-soft); color: var(--success-text); font-weight: 600; }
+
+/* Operations subject cell: type icon + link */
 .subject { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-width: 0; color: var(--text); }
 .subject:hover { color: var(--accent); text-decoration: none; }
 .subject-icon { flex: none; width: 15px; height: 15px; color: var(--muted-2); }
 .subject:hover .subject-icon { color: var(--accent); }
-.subject:hover .subject-type { color: var(--accent); }
-.subject-type {
-  flex: none;
-  color: var(--muted-2);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  /* 保持文案本身的大小写（Run / Template / Skill），不强制全大写。 */
-}
 
 .progress { display: inline-block; width: min(360px, 100%); height: 7px; overflow: hidden; border-radius: 999px; background: var(--surface-3); vertical-align: middle; }
 .progress-bar { height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
@@ -546,12 +611,27 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 .table-wrap { max-width: 100%; }
 /* 只有分页列表自己做纵向滚动（表头才需要 sticky 锁住）；其余表格跟随页面滚动。 */
 .table-wrap.is-scrolling {
-  max-height: 70vh;
   overflow-y: auto;
   overflow-x: auto;
-  overscroll-behavior-x: contain;
   scrollbar-color: var(--line-strong) transparent;
 }
+/* 内部滚动容器横向 + 纵向都关掉"弹性回弹"：macOS 上滚到头再滚，内容会先位移再弹回，
+   粘在顶部的表头（sticky）会跟着一起晃。这里必须用 none —— contain 只挡滚动链，
+   本地的回弹效果照样会出现。 */
+.table-wrap.is-scrolling,
+.sidebar,
+.messages-list,
+pre { overscroll-behavior: none; }
+
+/* 列表页：面板（以及 Operations / Templates 包在外面那层重画容器）吃掉页面剩余高度，
+   表体自己滚动（表头 sticky），翻页条钉在面板底部。高度完全跟着窗口走，
+   短窗口也不会把表压没（min-height 兜底，真要更矮就整页滚）。 */
+.panel-slot, .panel-fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* 列表面板的底边距单独定一档（页面级底边距已去掉），保证"撑满到接近页面底部"。 */
+.panel-fill { margin-bottom: 24px; }
+.panel-fill > .panel-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.panel-fill > .panel-body > div { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.panel-fill .table-wrap.is-scrolling { flex: 1 1 auto; min-height: 140px; }
 .table-pager {
   display: flex;
   align-items: center;
@@ -560,7 +640,12 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
   padding: 8px 16px;
   border-top: 1px solid var(--line);
 }
-.pager-total { color: var(--muted-2); font: 600 var(--text-2xs)/1 var(--font-mono); }
+/* 左下角元信息：「Total」是标签，数字比它亮一档，扫一眼能先读到数量；
+   每页条数跟在后面，用一条竖线分隔。 */
+.pager-meta { color: var(--muted-2); font: 600 var(--text-2xs)/1 var(--font-mono); }
+.pager-meta b { color: var(--text); font-weight: 600; }
+/* 分隔线用 inline-block：flex 会把 "Total " / "Size " 末尾的空格吃掉（变成 Total85）。 */
+.pager-size { display: inline-block; margin-left: 9px; padding-left: 9px; border-left: 1px solid var(--line-strong); }
 /* 翻页控件：细边框圆角组，两个箭头夹着静止的页码；上下页禁用时明显变淡。 */
 .pager-group {
   display: inline-flex;
@@ -623,7 +708,8 @@ td.actions { text-align: right; white-space: nowrap; }
 .badge.succeeded, .badge.completed, .badge.ready { border-color: var(--success-border); color: var(--success-text); background: var(--accent-soft); }
 .badge.failed, .badge.partial, .badge.canceled, .badge.interrupted, .badge.invalid, .badge.stale { border-color: var(--danger-border); color: var(--danger-text); background: var(--danger-soft); }
 .badge.running, .badge.queued, .badge.canceling, .badge.dry-run, .badge.unverified, .badge.missing, .badge.analyzing { border-color: var(--warning-border); color: var(--warning-text); background: var(--warning-soft); }
-.badge.archived { border-color: var(--neutral-border); color: var(--muted); background: var(--surface-2); }
+/* 归档的 Template 与逻辑删除的 Run 都是"留着但不出现"的状态，共用一套中性配色。 */
+.badge.archived, .badge.deleted { border-color: var(--neutral-border); color: var(--muted); background: var(--surface-2); }
 .badge.unknown, .badge.unanalyzed { color: var(--muted); }
 
 /* ===== 代码与产物（行号代码块 / Artifacts 卡片） ===== */
@@ -702,37 +788,6 @@ pre {
   justify-content: center;
   min-height: 96px;
 }
-.error-box {
-  /* 出错时头部的 view-head 是空的，这里自己补上顶部间距。 */
-  margin-top: 20px;
-  padding: 18px;
-  border: 1px solid var(--danger-border-mid);
-  border-radius: var(--radius-md);
-  background: var(--danger-soft);
-  color: var(--danger-text-strong);
-}
-.error-box p { margin: 7px 0; }
-.error-actions { margin-top: 12px; }
-.skeleton {
-  overflow: hidden;
-  position: relative;
-  min-height: 12px;
-  border-radius: 6px;
-  background: var(--surface-2);
-}
-.skeleton::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, var(--skeleton-shine), transparent);
-  animation: shimmer 1.4s infinite;
-}
-@keyframes shimmer { to { transform: translateX(100%); } }
-.skeleton-page { display: grid; gap: 18px; }
-.skeleton-title { width: min(280px, 58%); height: 30px; }
-.skeleton-subtitle { width: min(440px, 78%); height: 14px; }
-.skeleton-panel { height: 260px; border: 1px solid var(--line); }
 
 /* ===== 控件与弹框（按钮 / 开关 / <dialog>） ===== */
 .button {
@@ -808,18 +863,6 @@ label.modal-field { grid-template-columns: minmax(0, 1fr); gap: 5px; }
    空着的报错行不占高度（不留一条死白）。 */
 .modal-summary .modal-field { align-items: baseline; }
 .modal-error:empty { display: none; }
-.modal-hint {
-  display: inline-flex;
-  align-items: center;
-  flex: 1 1 auto;
-  gap: 6px;
-  min-width: 0;
-  margin-right: 12px;
-  color: var(--muted);
-  font-size: var(--text-2xs);
-  line-height: 1.5;
-}
-.modal-hint .icon { flex: 0 0 auto; width: 14px; height: 14px; }
 .loading-state { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 96px; color: var(--muted); }
 .spinner { width: 18px; height: 18px; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -839,6 +882,19 @@ label.modal-field { grid-template-columns: minmax(0, 1fr); gap: 5px; }
 .setting-label { display: grid; gap: 3px; }
 .setting-name { color: var(--text); font-size: var(--text-xs); font-weight: 600; }
 .setting-hint { color: var(--muted); font-size: var(--text-2xs); }
+/* Settings 右侧的控件区（比如 Page Size 的数字输入 + Save）。 */
+.setting-control { display: inline-flex; align-items: center; gap: 8px; }
+.setting-input {
+  width: 92px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: var(--text-xs)/1.4 var(--font-mono);
+}
+.setting-input:focus { border-color: var(--accent); outline: none; }
 .segmented { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg-elevated); }
 .segmented-option { min-width: 64px; min-height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: var(--text-xs); font-weight: 600; transition: background 160ms ease, color 160ms ease; }
 .segmented-option:hover { color: var(--text); }

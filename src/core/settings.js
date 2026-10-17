@@ -14,6 +14,7 @@ const EDITABLE = [
   { key: 'SKILLAPP_ANALYZE_REASONING_EFFORT', label: '推理强度', hint: 'low / medium / high', placeholder: 'low' },
   { key: 'SKILLAPP_ANALYZE_TIMEOUT_MS', label: '分析超时 (ms)', hint: '默认 900000', placeholder: '900000' },
   { key: 'SKILLAPP_RUN_CONCURRENCY', label: 'Run 并发数', hint: '同时跑几行，默认 4，上限 8', placeholder: '4' },
+  { key: 'SKILLAPP_PAGE_SIZE', label: '每页条数', hint: '列表每页显示几条，默认 10，上限 200', placeholder: '10' },
 ];
 
 const READONLY = [

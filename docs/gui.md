@@ -60,23 +60,24 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 ### Runs
 
-- 列表：`Run ID / Status / Template Name / Trigger / Succeeded / Total / Started`。
-- 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Error、Work Hash）、`Run Items` 表、Live Output（stdout/stderr 带行号，日志整段是 JSON 时做语法高亮，纯文本原样显示）。
+- 列表：`Run ID / Status / Template Name / Trigger / Succeeded / Total / Started`；右上角 `Show Deleted` 勾选框（逻辑删除的 Run 默认不列，勾上才出现，行内带 `Deleted` 徽标）与 `All Triggers` 下拉（服务端过滤）。
+- 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Work Hash）；有错误时多一块 `Error` 面板（按日志渲染：带行号、整段是 JSON 才高亮），`Run Items` 表、Live Output（stdout/stderr 带行号，日志整段是 JSON 时做语法高亮，纯文本原样显示）。
 - Run Item 详情：状态、阶段、耗时、错误、Input Hash、Artifacts 卡片与 stdout/stderr 日志。
-- 运行中的 Run 可 `Cancel`；终态且有失败行时可 `Retry`（等价于再跑一次增量，产生新 Run）。
+- 运行中的 Run 可 `Cancel`；终态且有失败行时可 `Retry`（等价于再跑一次增量，产生新 Run）；终态可 `Delete`（确认弹框 → `delete-run` 操作，**逻辑删除**：只打 `deleted_at`，文件/日志/产物都留着，所以 Message 与 Operations 里的链接照样打得开，详情页显示 `Deleted` 徽标且不再给 Delete 按钮；没有反向操作，也不释放磁盘）。跑着的 Run 要先取消。
 - 详情页靠 SSE 实时重画：重画**不重播入场动画**（否则每次事件都闪一下 2px/透明度，看着像抖动），日志按块推到页面时**合并成 120ms 一次重画**。
 
 ### Operations
 
-- 统一列出所有异步操作：`load-skill / analyze-skill / bind-table / unload-skill / archive-template / unarchive-template / run-template`。
+- 统一列出所有异步操作：`load-skill / analyze-skill / bind-table / unload-skill / archive-template / unarchive-template / run-template / delete-run`。
 - 列表：`Operation ID / Status / Type / Subject / Started / Duration`；Subject 带类型前缀图标，可跳到对应 Skill / Template / Run。
 - 详情：Summary 加该操作的原始记录 JSON。
 
 ### Settings
 
 - `Appearance`：`Theme` 分段控件 `Dark | Light`，默认 Dark。切换即时生效，只存本浏览器（`localStorage`），不进服务端配置；首屏由独立的 `theme-boot.js` 先落主题（CSP 只允许 `script-src 'self'`，所以不用内联脚本），不闪。浅色主题在 `styles.css` 的 `:root[data-theme="light"]` 里只覆盖同名变量，logo 也随之切到 `logo-light.svg`。
+- `Pagination`：`Page Size` 数字输入（1–200，默认 10），**移开焦点（或回车）自动保存**到 `.env`，列表下次取页即时生效；值没变不发请求，保存成功不弹提示，失败或填入非法值就退回原值。
 - `Runtime`：App URL、Repo Root、Node Version（只读）。
-- 白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS` 与 `SKILLAPP_RUN_CONCURRENCY`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），暂无对应界面。
+- 白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`、`SKILLAPP_RUN_CONCURRENCY`、`SKILLAPP_PAGE_SIZE`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），除 `Page Size` 外暂无对应界面。
 - 应用重启与飞书授权初始化**尚未实现**：授权走 `lark-cli auth login`。
 
 ## 消息区（Messages）
@@ -93,9 +94,10 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 - 静态文案统一英文；表头、字段名与分析面板标题首字母大写（不强制全大写）。
 - 表头、Summary 字段名、弹框字段名共用一套样式与字号（10px / 600 / 等宽，次要色）。
-- 所有弹框都是应用内 `<dialog>`，不用浏览器原生 `confirm`：输入弹框、信息弹框（Preview）、确认弹框（Unload / Archive / 全量 Run）。确认弹框支持 Esc / Cancel 放弃，危险动作的确认按钮为红色，按钮返回 `OK`。
-- 列表页（Skills / Templates / Runs / Operations）**每页 10 条、最新在前**，底部 `Page x / y` + 带箭头的 `Prev / Next`（只有一页时不显示翻页条）；页号按列表记忆（sessionStorage），切页面/刷新仍在原页。表头 `sticky` 锁在列表顶部。
-- 只有列表页的表格容器自己纵向滚动（`max-height: 70vh`），滚动时表头不动；其余表格跟随页面滚动。
+- 所有弹框都是应用内 `<dialog>`，不用浏览器原生 `confirm`：输入弹框（Load / Bind）、确认弹框（Unload / Archive / Delete / 全量 Run）、提示弹框（页面级失败，只有一个 `OK`）、Run 弹框（预览 + 提交）。确认弹框支持 Esc / Cancel 放弃，危险动作的确认按钮为红色。
+- 页面级失败（路由不存在 / 详情读不出来）：**不把错误嵌在页面里**（那样顶部会留着上一页的标题和按钮），而是清空顶部与内容、弹一个只有 `OK` 的提示框，关掉后回到上一级；没有 `Retry` —— 东西真的不在了时重试没有意义。
+- 列表页（Skills / Templates / Runs / Operations）**服务端分页、最新在前**：每次只取当前页，底部固定一条翻页栏 —— 左侧 `Total X | Size Y`（竖线分隔），右侧 `Page x / y` + 带箭头的 `Prev / Next`（只有一页时箭头禁用，页码仍是 `1 / 1`），翻页时保留旧数据、箭头禁用，表格不重排。每页条数由 `SKILLAPP_PAGE_SIZE` 决定（默认 10，Settings 里可改）。页号只在当前模块内记忆，切到别的模块或刷新都回到第 1 页；Operations 的 Type、Runs 的 Trigger 过滤也在服务端（`?type=` / `?trigger=`），Runs 的 `Show Deleted` 走 `?include_deleted=1`。表头 `sticky` 锁在列表顶部。
+- 只有列表页的表格容器自己纵向滚动，滚动时表头不动；其余表格跟随页面滚动。列表页的面板按**页面剩余高度**自适应（高度跟着窗口走，不再写死 `70vh`），翻页条钉在面板底部。
 - 日期时间统一 `YYYY-MM-DD HH:mm:ss`。
 - JSON / stdout / stderr 用代码块展示并带行号（行号在行首，长行换行时续行悬挂缩进，不出现横向滚动）。
 - 默认路由 `#home`；列表与 Summary 不放无意义的统计块。
@@ -114,6 +116,6 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 | `lib/messages.js` | 侧边栏消息区（全局操作流） |
 | `lib/theme.js`、`theme-boot.js` | 主题 Dark / Light：运行时切换与首屏防闪（`logo-light.svg` 是浅色 logo） |
 | `lib/shell.js` | 页面骨架（视图头固定在滚动区之外）、窄屏 ☰ 菜单 |
-| `lib/dialogs.js` | 输入 / 信息 / 确认三类弹框 |
+| `lib/dialogs.js` | 输入 / 确认 / 提示三类弹框 + Run 弹框（预览与提交） |
 | `lib/format.js`、`lib/highlight.js`、`lib/links.js`、`lib/dom.js` | 格式化、JSON 高亮、链接与 DOM 小工具 |
 | `views/*.js` | 一页一个文件（home / skills / templates / runs / run-item / operations / settings） |

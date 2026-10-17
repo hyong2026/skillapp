@@ -23,6 +23,7 @@ const TYPE_LABELS = {
   'archive-template': 'Archive',
   'unarchive-template': 'Unarchive',
   'run-template': 'Run',
+  'delete-run': 'Delete',
 };
 
 function readDismissed() {
@@ -205,7 +206,7 @@ function initMessages() {
   const fallbackFetch = async () => {
     if (operations.length) return;
     try {
-      operations = await api('/api/operations');
+      operations = (await api('/api/operations')).items;
       paint();
     } catch {
       // 拿不到就保持空白，等下一次重连。

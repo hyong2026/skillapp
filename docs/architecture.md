@@ -5,7 +5,7 @@
 ```text
 Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
                                              ├── run-worker 子进程  → core/run-template
-                                             ├── task-worker 子进程 → core/load-skill / bind-table / unload-skill / template
+                                             ├── task-worker 子进程 → core/load-skill / bind-table / unload-skill / delete-run / template
                                              ├── lark-cli（argv 数组，不经过 shell）
                                              └── .data/ 文件系统
 ```
@@ -32,6 +32,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 | `src/core/bind-table.js` | Mapping 计划、diff、plan hash、建列与 Template 生成 |
 | `src/core/template.js` | Template 身份（Skill + 目标表）与文件名、按目标定位、归档状态 |
 | `src/core/unload-skill.js` | 卸载影响清单、plan hash 和受控删除 |
+| `src/core/delete-run.js` | 逻辑删除单次 Run（写 `deleted_at`，文件保留） |
 | `src/core/run-template.js` | Run 预检、选行、执行、回写、进度与状态 |
 | `src/core/lark.js` | `lark-cli` 封装：同步 `lark`（一次性调用）与异步 `larkAsync`（按行调用，不阻塞事件循环）；可注入替身，测试用 |
 | `src/core/settings.js` | 设置白名单，读写仓库根 `.env` |
@@ -40,7 +41,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 | `src/server/operation-summary.js` | 一条操作的摘要（Operations 列表与全局 SSE 共用） |
 | `src/server/read-model.js` | 只读扫描 Skill、Template、Run、Operation、日志和产物 |
 | `src/server/run-worker.js` | 在独立进程中执行 Run |
-| `src/server/task-worker.js` | 在独立进程中执行装载、Mapping、卸载和归档 |
+| `src/server/task-worker.js` | 在独立进程中执行装载、Mapping、卸载、归档与删除 Run |
 | `src/web/` | 入口 `app.js` + `index.html`/`styles.css`；共用件在 `lib/`，页面在 `views/` |
 
 ## 落盘布局与约定

@@ -2,6 +2,7 @@ import { loadSkill } from '../core/load-skill.js';
 import { analyzeSkill } from '../core/analyze-skill.js';
 import { planMapping, applyMapping } from '../core/bind-table.js';
 import { planUnload, applyUnload } from '../core/unload-skill.js';
+import { deleteRun } from '../core/delete-run.js';
 import { setTemplateArchived } from '../core/template.js';
 
 function send(message) {
@@ -43,6 +44,9 @@ async function execute(input) {
   }
   if (input.type === 'unload-skill') {
     return applyUnload(payload, planUnload(payload));
+  }
+  if (input.type === 'delete-run') {
+    return deleteRun({ runId: payload.run_id });
   }
   if (input.type === 'archive-template' || input.type === 'unarchive-template') {
     return setTemplateArchived({

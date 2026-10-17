@@ -2,10 +2,6 @@ import { h, icon } from './dom.js';
 
 // The shell never scrolls; `.page-body` is the only scroll container, and the
 // view head lives outside it so it can never move.
-function scrollContainer() {
-  return document.querySelector('.page-body');
-}
-
 function viewHeadSlot() {
   return document.getElementById('viewHead');
 }
@@ -24,7 +20,8 @@ function splitViewHead(content) {
  */
 function renderViewContent(content, { animate = true } = {}) {
   const { head, nodes } = splitViewHead(content);
-  if (head) viewHeadSlot().replaceChildren(head);
+  // 顶栏由视图接管：带 view-head 就替换，没带就清空（否则会留着上一个页面的大标题）。
+  viewHeadSlot().replaceChildren(...(head ? [head] : []));
   const className = animate ? 'view-body-inner' : 'view-body-inner is-live';
   document.getElementById('app').replaceChildren(h('div', { className }, nodes));
 }
@@ -69,7 +66,6 @@ function initNavMenu() {
 }
 
 export {
-  scrollContainer,
   viewHeadSlot,
   renderViewContent,
   initNavMenu,

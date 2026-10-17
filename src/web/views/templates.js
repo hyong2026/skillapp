@@ -30,35 +30,42 @@ function templateDefinitionPanel(template) {
 
 async function templatesView() {
   const showArchived = h('input', { type: 'checkbox' });
-  const body = h('div');
+  const body = h('div', { className: 'panel-slot' });
 
-  const paint = async () => {
-    const query = showArchived.checked ? '?include_archived=1' : '';
-    const templates = await api(`/api/templates${query}`);
-    const rows = templates.map((template) => {
-      const last = template.last_run;
-      const id = template.template_id || template.name || template.ref;
-      return [
-        // 名字在前且带链接；链接锚点仍用 template_id（改过文件名也不会断）。
-        h('span', { className: 'row-inline' }, [
-          hashLink(template.name || id, `#templates/${encoded(id)}`),
-          template.archived_at ? h('span', { className: 'badge archived', textContent: 'Archived' }) : null,
-        ]),
-        h('span', { className: 'mono truncate', textContent: template.template_id || '—' }),
-        `${template.inputs} in / ${template.outputs} out`,
-        last ? statusBadge(last.status) : h('span', { className: 'muted', textContent: 'Never' }),
-        h('span', { textContent: formatDate(template.created_at) }),
-      ];
+  // `page` 不传就用记住的页号（首屏）；切「显示归档」时回到第 1 页。
+  const paint = async (page) => {
+    const includeArchived = showArchived.checked ? '&include_archived=1' : '';
+    const table = await pagedTable({
+      label: 'Templates',
+      page,
+      headers: ['Template Name', 'Template ID', 'IO', 'Last Run', 'Created'],
+      load: async (target) => {
+        const data = await api(`/api/templates?page=${target}${includeArchived}`);
+        return {
+          ...data,
+          rows: data.items.map((template) => {
+            const last = template.last_run;
+            const id = template.template_id || template.name || template.ref;
+            return [
+              // 名字在前且带链接；链接锚点仍用 template_id（改过文件名也不会断）。
+              h('span', { className: 'row-inline' }, [
+                hashLink(template.name || id, `#templates/${encoded(id)}`),
+                template.archived_at ? h('span', { className: 'badge archived', textContent: 'Archived' }) : null,
+              ]),
+              h('span', { className: 'mono truncate', textContent: template.template_id || '—' }),
+              `${template.inputs} in / ${template.outputs} out`,
+              last ? statusBadge(last.status) : h('span', { className: 'muted', textContent: 'Never' }),
+              h('span', { textContent: formatDate(template.created_at) }),
+            ];
+          }),
+        };
+      },
     });
-    body.replaceChildren(dataPanel(h('div', { className: 'panel-body flush' }, pagedTable(
-      ['Template Name', 'Template ID', 'IO', 'Last Run', 'Created'],
-      rows,
-      { label: 'Templates' },
-    ))));
+    body.replaceChildren(dataPanel(h('div', { className: 'panel-body flush' }, table)));
   };
 
   // 切换只看当前可用 / 连归档一起看：只重画列表，不整页刷新。
-  showArchived.addEventListener('change', () => { void paint(); });
+  showArchived.addEventListener('change', () => { void paint(1); });
   await paint();
   return fragment(
     head('Templates', '', h('label', { className: 'run-option' }, [

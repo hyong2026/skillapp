@@ -9,22 +9,27 @@ import { hashLink } from '../lib/links.js';
 import { render } from '../lib/router.js';
 
 async function skillsView() {
-  const skills = await api('/api/skills');
-  const rows = skills.map((skill) => [
-    hashLink(skill.ref, `#skills/${encoded(skill.ref)}`),
-    statusBadge(skill.status || 'invalid'),
-    h('span', { textContent: formatDate(skill.loaded_at) }),
-    h('span', { className: 'truncate', textContent: skill.source || '—' }),
-  ]);
-  const load = actionButton('Load', 'load', 'button primary');
-  load.addEventListener('click', openLoadDialog);
+  const table = await pagedTable({
+    label: 'Skills',
+    headers: ['Skill Name', 'Status', 'Loaded', 'Source'],
+    load: async (page) => {
+      const data = await api(`/api/skills?page=${page}`);
+      return {
+        ...data,
+        rows: data.items.map((skill) => [
+          hashLink(skill.ref, `#skills/${encoded(skill.ref)}`),
+          statusBadge(skill.status || 'invalid'),
+          h('span', { textContent: formatDate(skill.loaded_at) }),
+          h('span', { className: 'truncate', textContent: skill.source || '—' }),
+        ]),
+      };
+    },
+  });
+  const loadButton = actionButton('Load', 'load', 'button primary');
+  loadButton.addEventListener('click', openLoadDialog);
   return fragment(
-    head('Skills', '', h('div', { className: 'run-actions' }, load)),
-    dataPanel(h('div', { className: 'panel-body flush' }, pagedTable(
-      ['Skill Name', 'Status', 'Loaded', 'Source'],
-      rows,
-      { label: 'Skills' },
-    ))),
+    head('Skills', '', h('div', { className: 'run-actions' }, loadButton)),
+    dataPanel(h('div', { className: 'panel-body flush' }, table)),
   );
 }
 

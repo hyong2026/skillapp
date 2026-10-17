@@ -31,9 +31,12 @@ function subjectLink(subject) {
   if (!subject || !subject.id) return '—';
   const meta = SUBJECT_META[subject.type];
   if (!meta) return String(subject.label || subject.id);
-  return h('a', { className: 'subject', href: `#${meta.route}/${encoded(subject.id)}` }, [
+  return h('a', {
+    className: 'subject',
+    href: `#${meta.route}/${encoded(subject.id)}`,
+    title: meta.label,
+  }, [
     icon(meta.icon, 'icon subject-icon'),
-    h('span', { className: 'subject-type', textContent: meta.label }),
     h('span', { className: 'mono truncate', textContent: subject.label || subject.id }),
   ]);
 }

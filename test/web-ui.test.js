@@ -52,6 +52,16 @@ async function requestJson(ctx, pathname, options = {}) {
   return { response, body };
 }
 
+/** 列表现在是服务端分页：要跨页找一条记录时，把每一页拼起来（页数由 total / page_size 定）。 */
+async function listAll(ctx, pathname) {
+  const items = [];
+  for (let page = 1; ; page += 1) {
+    const { body } = await requestJson(ctx, `${pathname}${pathname.includes('?') ? '&' : '?'}page=${page}`);
+    items.push(...body.data.items);
+    if (page >= Math.ceil(body.data.total / body.data.page_size)) return items;
+  }
+}
+
 /** 用 http.request 直发，保留编码过的路径（验证路径穿越要靠它）。 */
 function rawGet(ctx, pathname) {
   return new Promise((resolve, reject) => {
@@ -180,9 +190,9 @@ async function waitForOperation(ctx, ref, alias) {
       if (!detail.response.ok) throw new Error(JSON.stringify(detail.body));
       target = detail.body.data.operation;
     } else {
-      const list = await requestJson(ctx, '/api/operations');
+      const list = await requestJson(ctx, `/api/operations?type=${type}`);
       if (!list.response.ok) throw new Error(JSON.stringify(list.body));
-      for (const candidate of list.body.data.filter((op) => op.type === type)) {
+      for (const candidate of list.body.data.items) {
         const detail = await requestJson(ctx, `/api/operations/${candidate.operation_id}`);
         if (!detail.response.ok) continue;
         const operation = detail.body.data.operation;
@@ -281,8 +291,8 @@ describe('只读面：鉴权、状态、列表与详情、产物、静态资源'
 
   test('Skill 列表与详情返回指纹和分析产物', async () => {
     const list = await requestJson(ctx, '/api/skills');
-    assert.equal(list.body.data[0].ref, 'foo');
-    assert.equal(list.body.data[0].hash, 'sha256:foo');
+    assert.equal(list.body.data.items[0].ref, 'foo');
+    assert.equal(list.body.data.items[0].hash, 'sha256:foo');
 
     const detail = await requestJson(ctx, '/api/skills/foo');
     assert.equal(detail.body.data.analysis.mapping.inputs[0].key, 'text');
@@ -290,9 +300,9 @@ describe('只读面：鉴权、状态、列表与详情、产物、静态资源'
 
   test('Template 列表与详情可按 template_id 查询', async () => {
     const list = await requestJson(ctx, '/api/templates');
-    assert.equal(list.body.data.length, 1);
-    assert.equal(list.body.data[0].template_id, 'template-1');
-    assert.equal(list.body.data[0].inputs, 1);
+    assert.equal(list.body.data.items.length, 1);
+    assert.equal(list.body.data.items[0].template_id, 'template-1');
+    assert.equal(list.body.data.items[0].inputs, 1);
 
     const detail = await requestJson(ctx, '/api/templates/template-1');
     assert.equal(detail.response.status, 200);
@@ -301,9 +311,9 @@ describe('只读面：鉴权、状态、列表与详情、产物、静态资源'
 
   test('Run 列表、RunItem、日志和产物可读取', async () => {
     const list = await requestJson(ctx, '/api/runs');
-    assert.equal(list.body.data.length, 1);
-    assert.equal(list.body.data[0].run_id, 'run-1');
-    assert.equal(list.body.data[0].template_name, 'foo', 'Run 列表要能反查到 Template Name');
+    assert.equal(list.body.data.items.length, 1);
+    assert.equal(list.body.data.items[0].run_id, 'run-1');
+    assert.equal(list.body.data.items[0].template_name, 'foo', 'Run 列表要能反查到 Template Name');
 
     const run = await requestJson(ctx, '/api/runs/run-1');
     assert.equal(run.body.data.items[0].record_id, 'rec-1');
@@ -458,9 +468,10 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
     assert.ok(events.some((frame) => frame.includes('event: snapshot')));
 
     // Run 同时落一份 operation 镜像，Operations 页才能统一列出所有长期任务
-    const operations = await requestJson(ctx, '/api/operations');
+    const operations = await requestJson(ctx, '/api/operations?type=run-template');
     assert.equal(operations.response.status, 200);
-    const runOperation = operations.body.data.find((item) => item.type === 'run-template' && item.subject?.id === runId);
+    assert.ok(operations.body.data.items.every((item) => item.type === 'run-template'), 'type 过滤在服务端做');
+    const runOperation = operations.body.data.items.find((item) => item.subject?.id === runId);
     assert.ok(runOperation, 'Run 应该有对应的 operation 记录');
     assert.equal(runOperation.status, 'completed');
     assert.equal(runOperation.trigger, 'incremental');
@@ -470,6 +481,50 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
     assert.equal(operation.body.data.operation.type, 'run-template');
     assert.equal(operation.body.data.operation.input.run_id, runId);
     assert.equal(operation.body.data.operation.result.total, 1);
+
+    // Runs 列表也支持服务端 Trigger 过滤（列表页的 Trigger 下拉）。
+    const incremental = await requestJson(ctx, '/api/runs?trigger=incremental');
+    assert.ok(incremental.body.data.items.length > 0);
+    assert.ok(incremental.body.data.items.every((run) => run.trigger === 'incremental'));
+    const allOnly = await requestJson(ctx, '/api/runs?trigger=all');
+    assert.ok(allOnly.body.data.items.every((run) => run.trigger === 'all'));
+  });
+
+  test('M2 Run 可以逻辑删除：默认列表不出现、文件保留，Operations 里留下 delete-run', async () => {
+    const started = await requestJson(ctx, '/api/runs', {
+      method: 'POST',
+      body: { template_id: 'tpl-ok', trigger: 'incremental' },
+    });
+    const runId = started.body.data.run_id;
+    await waitForRun(ctx, runId);
+
+    const removed = await requestJson(ctx, `/api/runs/${runId}`, { method: 'DELETE' });
+    assert.equal(removed.response.status, 202, JSON.stringify(removed.body));
+    const operation = await waitForOperationId(ctx, removed.body.data.operation_id);
+    assert.equal(operation.status, 'completed', JSON.stringify(operation.error));
+
+    // 逻辑删除：列表里默认消失，但详情照样打得开（Message / Operations 里的链接不会断）。
+    const detail = await requestJson(ctx, `/api/runs/${runId}`);
+    assert.equal(detail.response.status, 200, '逻辑删除后 Run 详情仍可访问');
+    assert.ok(detail.body.data.deleted_at, '要打上 deleted_at');
+    assert.equal(fs.existsSync(path.join(ctx.root, 'runs', runId, 'run.json')), true, '文件保留，不释放磁盘');
+
+    const list = await requestJson(ctx, '/api/runs');
+    assert.ok(!list.body.data.items.some((run) => run.run_id === runId), '默认列表里不该再有它');
+    const withDeleted = await requestJson(ctx, '/api/runs?include_deleted=1');
+    assert.ok(
+      withDeleted.body.data.items.some((run) => run.run_id === runId && run.deleted_at),
+      'Show Deleted 时才连它一起给',
+    );
+
+    const ops = await requestJson(ctx, '/api/operations?type=delete-run');
+    const row = ops.body.data.items.find((item) => item.subject?.id === runId);
+    assert.ok(row, 'delete-run 要记进 Operations');
+    assert.equal(row.subject.type, 'run');
+    assert.equal(row.subject.label, runId, 'Message / Subject 显示 Run ID');
+
+    const missing = await requestJson(ctx, '/api/runs/no-such-run', { method: 'DELETE' });
+    assert.equal(missing.response.status, 404);
   });
 
   test('M2 同一 Template 加锁，取消会终止执行且不会继续写表', async () => {
@@ -544,6 +599,7 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
   test('M2 Settings 只开放白名单环境变量，写入 .env 并即时生效', async () => {
     const previousRoot = process.env.SKILLAPP_ROOT;
     const previousModel = process.env.SKILLAPP_ANALYZE_MODEL;
+    const previousPageSize = process.env.SKILLAPP_PAGE_SIZE;
     process.env.SKILLAPP_ROOT = ctx.root;
     delete process.env.SKILLAPP_ANALYZE_MODEL;
     try {
@@ -565,6 +621,12 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
       assert.match(envFile, /SKILLAPP_ANALYZE_MODEL=test\/model/);
       assert.match(envFile, /SKILLAPP_ANALYZE_REASONING_EFFORT=high/);
 
+      // 每页条数也在这个白名单里：服务端每次请求读一次，改完下一次取页就按新页长切。
+      assert.ok(initial.body.data.editable.some((field) => field.key === 'SKILLAPP_PAGE_SIZE'));
+      await requestJson(ctx, '/api/settings', { method: 'PUT', body: { values: { SKILLAPP_PAGE_SIZE: '1' } } });
+      const paged = await requestJson(ctx, '/api/runs');
+      assert.equal(paged.body.data.page_size, 1, 'SKILLAPP_PAGE_SIZE 即时生效');
+
       const rejected = await requestJson(ctx, '/api/settings', {
         method: 'PUT',
         body: { values: { SKILLAPP_WEB_TOKEN: 'nope' } },
@@ -576,6 +638,8 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
       else process.env.SKILLAPP_ROOT = previousRoot;
       if (previousModel === undefined) delete process.env.SKILLAPP_ANALYZE_MODEL;
       else process.env.SKILLAPP_ANALYZE_MODEL = previousModel;
+      if (previousPageSize === undefined) delete process.env.SKILLAPP_PAGE_SIZE;
+      else process.env.SKILLAPP_PAGE_SIZE = previousPageSize;
     }
   });
 });
@@ -748,7 +812,7 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
   test('M3 换一张表会另建 Template，回到原表只更新原来那一份', async () => {
     const templateFiles = () => fs.readdirSync(path.join(ctx.root, 'templates')).filter((name) => name.endsWith('.template.json'));
     const list = await requestJson(ctx, '/api/templates');
-    const first = list.body.data[0];
+    const first = list.body.data.items[0];
     assert.match(templateFiles()[0], /^demo-[0-9a-f]{8}\.template\.json$/, '文件名 = Skill 名 + 8 位 Hash');
     assert.equal(first.name, templateFiles()[0].replace('.template.json', ''), 'Template Name 就是文件名');
     assert.equal(first.ref, 'demo', 'ref 仍是 Skill 名');
@@ -776,7 +840,7 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
 
   test('M3 Template 可以归档：列表消失、不可跑、可解冻，并记进 Operations', async () => {
     const list = await requestJson(ctx, '/api/templates');
-    const templateId = list.body.data[0].template_id;
+    const templateId = list.body.data.items[0].template_id;
 
     const archive = await requestJson(ctx, `/api/templates/${templateId}/archive`, { method: 'POST', body: {} });
     assert.equal(archive.response.status, 202, JSON.stringify(archive.body));
@@ -784,9 +848,9 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
     assert.equal(archived.status, 'completed', JSON.stringify(archived.error));
 
     const afterArchive = await requestJson(ctx, '/api/templates');
-    assert.ok(!afterArchive.body.data.some((item) => item.template_id === templateId), '归档后列表里不该还有它');
+    assert.ok(!afterArchive.body.data.items.some((item) => item.template_id === templateId), '归档后列表里不该还有它');
     const withArchived = await requestJson(ctx, '/api/templates?include_archived=1');
-    assert.ok(withArchived.body.data.some((item) => item.template_id === templateId && item.archived_at),
+    assert.ok(withArchived.body.data.items.some((item) => item.template_id === templateId && item.archived_at),
       '显式要全部时，归档的 Template 要能看到（列表页的 Show Archived）');
     const detail = await requestJson(ctx, `/api/templates/${templateId}`);
     assert.equal(detail.response.status, 200, '按 Template ID 仍要能打开');
@@ -805,12 +869,17 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
     const restored = await waitForOperationId(ctx, unarchive.body.data.operation_id);
     assert.equal(restored.status, 'completed', JSON.stringify(restored.error));
     const afterRestore = await requestJson(ctx, '/api/templates');
-    assert.ok(afterRestore.body.data.some((item) => item.template_id === templateId), '解冻后要回到列表');
+    assert.ok(afterRestore.body.data.items.some((item) => item.template_id === templateId), '解冻后要回到列表');
 
-    const operations = await requestJson(ctx, '/api/operations');
-    const types = operations.body.data.filter((item) => item.subject?.id === templateId).map((item) => item.type);
+    const operations = await listAll(ctx, '/api/operations');
+    const types = operations.filter((item) => item.subject?.id === templateId).map((item) => item.type);
     assert.ok(types.includes('archive-template'), '归档要记进 Operations');
     assert.ok(types.includes('unarchive-template'), '解冻也要记进 Operations');
+
+    // Type 过滤也在服务端：`?type=` 只回这一类。
+    const filtered = await requestJson(ctx, '/api/operations?type=archive-template');
+    assert.ok(filtered.body.data.items.length > 0);
+    assert.ok(filtered.body.data.items.every((item) => item.type === 'archive-template'));
   });
 
   test('M3 全局操作流：连上先发快照，之后实时推单条操作', async () => {
@@ -836,8 +905,8 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
   });
 
   test('M3 操作可以取消：已结束的原样返回，不存在的返回 404', async () => {
-    const list = await requestJson(ctx, '/api/operations');
-    const finished = list.body.data.find((item) => item.status === 'completed');
+    const list = await listAll(ctx, '/api/operations');
+    const finished = list.find((item) => item.status === 'completed');
     assert.ok(finished, '前面已经跑过操作，应当有已完成的记录');
 
     const again = await requestJson(ctx, `/api/operations/${finished.operation_id}/cancel`, { method: 'POST', body: {} });
@@ -868,5 +937,22 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
     assert.equal(removed.status, 'completed', JSON.stringify(removed.error));
     assert.equal(fs.existsSync(path.join(ctx.root, 'skills', 'demo')), false);
     assert.equal(fs.existsSync(path.join(ctx.root, 'runs', 'run-demo')), false);
+  });
+
+  test('M3 列表走服务端分页：只回当前页，越界页夹回最后一页', async () => {
+    const first = await requestJson(ctx, '/api/operations');
+    assert.equal(first.body.data.page, 1);
+    assert.equal(first.body.data.page_size, 10, '默认每页 10 条');
+    assert.ok(first.body.data.total > 10, '前面的用例已经攒下不少操作');
+    assert.equal(first.body.data.items.length, 10, 'page 1 只回一页的量');
+
+    const second = await requestJson(ctx, '/api/operations?page=2');
+    assert.equal(second.body.data.page, 2);
+    assert.ok(second.body.data.items.length > 0);
+    const ids = new Set(first.body.data.items.map((item) => item.operation_id));
+    assert.ok(second.body.data.items.every((item) => !ids.has(item.operation_id)), '两页不重叠');
+
+    const beyond = await requestJson(ctx, '/api/operations?page=999');
+    assert.equal(beyond.body.data.page, Math.ceil(first.body.data.total / 10), '越界页夹回最后一页');
   });
 });

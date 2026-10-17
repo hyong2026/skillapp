@@ -11,6 +11,27 @@ import { TaskRunner } from './task-runner.js';
 import { operationSummary } from './operation-summary.js';
 const MAX_BODY_BYTES = 1024 * 1024;
 const OPERATION_TERMINAL = new Set(['completed', 'failed', 'canceled', 'interrupted']);
+const PAGE_SIZE_DEFAULT = 10;
+const PAGE_SIZE_MAX = 200;
+
+/** 每页条数：`SKILLAPP_PAGE_SIZE` 每次请求读一次，改完即时生效。 */
+function pageSize() {
+  const value = Number.parseInt(process.env.SKILLAPP_PAGE_SIZE ?? '', 10);
+  return Number.isFinite(value) && value > 0 ? Math.min(value, PAGE_SIZE_MAX) : PAGE_SIZE_DEFAULT;
+}
+
+/**
+ * 列表统一走服务端分页：`?page=n` 只返回那一页，另外带上 `total` / `page_size`。
+ * 页号越界就夹到最后一页（列表变短后前端不会拿到空页）。
+ */
+function paginate(items, url) {
+  const size = pageSize();
+  const requested = Number.parseInt(url.searchParams.get('page') ?? '', 10);
+  const pages = Math.max(1, Math.ceil(items.length / size));
+  const page = Math.min(Number.isFinite(requested) && requested > 0 ? requested : 1, pages);
+  const start = (page - 1) * size;
+  return { items: items.slice(start, start + size), total: items.length, page, page_size: size };
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -358,6 +379,7 @@ function serveArtifact(req, res, file) {
 
 async function routeApi(req, res, model, runner, segments, runtime = {}) {
   const readOnly = req.method === 'GET' || req.method === 'HEAD';
+  const url = new URL(req.url, 'http://localhost');
 
   if (segments.length === 2 && segments[1] === 'status') {
     return sendApi(req, res, model.status());
@@ -393,7 +415,7 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
         const operations = runner.skillOperations(skill.ref);
         return { ...skill, status: skillStatus(skill, model.getSkill(skill.ref).analysis, operations) };
       });
-      return sendApi(req, res, skills);
+      return sendApi(req, res, paginate(skills, url));
     }
     if (segments.length === 3 && readOnly) {
       const ref = assertRef(segments[2]);
@@ -438,7 +460,7 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
     if (segments.length === 3 && req.method === 'DELETE') {
       assertSameOrigin(req);
       const ref = assertRef(segments[2]);
-      const withRuns = new URL(req.url, 'http://localhost').searchParams.get('with_runs') === '1';
+      const withRuns = url.searchParams.get('with_runs') === '1';
       return sendJson(req, res, 202, {
         ok: true,
         data: operationData(runner.startTask('unload-skill', { ref, with_runs: withRuns }, { lockKeys: [`skill:${ref}`] })),
@@ -474,8 +496,8 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
     }
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
     if (segments.length === 2) {
-      const includeArchived = new URL(req.url, 'http://localhost').searchParams.get('include_archived') === '1';
-      return sendApi(req, res, model.listTemplates(null, { includeArchived }));
+      const includeArchived = url.searchParams.get('include_archived') === '1';
+      return sendApi(req, res, paginate(model.listTemplates(null, { includeArchived }), url));
     }
     if (segments.length === 3) return sendApi(req, res, model.getTemplate(segments[2]));
   }
@@ -489,7 +511,13 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
     if (segments.length === 3 && segments[2] === 'events') return serveOperationListEvents(req, res, runner);
     // 单条操作的进度流挂在 operation 自己身上，不再绕道 skill。
     if (segments.length === 4 && segments[3] === 'events') return serveOperationEvents(req, res, runner, segments[2]);
-    if (segments.length === 2) return sendApi(req, res, runner.listOperations().map(operationSummary));
+    if (segments.length === 2) {
+      // Type 筛选在服务端做，否则只会过滤当前这页（`?type=bind-table`）。
+      const type = url.searchParams.get('type');
+      const operations = runner.listOperations().map(operationSummary);
+      const filtered = type ? operations.filter((operation) => operation.type === type) : operations;
+      return sendApi(req, res, paginate(filtered, url));
+    }
     if (segments.length === 3) return sendApi(req, res, operationDetail(runner.getOperation(segments[2])));
     throw new HttpError(404, 'NOT_FOUND', 'Operation endpoint not found', 'Check the request path');
   }
@@ -523,6 +551,24 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
     if (req.method === 'GET' && segments.length === 4 && segments[3] === 'events') {
       return serveEvents(req, res, runner, segments[2]);
     }
+    // 逻辑删除这次 Run（写 deleted_at，日志与产物都留着）。跑着的 Run 得先取消。
+    if (req.method === 'DELETE' && segments.length === 3) {
+      assertSameOrigin(req);
+      const runId = segments[2];
+      const run = runner.getRun(runId);
+      if (['queued', 'running', 'canceling'].includes(run.status)) {
+        throw new HttpError(409, 'RUN_ACTIVE', `Run is still ${run.status}`, 'Cancel it first, then delete');
+      }
+      return sendJson(req, res, 202, {
+        ok: true,
+        data: operationData(runner.startTask(
+          'delete-run',
+          { run_id: runId },
+          { lockKeys: [`run:${runId}`] },
+        )),
+        error: null,
+      });
+    }
     if (!readOnly) throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET / HEAD are supported', 'Check the request method');
     if (segments.length === 3) {
       return sendApi(req, res, runner.getRun(segments[2]));
@@ -534,7 +580,13 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
       const relative = segments.slice(5).join('/');
       return serveArtifact(req, res, model.artifactPath(segments[2], segments[4], relative));
     }
-    if (segments.length === 2) return sendApi(req, res, runner.listRuns());
+    if (segments.length === 2) {
+      // Trigger 筛选同样在服务端做（`?trigger=incremental`），跟分页同源；
+      // 逻辑删除的 Run 默认不列，`?include_deleted=1` 才连它们一起给（列表页的 Show Deleted）。
+      const trigger = url.searchParams.get('trigger');
+      const runs = runner.listRuns({ includeDeleted: url.searchParams.get('include_deleted') === '1' });
+      return sendApi(req, res, paginate(trigger ? runs.filter((run) => run.trigger === trigger) : runs, url));
+    }
   }
 
   throw new HttpError(404, 'NOT_FOUND', 'API endpoint not found', 'Check the request path');

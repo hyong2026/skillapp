@@ -228,7 +228,8 @@ class ReadModel {
     };
   }
 
-  listRuns() {
+  /** `includeDeleted` 只影响"看得到看不到"：逻辑删除的 Run 文件仍在，详情照样打得开。 */
+  listRuns({ includeDeleted = false } = {}) {
     if (!fs.existsSync(this.runsDir)) return [];
 
     return fs.readdirSync(this.runsDir, { withFileTypes: true })
@@ -248,12 +249,14 @@ class ReadModel {
           finished_at: run.finished_at || null,
           skill_hash: run.skill_hash || null,
           work_hash: run.work_hash || null,
+          deleted_at: run.deleted_at || null,
           total: items.length,
           succeeded: run.succeeded ?? items.filter((item) => item.status === 'succeeded').length,
           failed: run.failed ?? items.filter((item) => item.status === 'failed').length,
         };
       })
       .filter(Boolean)
+      .filter((run) => includeDeleted || !run.deleted_at)
       .sort((a, b) => String(b.started_at || b.run_id).localeCompare(String(a.started_at || a.run_id)));
   }
 

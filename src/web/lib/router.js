@@ -1,7 +1,8 @@
 import { stopRunStream } from './api.js';
-import { head } from './components.js';
-import { actionButton, h, ICON_PATHS, icon, setNotice } from './dom.js';
-import { closeNavMenu, renderViewContent, scrollContainer, viewHeadSlot } from './shell.js';
+import { resetPagedState } from './components.js';
+import { openAlertDialog } from './dialogs.js';
+import { h, ICON_PATHS, icon, setNotice } from './dom.js';
+import { closeNavMenu, renderViewContent, viewHeadSlot } from './shell.js';
 import { homeView } from '../views/home.js';
 import { operationView, operationsView } from '../views/operations.js';
 import { runItemView } from '../views/run-item.js';
@@ -12,6 +13,7 @@ import { templatesView, templateView } from '../views/templates.js';
 
 const app = document.getElementById('app');
 let renderSequence = 0;
+let currentModule = null;
 
 /** Hash 路由表：每个主菜单一个 list，详情页按需带 detail / item。 */
 const VIEWS = {
@@ -31,22 +33,22 @@ function viewFor(route, parts) {
   return () => views.list();
 }
 
-function loadingView() {
-  return h('div', { className: 'skeleton-page', 'aria-hidden': 'true' }, [
-    h('div', { className: 'skeleton skeleton-title' }),
-    h('div', { className: 'skeleton skeleton-subtitle' }),
-    h('div', { className: 'skeleton skeleton-panel' }),
-  ]);
+/** 详情路由的上一级：`#runs/<id>/<record>` → `#runs/<id>`，列表路由回 Home。 */
+function parentHash(parts) {
+  return parts.length > 1 ? parts.slice(0, -1).map(encodeURIComponent).join('/') : 'home';
 }
 
-function errorView(error) {
-  const retry = actionButton('Retry', 'retry', 'button primary');
-  retry.addEventListener('click', render);
-  return h('div', { className: 'error-box' }, [
-    h('strong', { textContent: 'Failed to load' }),
-    h('p', { textContent: error.message }),
-    h('div', { className: 'error-actions' }, retry),
-  ]);
+/**
+ * 页面级失败（未知路由 / 详情读不出来）：先把顶部清空（别留着上一页的标题和按钮），
+ * 再用弹框说清楚，关掉后回到上一级。不再给 Retry —— 东西真没了的时候重试没有意义。
+ */
+async function failRoute({ title, message, parent = 'home' }) {
+  viewHeadSlot().replaceChildren();
+  app.replaceChildren(h('div', { className: 'view-body-inner' }));
+  const openedAt = location.hash;
+  await openAlertDialog({ title, message });
+  // 弹框开着的时候如果用户自己跳走了，就别再抢方向。
+  if (location.hash === openedAt) location.hash = parent;
 }
 
 function setActive(route) {
@@ -66,11 +68,9 @@ function injectNavIcons() {
   }
 }
 
-async function render({ preserveScroll = false } = {}) {
+async function render() {
   stopRunStream();
   const sequence = ++renderSequence;
-  const currentScroller = scrollContainer();
-  const previousScroll = preserveScroll && currentScroller ? currentScroller.scrollTop : null;
   const rawHash = (location.hash || '').slice(1);
   let parts;
   try {
@@ -80,16 +80,24 @@ async function render({ preserveScroll = false } = {}) {
   }
   // 无锚点就是 Home（`#home` 与旧的 `#status` 也落到它）。
   const route = !parts[0] || parts[0] === 'status' ? 'home' : parts[0];
+  // 翻页状态只在模块内有效：换模块就清空（模块内列表与详情之间保留），回来从第 1 页开始。
+  if (route !== currentModule) {
+    resetPagedState();
+    currentModule = route;
+  }
   closeNavMenu();
   setActive(route);
   setNotice('');
-  viewHeadSlot().replaceChildren();
+  // 加载期间保留上一屏：不画骨架屏，新内容就绪后一次性替换（避免闪一下空白）。
   app.setAttribute('aria-busy', 'true');
-  if (!preserveScroll) app.replaceChildren(h('div', { className: 'view-body-inner' }, loadingView()));
 
   try {
     const load = viewFor(route, parts);
-    const content = load ? await load() : head('Not found', 'Select a page from the navigation.');
+    if (!load) {
+      await failRoute({ title: 'Page not found', message: 'Select a page from the navigation.' });
+      return;
+    }
+    const content = await load();
     if (sequence !== renderSequence) return;
     app.removeAttribute('aria-busy');
     // The run view renders itself (it repaints on stream events) and returns null.
@@ -97,13 +105,7 @@ async function render({ preserveScroll = false } = {}) {
   } catch (error) {
     if (sequence !== renderSequence) return;
     app.removeAttribute('aria-busy');
-    // 页面级失败就直接页面里报（error-box 带 Retry），不再额外弹一条同文案的 toast。
-    app.replaceChildren(h('div', { className: 'view-body-inner' }, errorView(error)));
-  } finally {
-    if (previousScroll !== null && sequence === renderSequence) {
-      const nextScroller = scrollContainer();
-      if (nextScroller) nextScroller.scrollTop = previousScroll;
-    }
+    await failRoute({ title: 'Failed to load', message: error.message, parent: parentHash(parts) });
   }
 }
 

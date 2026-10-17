@@ -1,26 +1,52 @@
 import { api } from '../lib/api.js';
-import { dataPanel, head, kv, pagedTable, panel, viewTitle } from '../lib/components.js';
+import { dataPanel, head, kv, pagedTable, panel, selectMenu, viewTitle } from '../lib/components.js';
 import { fragment, h } from '../lib/dom.js';
 import { codeBlock, encoded, formatDate, formatDuration, statusBadge } from '../lib/format.js';
 import { hashLink, subjectLink } from '../lib/links.js';
 
+// 操作类型按业务对象分组（Skill / Template / Run），组内按业务顺序（装载 → 分析 → 卸载 这种）。
+const TYPE_GROUPS = [
+  { label: 'Skill', values: ['load-skill', 'analyze-skill', 'unload-skill'] },
+  { label: 'Template', values: ['bind-table', 'archive-template', 'unarchive-template'] },
+  { label: 'Run', values: ['run-template', 'delete-run'] },
+];
+
 async function operationsView() {
-  const operations = await api('/api/operations');
-  const rows = operations.map((operation) => [
-    hashLink(operation.operation_id, `#operations/${encoded(operation.operation_id)}`),
-    statusBadge(operation.status),
-    h('span', { className: 'mono', textContent: operation.type || '—' }),
-    subjectLink(operation.subject),
-    h('span', { textContent: formatDate(operation.started_at || operation.created_at) }),
-    h('span', { className: 'mono', textContent: formatDuration(operation.duration_ms) }),
-  ]);
+  // 筛选要跟分页同源，所以 Type 走服务端过滤（`?type=`）：选项是固定的领域类型，
+  // 不随当前这页的数据变化（筛出来为空也是有效结果）。
+  let type = '';
+  const body = h('div', { className: 'panel-slot' });
+  const paint = async (page) => {
+    const table = await pagedTable({
+      label: 'Operations',
+      page,
+      headers: ['Operation ID', 'Status', 'Type', 'Subject', 'Started', 'Duration'],
+      load: async (target) => {
+        const data = await api(`/api/operations?page=${target}${type ? `&type=${encoded(type)}` : ''}`);
+        return {
+          ...data,
+          rows: data.items.map((operation) => [
+            hashLink(operation.operation_id, `#operations/${encoded(operation.operation_id)}`),
+            statusBadge(operation.status),
+            h('span', { className: 'mono', textContent: operation.type || '—' }),
+            subjectLink(operation.subject),
+            h('span', { textContent: formatDate(operation.started_at || operation.created_at) }),
+            h('span', { className: 'mono', textContent: formatDuration(operation.duration_ms) }),
+          ]),
+        };
+      },
+    });
+    body.replaceChildren(dataPanel(h('div', { className: 'panel-body flush' }, table)));
+  };
+  await paint();
   return fragment(
-    head('Operations'),
-    dataPanel(h('div', { className: 'panel-body flush' }, pagedTable(
-      ['Operation ID', 'Status', 'Type', 'Subject', 'Started', 'Duration'],
-      rows,
-      { label: 'Operations' },
-    ))),
+    head('Operations', '', selectMenu({
+      label: 'Filter by Type',
+      groups: TYPE_GROUPS,
+      // 换筛选条件回到第 1 页，否则会停在一个无意义的页号上。
+      onChange: (value) => { type = value; void paint(1); },
+    })),
+    body,
   );
 }
 

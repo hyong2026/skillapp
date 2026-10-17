@@ -17,6 +17,9 @@ function operationSummary(operation) {
     subject = input.run_id
       ? { type: 'run', id: input.run_id, label: input.template_name || input.run_id }
       : null;
+  } else if (operation?.type === 'delete-run' && input.run_id) {
+    // 删的是哪一次 Run：显示 Run ID（Template Name 在列表里另有出处，这里要唯一标识）。
+    subject = { type: 'run', id: input.run_id, label: input.run_id };
   } else if (operation?.type === 'bind-table' && templateId) {
     subject = { type: 'template', id: templateId, label: input.ref || templateId };
   } else if ((operation?.type === 'archive-template' || operation?.type === 'unarchive-template') && templateId) {
