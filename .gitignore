@@ -1,5 +1,6 @@
 .data/skills/*
 !.data/skills/README.md
+!.data/skills/package.json
 
 .data/mappings/*
 !.data/mappings/README.md

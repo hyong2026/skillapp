@@ -5,6 +5,7 @@ import {
   atomicWriteJson,
   generateRunId,
   normalizeOptions,
+  templateProblems,
   TERMINAL_STATUSES,
 } from '../core/run-template.js';
 import { HttpError, ReadModel } from './read-model.js';
@@ -43,6 +44,30 @@ function assertOperationId(operationId) {
 
 function generateOperationId(date = new Date()) {
   return generateRunId(date);
+}
+
+const ACTIVE_ITEM_STATUSES = new Set(['queued', 'running']);
+
+/**
+ * Run 落到终态时，行必须一起落终态。
+ *
+ * Run 是记录、行是它的明细：只把 run.status 改成 failed/canceled/interrupted，
+ * 明细里那行会永远停在 running —— 界面就成了「Run Failed + Item Running」，
+ * 而且 failed 计数还是 0，连 Retry 都不给。
+ */
+function settleItems(run, status, error = null) {
+  const items = Array.isArray(run.items) ? run.items : [];
+  const settled = items.filter((item) => ACTIVE_ITEM_STATUSES.has(item.status));
+  if (!settled.length) return 0;
+  for (const item of settled) {
+    item.status = status;
+    if (error) item.error = error;
+  }
+  const isSettled = (item) => !ACTIVE_ITEM_STATUSES.has(item.status);
+  run.completed = items.filter(isSettled).length;
+  run.succeeded = items.filter((item) => item.status === 'succeeded' || item.status === 'dry-run').length;
+  run.failed = items.filter((item) => item.status === 'failed').length;
+  return settled.length;
 }
 
 function summaryOfRun(run) {
@@ -120,6 +145,7 @@ class TaskRunner {
       run.status = 'interrupted';
       run.finished_at = new Date().toISOString();
       run.error = 'Server restarted while the run was active';
+      settleItems(run, 'interrupted');
       atomicWriteJson(file, run);
     }
   }
@@ -172,7 +198,7 @@ class TaskRunner {
         failed: run.failed ?? items.filter((item) => item.status === 'failed').length,
       },
       error: run.error
-        ? { code: 'RUN_FAILED', message: String(run.error), action: 'Open the Run for per-row details' }
+        ? { code: 'RUN_FAILED', message: String(run.error), action: 'Open the Run to see the failure details' }
         : null,
       lock_keys: job.lockKey ? [job.lockKey] : [],
     };
@@ -548,6 +574,7 @@ class TaskRunner {
       dryRun: input.dry_run ?? input.dryRun,
     });
     const selected = this.model.getTemplate(templateId);
+    this.assertRunnable(selected.template);
     const canonicalId = selected.template.template_id || templateId;
     const lockKey = `template:${canonicalId}`;
     const existing = this.locks.get(lockKey);
@@ -626,6 +653,8 @@ class TaskRunner {
     job.run.status = status;
     job.run.finished_at = new Date().toISOString();
     if (error) job.run.error = error;
+    // 行跟着 Run 落终态：失败的把 run 级错误一并写上，取消/中断的只改状态。
+    settleItems(job.run, status, status === 'failed' ? error : null);
     if (!job.run.dry_run && job.child !== null) {
       atomicWriteJson(path.join(this.model.runsDir, job.run.run_id, 'run.json'), job.run);
     } else if (!job.run.dry_run) {
@@ -748,10 +777,23 @@ class TaskRunner {
     }
   }
 
+  /**
+   * 起 worker 之前先在本地核对一遍（归档 / Skill 指纹 / cmd 语法）。
+   * 这些都不碰飞书，没必要建一个 Run 出来再把它标成 Failed —— 那样列表里多一条看不懂的空记录。
+   */
+  assertRunnable(template) {
+    const problems = templateProblems(template, this.root);
+    if (problems.length) {
+      // 弹框里是一行提示，不是日志：把多行的要点压成一句，别把缩进和换行原样塞进去。
+      throw new HttpError(422, 'TEMPLATE_NOT_RUNNABLE', problems.join(' ').replace(/\s*\n\s*/g, ' '), 'Fix the Template, then try again');
+    }
+  }
+
   preview(input = {}) {
     const templateId = String(input.template_id || '').trim();
     if (!templateId) throw new HttpError(400, 'INVALID_RUN', 'Template ID is required', 'Choose a Template and try again');
     const selected = this.model.getTemplate(templateId);
+    this.assertRunnable(selected.template);
     const templatePath = this.model.findTemplateFile(templateId);
     const options = normalizeOptions({
       trigger: input.trigger,

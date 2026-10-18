@@ -1,0 +1,4 @@
+{
+  "//": "内容层边界：这里装的是第三方 Skill 代码，用 Node 默认模块系统，不受仓库根 package.json 的 type 影响",
+  "private": true
+}

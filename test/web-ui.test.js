@@ -16,6 +16,7 @@ import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { skillHash } from '../src/core/skill-hash.js';
 import { createServer } from '../src/server/app.js';
+import { TaskRunner } from '../src/server/task-runner.js';
 
 const TOKEN = 'test-token';
 const AUTH = `Basic ${Buffer.from(`skillapp:${TOKEN}`).toString('base64')}`;
@@ -405,6 +406,11 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
       'tpl-bad', 'bad', 'node {skill.entry} -o {outdir}',
       [{ key: 'result', type: 'text', from: 'stdout.value', field_id: 'fldOut' }],
     ), null, 2));
+    // cmd 模板写错的：整块花括号但不成形，运行前就该被拒
+    write(ctx, 'templates/broken.template.json', JSON.stringify(templateFor(
+      'tpl-broken', 'ok', 'node {skill.entry} "{--format}"',
+      [{ key: 'result', type: 'text', from: 'stdout.value', field_id: 'fldOut' }],
+    ), null, 2));
 
     write(ctx, 'fake-lark.js', [
       "'use strict';",
@@ -527,6 +533,56 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
     assert.equal(missing.response.status, 404);
   });
 
+  test('M2 服务重启：Run 中断时，还挂在 running / queued 的行也一起落终态', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-recover-'));
+    const runDir = path.join(root, 'runs', 'run-1');
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({
+      run_id: 'run-1',
+      template_id: 'tpl',
+      status: 'running',
+      total: 2,
+      completed: 1,
+      succeeded: 1,
+      failed: 0,
+      items: [{ record_id: 'rec1', status: 'succeeded' }, { record_id: 'rec2', status: 'running' }],
+    }, null, 2));
+
+    new TaskRunner({ root, repoRoot: ROOT }); // 构造函数里就会核对一遍 .data/runs
+    const after = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8'));
+    assert.equal(after.status, 'interrupted');
+    assert.deepEqual(after.items.map((item) => item.status), ['succeeded', 'interrupted'], '明细跟着 Run 落终态');
+    assert.equal(after.completed, 2, '计数按收敛后的明细重算');
+    assert.equal(after.failed, 0);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('M2 cmd 模板写错：Preview / Run 都在开跑前拒绝，不产生半截的 Failed Run', async () => {
+    const preview = await requestJson(ctx, '/api/templates/tpl-broken/preview', {
+      method: 'POST',
+      body: { trigger: 'incremental' },
+    });
+    assert.equal(preview.response.status, 422);
+    assert.match(preview.body.error.message, /malformed placeholder: \{--format\}/);
+
+    const started = await requestJson(ctx, '/api/runs', {
+      method: 'POST',
+      body: { template_id: 'tpl-broken', trigger: 'incremental' },
+    });
+    assert.equal(started.response.status, 422, JSON.stringify(started.body));
+    assert.equal(started.body.error.code, 'TEMPLATE_NOT_RUNNABLE');
+    assert.match(started.body.error.action, /Fix the Template/);
+
+    // 拒绝发生在起 worker 之前：磁盘上不该留下这条 Template 的任何 Run
+    const runs = await requestJson(ctx, '/api/runs');
+    assert.ok(!runs.body.data.items.some((run) => run.template_id === 'tpl-broken'), '不该留下 Failed 的 Run');
+    const leftOver = fs.readdirSync(path.join(ctx.root, 'runs')).filter((name) => {
+      const file = path.join(ctx.root, 'runs', name, 'run.json');
+      return fs.existsSync(file) && JSON.parse(fs.readFileSync(file, 'utf8')).template_id === 'tpl-broken';
+    });
+    assert.deepEqual(leftOver, [], '连 Run 目录都不该建出来');
+  });
+
   test('M2 同一 Template 加锁，取消会终止执行且不会继续写表', async () => {
     const started = await requestJson(ctx, '/api/runs', {
       method: 'POST',
@@ -553,6 +609,12 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
       ({ body }) => body.data.status === 'canceled',
     );
     assert.equal(finished.body.data.status, 'canceled');
+    // Run 落了终态，明细也得跟着落：不能留下一个永远 Running 的行
+    assert.deepEqual(
+      finished.body.data.items.map((item) => item.status),
+      ['canceled'],
+      '取消时行与 Run 一起落终态',
+    );
     await streamPromise;
     await sleep(900);
     assert.equal(fs.existsSync(path.join(ctx.root, 'skills', 'slow', 'cancel-marker.txt')), false);
@@ -856,14 +918,14 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
     assert.equal(detail.response.status, 200, '按 Template ID 仍要能打开');
     assert.ok(detail.body.data.template.archived_at, '要带上归档时间');
 
+    // 归档的 Template 不能跑：拒绝发生在本地核对里，所以连 Run 记录都不会产生。
     const started = await requestJson(ctx, '/api/runs', {
       method: 'POST',
       body: { template_id: templateId, trigger: 'incremental' },
     });
-    assert.equal(started.response.status, 202);
-    const refused = await waitForRun(ctx, started.body.data.run_id);
-    assert.equal(refused.status, 'failed', '归档的 Template 不能跑');
-    assert.match(String(refused.error || ''), /archived/, '错误里要说清是被冻结了');
+    assert.equal(started.response.status, 422, JSON.stringify(started.body));
+    assert.equal(started.body.error.code, 'TEMPLATE_NOT_RUNNABLE');
+    assert.match(started.body.error.message, /archived/, '错误里要说清是被冻结了');
 
     const unarchive = await requestJson(ctx, `/api/templates/${templateId}/unarchive`, { method: 'POST', body: {} });
     const restored = await waitForOperationId(ctx, unarchive.body.data.operation_id);

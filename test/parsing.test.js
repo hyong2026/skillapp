@@ -5,7 +5,8 @@
  *   1. `.env`      注释 / 引号 / export，且不覆盖已有环境变量（load-env.js）
  *   2. lark-cli    stdout 里夹横幅或杂音时仍能取出 JSON（lark.js）
  *   3. SKILL.md    frontmatter 里取 description，含块标量（skill-meta.js）
- *   4. cmd 分词    引号内的空白算同一个 argv（prompt 型 Skill 的整段指令）
+ *   4. cmd 分词与拼装 引号内的空白算同一个 argv；引号里的 {key...} 展开成文本列表
+ *   6. 运行前核对  cmd 语法错在开跑前就报出来，不等某一行跑起来
  *   5. codex 事件流 prompt 型 Skill 的 live.log（live-log.js）
  *
  * 前两处都踩过坑：lark-cli 升级后往 stdout 打了一行横幅，早期实现把整段丢给
@@ -20,7 +21,8 @@ import { lark, parseOutput } from '../src/core/lark.js';
 import { loadEnv, parseEnv } from '../src/core/load-env.js';
 import { createCodexEvents } from '../src/core/live-log.js';
 import { frontmatterValue } from '../src/core/skill-meta.js';
-import { tokenize, withCodexEvents } from '../src/core/run-template.js';
+import { skillHash } from '../src/core/skill-hash.js';
+import { buildArgv, templateProblems, tokenize, withCodexEvents } from '../src/core/run-template.js';
 
 test('.env：注释、引号、export 都能解析，且不覆盖已有环境变量', () => {
   const parsed = parseEnv([
@@ -104,6 +106,56 @@ test('cmd 分词：引号内的空白算同一个 argv，成对参数仍写成�
   assert.deepEqual(tokenize('node {skill.entry} {--format format} -o {outdir}'), ['node', '{skill.entry}', '{--format format}', '-o', '{outdir}']);
 });
 
+test('cmd 拼装：引号里的 {key...} 展开成文本列表，可选值留空就是空串', () => {
+  const vars = {
+    skill: { entry: '/s/entry.js' },
+    outdir: '/tmp/out',
+    content: '三条笔记',
+    refs: ['/tmp/a.png', '/tmp/b.png'],
+    notes: undefined,
+  };
+  assert.deepEqual(
+    buildArgv('node {skill.entry} "内容={content}；参考图={refs...}；备注={notes}"', vars),
+    ['node', '/s/entry.js', '内容=三条笔记；参考图=/tmp/a.png /tmp/b.png；备注='],
+  );
+  // 文本里的 {key} 拿到数组就是逗号连接；一个都没有时不炸，渲染成空串
+  assert.deepEqual(buildArgv('x "参考图={refs}"', vars), ['x', '参考图=/tmp/a.png, /tmp/b.png']);
+  assert.deepEqual(buildArgv('x "参考图={refs...}"', { ...vars, refs: [] }), ['x', '参考图=']);
+  // 位置参数的三种写法不受影响
+  assert.deepEqual(buildArgv('node {skill.entry} {refs...} -o {outdir} {--fmt content}', vars),
+    ['node', '/s/entry.js', '/tmp/a.png', '/tmp/b.png', '-o', '/tmp/out', '--fmt', '三条笔记']);
+});
+
+test('cmd 拼装：位置参数写错才报错（未定义 / 数组没带 ...）', () => {
+  const vars = { refs: ['/tmp/a.png'], text: undefined };
+  assert.throws(() => buildArgv('node {text}', vars), /\{text\} in cmd is undefined/);
+  assert.throws(() => buildArgv('node {refs}', vars), /write \{refs\.\.\.\} to expand it/);
+  assert.throws(() => buildArgv('node {text...}', vars), /not an array/);
+  // 引号里的可选值留空不算错——这是 prompt 型 Skill 的常态
+  assert.deepEqual(buildArgv('node "备注={text}"', vars), ['node', '备注=']);
+});
+
+test('运行前核对：cmd 语法错、变量错都在开跑前说清楚', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-preflight-'));
+  const skillDir = path.join(root, '.data', 'skills', 'ref');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# stub\n');
+  const base = {
+    skill: { path: 'skills/ref', hash: skillHash(skillDir), entry: 'SKILL.md' },
+    target: { primary_field_id: 'fldP' },
+    mapping: { cmd: '', inputs: [{ key: 'text', field_id: 'fldIn', type: 'text' }], outputs: [] },
+  };
+  const problemsFor = (cmd) => templateProblems({ ...base, mapping: { ...base.mapping, cmd } }, path.join(root, '.data'));
+
+  assert.deepEqual(problemsFor('node {skill.entry} "{text}"'), [], '正常的 prompt 指令不该有问题');
+  assert.match(problemsFor('node {skill.entry} "{--format}"').join('\n'), /malformed placeholder: \{--format\}/);
+  assert.match(problemsFor('node {skill.entry} "{typo}"').join('\n'), /unknown variables:\n  - typo/);
+  assert.match(problemsFor('node {skill.entry} {missing}').join('\n'), /Input is not mapped but cmd needs it:\n  - missing/);
+  // 归档 / Skill 指纹不符同样在本地就拦下
+  assert.match(templateProblems({ ...base, archived_at: '2026-01-01' }, path.join(root, '.data')).join('\n'), /Template is archived/);
+  assert.match(templateProblems({ ...base, skill: { ...base.skill, hash: 'sha256:nope' } }, path.join(root, '.data')).join('\n'), /Skill hash mismatch/);
+});
+
 test('codex 事件流：只留 msg / cmd / error，答案取最后一条 agent 消息', () => {
   const events = createCodexEvents();
   const jsonl = [
@@ -130,6 +182,14 @@ test('codex 事件流：只留 msg / cmd / error，答案取最后一条 agent �
   ].join('\n'));
   assert.equal(events.finalMessage(), '{"count":2}');
   assert.equal(events.lastError(), 'no model to draw with');
+});
+
+test('codex 事件流：命令原样进 live.log，行内不截断', () => {
+  const events = createCodexEvents();
+  const command = `/bin/zsh -lc 'sqlite3 ~/.codex/logs_2.sqlite "select ts,level,target from logs where feedback_log_body like '%image_gen%' order by id desc limit 5"'`;
+  const out = events.push(`${JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', command } })}\n`);
+  assert.equal(out, `[cmd] ${command}\n`, '排查问题时最碍事的就是行尾的 "..."');
+  assert.ok(!out.includes('...'), '不该出现省略号');
 });
 
 test('codex 事件流：不是 JSON 的行原样透传，半行留到 flush', () => {

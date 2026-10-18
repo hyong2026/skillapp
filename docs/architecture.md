@@ -33,7 +33,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 | `src/core/template.js` | Template 身份（Skill + 目标表）与文件名、按目标定位、归档状态 |
 | `src/core/unload-skill.js` | 卸载影响清单、plan hash 和受控删除 |
 | `src/core/delete-run.js` | 逻辑删除单次 Run（写 `deleted_at`，文件保留） |
-| `src/core/run-template.js` | Run 预检、选行、执行、回写、进度与状态 |
+| `src/core/run-template.js` | Run 预检、选行、执行、回写、进度与状态；失败行的断点续跑（复用产物、只补回写） |
 | `src/core/lark.js` | `lark-cli` 封装：同步 `lark`（一次性调用）与异步 `larkAsync`（按行调用，不阻塞事件循环）；可注入替身，测试用 |
 | `src/core/settings.js` | 设置白名单，读写仓库根 `.env` |
 | `src/server/app.js` | HTTP API、SSE、鉴权、同源写保护和静态资源 |
@@ -90,8 +90,8 @@ queued → running → completed | failed | canceled | interrupted
 
 ## 代码形态
 
-- `src/` 与 `test/` 都是 ES 模块（各有一份 `{"type": "module"}` 的 `package.json`），运行时**零依赖**，需要 Node ≥ 22。
-- 根 `package.json` 故意不声明 `type`：`.data/` 因此保持 Node 默认行为——装载进来的 Skill 可能是 Node、也可能是 Python，语言由 Skill 自己声明。
+- 整个仓库都是 ES 模块：只在**根** `package.json` 声明 `"type": "module"`，运行时**零依赖**，需要 Node ≥ 22。
+- **内容层自带边界文件** `.data/skills/package.json`（不声明 `type`，跟着仓库走）：Node 只认最近的 package.json，装载进来的第三方 Skill 代码仍按 Node 默认解析，根上的 `type: module` 不会连坐 CJS 的 Skill。见 [.data/README.md](../.data/README.md)。
 - 测试用 Node 自带 runner（`node --test`）：真跑 CLI 与执行主逻辑，只把 `src/core/lark` 换成内存替身，写操作全在系统临时目录。
 
 ## 什么时候该再分层
@@ -131,7 +131,7 @@ queued → running → completed | failed | canceled | interrupted
 
 - 部署形态：单实例、可信环境，默认只监听 `127.0.0.1`。
 - Skill 来源：本地 Skill 根目录的绝对路径。
-- 分析来源：由 `analyze-skill` 产出；默认通过 `codex exec` 调用，可用 `SKILLAPP_ANALYZE_COMMAND` 替换。为了少花回合，prompt 里**内联**了规则、文件清单（排除 `node_modules`）与 SKILL.md，结果用 `-o`（`--output-last-message`）从"最后一条消息"收、由 SkillApp 自己落盘；同时用 `-c project_doc_max_bytes=0` 关掉仓库 AGENTS.md 注入。模型与推理强度决定每回合延迟，是 analyze 耗时的主要变量。
+- 分析来源：由 `skill-analyzer` 产出；默认通过 `codex exec` 调用，可用 `SKILLAPP_ANALYZE_COMMAND` 替换。为了少花回合，prompt 里**内联**了规则、文件清单（排除 `node_modules`）与 SKILL.md，结果用 `-o`（`--output-last-message`）从"最后一条消息"收、由 SkillApp 自己落盘；同时用 `-c project_doc_max_bytes=0` 关掉仓库 AGENTS.md 注入。模型与推理强度决定每回合延迟，是 analyze 耗时的主要变量。
 - 飞书身份：全站共用一个 `lark-cli` 身份。
 - Template 保留在本机文件系统，界面可查看完整 JSON。
 

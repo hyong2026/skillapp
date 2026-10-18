@@ -59,7 +59,7 @@ function fileInventory(dir, prefix = '', out = []) {
 }
 
 function analyzerRules() {
-  return fs.readFileSync(path.join(ROOT, '.agents', 'skills', 'analyze-skill', 'SKILL.md'), 'utf8');
+  return fs.readFileSync(path.join(ROOT, '.agents', 'skills', 'skill-analyzer', 'SKILL.md'), 'utf8');
 }
 
 function promptFor(ref, skillDir, mappingPath, { outputPath = null } = {}) {
@@ -86,7 +86,7 @@ ${skillMd}
 - 以实现为准：按上面的清单读入口实现即可。**SkillApp 自己的 src/（执行器、校验器、mapping.js 的约束）不是分析对象，不要去读、也不要找所谓"prompt 运行器"** —— 规则已经写全，含 prompt 型 Skill（清单里没有代码）的 cmd 形态。
 - 也不要搜索其它 *.mapping.json 样例、不要执行 find /、不要用 cat -A / od / hexdump 反复看同一个文件。
 - 所有判断都已经落进 Mapping（列、类型、必填、默认值、transform），没有独立报告、没有 questions。
-- ${delivery} 这与 analyze-skill 规则里"写 .data/mappings/<ref>.mapping.json"的分工不同：落盘由 SkillApp 负责。`;
+- ${delivery} 这与 skill-analyzer 规则里"写 .data/mappings/<ref>.mapping.json"的分工不同：落盘由 SkillApp 负责。`;
 }
 
 /** 从文本里取 JSON：容忍 ```json 围栏，取最外层 `{...}`。 */

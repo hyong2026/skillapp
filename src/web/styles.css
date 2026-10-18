@@ -614,10 +614,11 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 .table-run-items col:nth-child(4) { width: 124px; }
 .table-run-items col:nth-child(5) { width: auto; }
 .table-run-items td:nth-child(1), .table-run-items td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.live-logs { display: grid; gap: 14px; }
-.live-log h3 { margin-bottom: 8px; font: 600 var(--text-xs)/1.4 var(--font-mono); color: var(--muted); }
-.live-log .panel { margin-bottom: 0; box-shadow: none; }
-.live-log pre { max-height: 280px; }
+/* Run Item 的日志：Live / Stdout / Stderr 依次排下去，**一行一个**、铺满宽度
+   （日志行很长，并排两个会窄得没法读），各自固定高度、内部滚动。 */
+.log-row { display: grid; gap: 12px; }
+.log-row > .panel { margin-bottom: 0; }
+.log-panel pre { height: 320px; }
 
 .table-wrap { max-width: 100%; }
 /* 只有分页列表自己做纵向滚动（表头才需要 sticky 锁住）；其余表格跟随页面滚动。 */
@@ -633,6 +634,8 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 .sidebar,
 .messages-list,
 pre { overscroll-behavior: none; }
+/* 代码块（pre）同样关掉本地回弹 —— 代价是滚轮在它身上被整个吃掉（连"没有滚动条"的代码块
+   也一样），由 src/web/lib/scroll-chain.js 接住转给页面：回弹和"继续滚页面"两件事才同时成立。 */
 
 /* 列表页：面板（以及 Operations / Templates 包在外面那层重画容器）吃掉页面剩余高度，
    表体自己滚动（表头 sticky），翻页条钉在面板底部。高度完全跟着窗口走，
@@ -766,7 +769,6 @@ pre {
 .json-string { color: var(--json-string); }
 .json-number { color: var(--json-number); }
 .json-literal { color: var(--json-literal); }
-.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .kv { display: grid; grid-template-columns: 132px minmax(0, 1fr); align-items: center; gap: 8px 14px; margin: 0; }
 .kv dt { align-self: center; text-transform: capitalize; }
 .kv dd { align-self: center; margin: 0; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
@@ -774,6 +776,8 @@ pre {
 .artifact-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .artifact {
   min-width: 0;
+  /* 卡片等高：图片区固定高度，卡片再兜一个最小高度 —— 没图的（.md / 目录）也跟有图的一样高。 */
+  min-height: 180px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -783,7 +787,7 @@ pre {
   background: var(--surface-2);
 }
 .artifact a { overflow-wrap: anywhere; }
-.artifact img { display: block; width: 100%; max-height: 160px; margin-top: 2px; border: 1px solid var(--line); border-radius: 6px; object-fit: cover; }
+.artifact img { display: block; width: 100%; height: 112px; margin-top: 2px; border: 1px solid var(--line); border-radius: 6px; object-fit: cover; }
 .empty {
   padding: 28px 18px;
   border: 1px dashed var(--line-strong);
@@ -982,7 +986,6 @@ label.modal-field { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .topbar { width: 190px; padding: 16px 12px; }
   .view-head, .view-body-inner { padding-left: 16px; padding-right: 16px; }
   .view-head { --head-pad-top: 16px; --head-pad-bottom: 16px; }
-  .detail-grid { grid-template-columns: 1fr; }
 }
 
 /* Below this width the sidebar would squeeze the content too much: the header

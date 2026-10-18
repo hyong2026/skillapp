@@ -1,7 +1,8 @@
 {
   "name": "skillapp",
-  "version": "0.3",
+  "version": "0.6",
   "private": true,
+  "type": "module",
   "description": "把 Skill 装载、映射到飞书多维表格并批量执行的本地控制台",
   "engines": {
     "node": ">=22"

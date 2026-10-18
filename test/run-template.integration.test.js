@@ -62,6 +62,18 @@ function makeFixture(mode) {
     : mode === 'cwd'
       ? 'process.stdout.write(JSON.stringify({ value: process.cwd() }) + "\\n");\n'
     // 长跑场景：先打一行、停一会儿再打结果 —— 用来验证 stdout 是"边跑边落盘"
+    // 宿主注入的通用生图入口：Skill 靠这个环境变量找到 image-generator（见 .agents/skills/image-generator）
+    // 产物形态：写一张真图，最后一条消息给 {"files":[绝对路径],"count":N}（和 image-generator / prompt 型的约定一致）
+    : mode === 'attachment-out' || mode === 'bad-expression' || mode === 'resume'
+      ? `const fs = require('fs');\nconst path = require('path');\n`
+        + `const outdir = process.argv[process.argv.indexOf('-o') + 1];\n`
+        + `const file = path.join(outdir, 'card-1.png');\n`
+        + `fs.writeFileSync(file, Buffer.from('89504e470d0a1a0a', 'hex'));\n`
+        // 跑一次记一次：resume 场景靠它证明"Skill 只跑了一次"
+        + `fs.appendFileSync(${JSON.stringify(path.join(root, 'skill-runs.log'))}, 'run\\n');\n`
+        + `process.stdout.write(JSON.stringify({ files: [file], count: 1 }) + '\\n');\n`
+    : mode === 'host-env'
+      ? 'process.stdout.write(JSON.stringify({ value: process.env.SKILLAPP_IMAGE_CLI ?? "" }) + "\\n");\n'
     : mode === 'streaming'
       ? 'process.stdout.write("first-line\\n");\n'
         + 'setTimeout(() => { process.stdout.write(JSON.stringify({ value: "ok" }) + "\\n"); }, 1200);\n'
@@ -90,10 +102,19 @@ function makeFixture(mode) {
           : [],
       outputs: mode === 'no-writeback'
         ? []
-        : [{ key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' }],
+        : mode === 'attachment-out' || mode === 'resume'
+          ? [{ key: 'files', field_id: 'fldOut', type: 'attachment', from: 'stdout.files[]' }]
+          : mode === 'bad-expression'
+            ? [{ key: 'files', field_id: 'fldOut', type: 'attachment', from: 'stdout.files[].path' }]
+            : [{ key: 'result', field_id: 'fldOut', type: 'text', from: 'stdout.value' }],
     },
     limits: { timeout_s: 5 },
   };
+  // 产物模式的 out 列是附件：假表也得是 attachment，否则 preflight 会按"类型不符"拒跑。
+  const fields = mode === 'attachment-out' || mode === 'bad-expression' || mode === 'resume'
+    ? FIELDS.map((f) => (f.id === 'fldOut' ? { ...f, type: 'attachment' } : f))
+    : FIELDS;
+  if (mode === 'resume') fs.writeFileSync(path.join(root, 'block-upload'), '');
   const templatePath = path.join(root, '.data', 'templates', 'ref.template.json');
   fs.writeFileSync(templatePath, JSON.stringify(template, null, 2));
 
@@ -114,7 +135,7 @@ function makeFixture(mode) {
       ? ['rec1', 'rec2'].map((record_id) => ({ record_id, values: ['', '', ''] }))
     : [{ record_id: 'rec1', values: ['', LINK_CELL, ''] }];
 
-  return { root, templatePath, fields: FIELDS, rows };
+  return { root, templatePath, fields, rows };
 }
 
 /** 假的多维表格：内存表，记下每次调用的分页参数与回读次数。 */
@@ -123,7 +144,12 @@ function fakeLarkSource(fields, rows) {
 
 const FIELDS = ${JSON.stringify(fields)};
 const rows = ${JSON.stringify(rows)};
-const state = { rows, listCalls: [], getCalls: 0, batchUpdates: 0, updates: [], asyncCalls: [] };
+const fs = require('node:fs');
+const path = require('node:path');
+// 上传默认成功；fixture 里放了 block-upload 就失败 —— resume 场景靠它把行卡在"Skill 已跑完、只差回写"。
+const uploadBlocked = () => fs.existsSync(path.join(process.env.SKILLAPP_ROOT || '.', 'block-upload'));
+
+const state = { rows, listCalls: [], getCalls: 0, batchUpdates: 0, updates: [], uploads: [], asyncCalls: [] };
 
 exports.state = state;
 // 异步实现：回写故意慢一拍并记下窗口，用来证明按行调用真的走的是异步路径（不阻塞事件循环）。
@@ -164,6 +190,11 @@ exports.lark = (args) => {
     state.updates.push(JSON.parse(flag('--json')));
     return { ok: true, data: {} };
   }
+  if (cmd === '+record-upload-attachment') {
+    if (uploadBlocked()) throw new Error('lark-cli base +record-upload-attachment failed: token expired');
+    state.uploads.push({ record_id: flag('--record-id'), field_id: flag('--field-id'), files: args.flatMap((a, i) => (a === '--file' ? [args[i + 1]] : [])) });
+    return { ok: true, data: {} };
+  }
   throw new Error('未打桩的 lark 调用: ' + args.join(' '));
 };
 `;
@@ -174,7 +205,7 @@ async function runWorker(mode) {
   process.env.SKILLAPP_ROOT = root;
   process.env.SKILLAPP_DATA_DIR = path.join(root, '.data');
   const fakePath = path.join(root, 'fake-lark.cjs');
-  fs.writeFileSync(fakePath, fakeLarkSource(FIELDS, rows));
+  fs.writeFileSync(fakePath, fakeLarkSource(fields, rows));
   process.env.SKILLAPP_LARK_MODULE = fakePath;
 
   const stdout = [];
@@ -188,8 +219,8 @@ async function runWorker(mode) {
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
   process.argv = ['node', RUN_TEMPLATE, templatePath];
-  if (!['logs', 'no-writeback', 'cwd', 'unmapped-output', 'concurrent', 'streaming'].includes(mode)) process.argv.push('--dry-run');
-  if (mode === 'incremental') process.argv.push('--incremental');
+  if (!['logs', 'no-writeback', 'cwd', 'unmapped-output', 'concurrent', 'streaming', 'host-env', 'attachment-out', 'bad-expression', 'resume'].includes(mode)) process.argv.push('--dry-run');
+  if (mode === 'incremental' || mode === 'resume') process.argv.push('--incremental');
 
   // streaming：跑的过程中盯着 stdout.log，验证"第一行已经落盘时结果行还没出现"
   const midRun = { sawFirstBeforeResult: false };
@@ -211,6 +242,12 @@ async function runWorker(mode) {
   try {
     const cli = await import(pathToFileURL(RUN_TEMPLATE).href);
     await cli.mainPromise;
+    if (mode === 'resume') {
+      // 第一次：Skill 跑完、上传失败 → 行失败。修好之后重试（新的 import 就是新的一次 Run）。
+      fs.rmSync(path.join(root, 'block-upload'), { force: true });
+      const retry = await import(`${pathToFileURL(RUN_TEMPLATE).href}?round=2`);
+      await retry.mainPromise;
+    }
   } catch (err) {
     if (err instanceof ExitCalled) exitCode = err.code;
     else harnessError = err.stack || String(err);
@@ -263,6 +300,7 @@ async function runWorker(mode) {
     getCalls: table.getCalls,
     batchUpdates: table.batchUpdates,
     updates: table.updates,
+    uploads: table.uploads,
     asyncCalls: table.asyncCalls,
     dataDir: process.env.SKILLAPP_DATA_DIR,
     runStatus,
@@ -282,6 +320,26 @@ async function runWorker(mode) {
     logs,
     logReadError,
     midRun,
+    skillRuns: fs.existsSync(path.join(root, 'skill-runs.log'))
+      ? fs.readFileSync(path.join(root, 'skill-runs.log'), 'utf8').trim().split('\n').length
+      : 0,
+    resumeRuns: mode === 'resume'
+      ? fs.readdirSync(runsDir).filter((name) => name !== 'old-run')
+        // 按开始时间排：run_id 只到秒，同一秒的两次只差随机后缀，排序不可靠
+        .map((runId) => JSON.parse(fs.readFileSync(path.join(runsDir, runId, 'run.json'), 'utf8')))
+        .sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)))
+        .map((run) => {
+        const item = (run.items || [])[0] || {};
+        const recordDir = path.join(runsDir, run.run_id, 'rec1');
+        return {
+          run_id: run.run_id,
+          status: run.status,
+          item: { status: item.status, stage: item.stage, ms: item.ms, error: item.error, resumed_from: item.resumed_from },
+          recordFiles: fs.existsSync(recordDir) ? fs.readdirSync(recordDir).sort() : [],
+          artifacts: fs.existsSync(path.join(recordDir, 'artifacts')) ? fs.readdirSync(path.join(recordDir, 'artifacts')).sort() : [],
+        };
+      })
+      : null,
   }) + '\n');
 }
 
@@ -354,7 +412,7 @@ if (process.argv.includes('--worker')) {
     const out = scenario('logs');
     assert.equal(out.exitCode, null, out.errors.join("\n"));
     assert.equal(out.logReadError, null);
-    assert.deepEqual(out.logs.recordFiles, ['artifacts', 'logs']);
+    assert.deepEqual(out.logs.recordFiles, ['artifacts', 'logs', 'stdout.json'], '行目录里还留着解析后的 stdout（续跑与排查用）');
     assert.deepEqual(out.logs.logFiles, ['stderr.log', 'stdout.log']);
     assert.equal(out.logs.stdout, '{"value":"ok"}\n', 'stdout 原样落盘');
     assert.equal(out.logs.stderr, 'warn-line\n', 'stderr 原样落盘');
@@ -422,6 +480,52 @@ if (process.argv.includes('--worker')) {
     assert.equal(writes.length, 2, '两行的回写都该走 larkAsync');
     assert.ok(writes[0].started < writes[1].ended && writes[1].started < writes[0].ended,
       `两行的回写窗口应重叠：${JSON.stringify(writes)}`);
+  });
+
+  test('产物是路径数组：from 写 stdout.files[] 就能上传', () => {
+    const out = scenario('attachment-out');
+    assert.equal(out.exitCode, null, out.errors.join('\n'));
+    assert.equal(out.runStatus, 'completed');
+    assert.equal(out.uploads.length, 1, '附件产出要真的上传');
+    assert.match(out.uploads[0].files[0], /rec1\/artifacts\/card-1\.png$/);
+    assert.deepEqual(out.updates[0].update_records.rec1, { fldOut: null }, '上传前先清空该列');
+  });
+
+  test('产物表达式写错（路径数组却按对象取 .path）：报错要点出实际形状', () => {
+    const out = scenario('bad-expression');
+    assert.equal(out.runStatus, 'failed');
+    assert.match(out.runItems[0].error, /Expression resolved to no file paths: stdout\.files\[\]\.path/);
+    assert.match(out.runItems[0].error, /stdout\.files is an array of string/, '别让人去翻 stdout.log 才知道差在哪');
+    assert.equal(out.uploads.length, 0, '解析不出路径就不该上传');
+  });
+
+  test('Retry 断点续跑：上次 Skill 已跑完、只是回写失败 → 这次不再跑 Skill，直接复用产物', () => {
+    const out = scenario('resume');
+    assert.equal(out.exitCode, null, out.errors.join('\n'));
+
+    const [first, second] = out.resumeRuns;
+    assert.equal(first.status, 'failed', '第一次卡在回写（上传）失败');
+    assert.equal(first.item.stage, 'upload');
+    assert.match(first.item.error, /token expired/);
+
+    assert.equal(second.status, 'completed');
+    assert.equal(out.skillRuns, 1, 'Skill 只该跑一次：第二次复用了上一次的产物');
+    assert.equal(second.item.resumed_from, first.run_id, '新 Run 要记下是从哪一份续的');
+    assert.equal(second.item.ms, null, '续跑没跑 Skill，也就没有执行耗时');
+    assert.deepEqual(second.artifacts, ['card-1.png'], '产物要搬进新 Run 的行目录');
+    assert.ok(second.recordFiles.includes('stdout.json'), '新 Run 也留下一份 stdout.json，以后还能续');
+
+    assert.equal(out.uploads.length, 1, '上传只发生在第二次');
+    assert.match(out.uploads[0].files[0], new RegExp(`${second.run_id}/rec1/artifacts/card-1\\.png$`), '上传的是新 Run 里的那份产物');
+  });
+
+  test('宿主把生图入口（SKILLAPP_IMAGE_CLI）注入到 Skill 子进程', () => {
+    const out = scenario('host-env');
+    assert.equal(out.exitCode, null, out.errors.join('\n'));
+    assert.equal(out.runStatus, 'completed');
+    const cliPath = out.updates[0].update_records.rec1.fldOut;
+    assert.match(cliPath, /image-generator\/scripts\/generate\.js$/);
+    assert.ok(fs.existsSync(cliPath), `注入的路径要真的存在：${cliPath}`);
   });
 
   test('长跑的 Skill：stdout 边跑边落盘，进程还在跑时日志已经可读', () => {

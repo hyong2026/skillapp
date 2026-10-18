@@ -8,7 +8,7 @@
 
 图形控制台是 SkillApp 的控制台，**不是第二个执行引擎**：CLI、HTTP、测试与控制台共用 `src/core/` 里的同一份业务逻辑。
 
-分析由 [`analyze-skill`](../.agents/skills/analyze-skill/) 完成。点击 `Analyze` 后服务端调用本地分析器（默认 `codex exec`）生成 Mapping，默认低推理强度；可用 `SKILLAPP_ANALYZE_MODEL`、`SKILLAPP_ANALYZE_REASONING_EFFORT` 调整，见 [cli.md](cli.md#环境变量)。
+分析由 [`skill-analyzer`](../.agents/skills/skill-analyzer/) 完成。点击 `Analyze` 后服务端调用本地分析器（默认 `codex exec`）生成 Mapping，默认低推理强度；可用 `SKILLAPP_ANALYZE_MODEL`、`SKILLAPP_ANALYZE_REASONING_EFFORT` 调整，见 [cli.md](cli.md#环境变量)。
 
 ### 成功标准
 
@@ -57,19 +57,21 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - 右上角动作：`Run`、`Archive` / `Unarchive`。
   - `Run` 先做一次 dry-run 预览。弹框固定列出 `Lark Base URL / Trigger / Rows in table / Rows to process`（未加载出来的值是 `—`；`Lark Base URL` 打开时就按 Target 填好，不依赖预览、勾选 All Rows 也不会刷新，长链接整段换行）；**`All Rows` 勾选框在弹框左下角**，切换即重新预览、弹框高度不变，再点弹框里的 `Run` 才真正提交。失败（如飞书未授权）也在弹框里给出可操作提示。没有 Preview 按钮——预览已经成为 Run 的第一步。
   - 没有要跑的行时，`Rows to process` 会是 `0`，弹框里的 `Run` 也会被禁用。
+  - Template 不可跑时（已归档、Skill 指纹不符、`cmd` 模板写错、位置参数用了未映射的列），**预览阶段就在弹框里说清楚**，点 `Run` 也不会产生记录——不会先建一条 Failed 的 Run 让人对着空白明细猜。
   - 归档 = 冻结：文件保留、从列表消失、不能跑；解冻即恢复。两者都写进 Operations。
 
 ### Runs
 
 - 列表：`Run ID / Status / Template Name / Trigger / Succeeded / Total / Started`；右上角 `Show Deleted` 勾选框（逻辑删除的 Run 默认不列，勾上才出现，行内带 `Deleted` 徽标）与 `All Triggers` 下拉（服务端过滤）。
-- 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Work Hash）；有错误时多一块 `Error` 面板（按日志渲染：带行号、整段是 JSON 才高亮），`Run Items` 表。日志一律点进 Run Item 看，这一页不重复展示。
-- Run Item 详情：状态、阶段、耗时、错误、Input Hash、Artifacts 卡片；日志分两套 —— prompt 型给 `Live Log`（`live.log`，由 SSE 实时追加；滚动**贴底才跟随**——本来就停在末尾时新输出自动跟到底，往上翻看历史时不会被拽回去），脚本型跑完后给 `Stdout Logs` / `Stderr Logs`。
-- 运行中的 Run 可 `Cancel`；终态且有失败行时可 `Retry`（等价于再跑一次增量，产生新 Run）；终态可 `Delete`（确认弹框 → `delete-run` 操作，**逻辑删除**：只打 `deleted_at`，文件/日志/产物都留着，所以 Message 与 Operations 里的链接照样打得开，详情页显示 `Deleted` 徽标且不再给 Delete 按钮；没有反向操作，也不释放磁盘）。跑着的 Run 要先取消。
+- 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Work Hash）；有错误时多一块 `Error` 面板（按日志渲染：带行号、整段是 JSON 才高亮；Run 半路失败时会补一句影响了几行），`Run Items` 表（Duration 同样格式化）。日志一律点进 Run Item 看，这一页不重复展示。
+- Run Item 详情：Summary（Status、Stage、Duration、`Resumed From`（续跑时才有）、Input Hash）+ 独立的 `Error` 面板 + Artifacts 卡片 + 日志面板。`Duration` 走同一个 `formatDuration`（`404 ms` / `1.5 s` / `1m 8s` / `2m`，整分钟不写秒），Runs、Operations、Run Item 共用。
+- Run Item 的日志：`Live Logs` / `Stdout Logs` / `Stderr Logs` **一行一个**，每块**固定高度、内部滚动**（打开时都定位到最后一行；滚到头再滚会把页面接着滚下去），**只显示真的有数据的那些**——prompt 型通常给 `Live Logs`（由 SSE 实时追加，**贴底才跟随**：停在末尾就自动跟到底，往上翻看历史则不动），脚本型给 `Stdout Logs` / `Stderr Logs`。跑到终态整页按最新的 Run Item 重画一次（并重读磁盘上的完整日志）。
+- 运行中的 Run 可 `Cancel`；终态且有失败行时可 `Retry`（等价于再跑一次增量，产生新 Run；**上次 Skill 已跑完、只是回写失败的行会断点续跑**，复用产物不再重跑，见 [run.md](run.md#断点续跑)）；终态可 `Delete`（确认弹框 → `delete-run` 操作，**逻辑删除**：只打 `deleted_at`，文件/日志/产物都留着，所以 Message 与 Operations 里的链接照样打得开，详情页显示 `Deleted` 徽标且不再给 Delete 按钮；没有反向操作，也不释放磁盘）。跑着的 Run 要先取消。
 - 详情页靠 SSE 实时重画：重画**不重播入场动画**（否则每次事件都闪一下 2px/透明度，看着像抖动），日志按块推到页面时**合并成 120ms 一次重画**。
 
 ### Operations
 
-- 统一列出所有异步操作：`load-skill / analyze-skill / bind-table / unload-skill / archive-template / unarchive-template / run-template / delete-run`。
+- 统一列出所有异步操作：`load-skill / analyze-skill / bind-table / unload-skill / archive-template / unarchive-template / run-template / delete-run`（**操作类型名沿用 `analyze-skill`**——它是 API 与历史记录的一部分；对应的 Skill 叫 `skill-analyzer`）。
 - 列表：`Operation ID / Status / Type / Subject / Started / Duration`；Subject 带类型前缀图标，可跳到对应 Skill / Template / Run。
 - 详情：Summary 加该操作的原始记录 JSON。
 
@@ -78,7 +80,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - `Appearance`：`Theme` 分段控件 `Dark | Light`，默认 Dark。切换即时生效，只存本浏览器（`localStorage`），不进服务端配置；首屏由独立的 `theme-boot.js` 先落主题（CSP 只允许 `script-src 'self'`，所以不用内联脚本），不闪。浅色主题在 `styles.css` 的 `:root[data-theme="light"]` 里只覆盖同名变量，logo 也随之切到 `logo-light.svg`。
 - `Pagination`：`Page Size` 数字输入（1–200，默认 10），**移开焦点（或回车）自动保存**到 `.env`，列表下次取页即时生效；值没变不发请求，保存成功不弹提示，失败或填入非法值就退回原值。
 - `Runtime`：App URL、Repo Root、Node Version（只读）。
-- 白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`、`SKILLAPP_RUN_CONCURRENCY`、`SKILLAPP_PAGE_SIZE`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），除 `Page Size` 外暂无对应界面。
+- 白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`、`SKILLAPP_RUN_CONCURRENCY`、`SKILLAPP_PAGE_SIZE`、`SKILLAPP_IMAGE_BASE_URL / _MODEL / _SIZE / _TIMEOUT_MS`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），除 `Page Size` 外暂无对应界面。`SKILLAPP_IMAGE_API_KEY` 与 `SKILLAPP_WEB_TOKEN` 一样只显示"已设置"，密钥本身不回显。生图配置见 [cli.md](cli.md#通用生图agentsskillsimage-generator)。
 - 应用重启与飞书授权初始化**尚未实现**：授权走 `lark-cli auth login`。
 
 ## 消息区（Messages）

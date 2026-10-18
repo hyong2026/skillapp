@@ -1,6 +1,6 @@
 ---
 name: skillapp
-description: SkillApp 的操作入口：装载 Skill、把它的 IO 绑定到飞书多维表格、执行 Template。当用户说「装载 / 导入 Skill」「绑定到多维表格 / 建列 / 出 Template」（也会认「映射到多维表格」）「执行 / 跑 Template / 跑一批」时使用。注意它不负责分析 Skill 的输入输出——那是 analyze-skill 的活。
+description: SkillApp 的操作入口：装载 Skill、把它的 IO 绑定到飞书多维表格、执行 Template。当用户说「装载 / 导入 Skill」「绑定到多维表格 / 建列 / 出 Template」（也会认「映射到多维表格」）「执行 / 跑 Template / 跑一批」时使用。注意它不负责分析 Skill 的输入输出——那是 skill-analyzer 的活。
 ---
 
 # 操作 SkillApp
@@ -16,7 +16,9 @@ description: SkillApp 的操作入口：装载 Skill、把它的 IO 绑定到飞
 
 **闸门在绑定。** 装载与分析都不碰表格；只有绑定会改表格结构，按 Mapping 中的默认建议执行。
 
-**一次只做一步。** 用户说「装载」就只装载；「分析」交给 `analyze-skill`；做完停下，**不要顺手进入绑定**。可以提议下一步，但别自己走进去。
+**一次只做一步。** 用户说「装载」就只装载；「分析」交给 `skill-analyzer`；做完停下，**不要顺手进入绑定**。可以提议下一步，但别自己走进去。
+
+**需要生图**用内置的 [`image-generator`](../image-generator/SKILL.md)（`node "$SKILLAPP_IMAGE_CLI" …`，配置在 `.env`），别找别的生图方式。
 
 ## 1 装载
 
@@ -30,7 +32,7 @@ node src/cli/load-skill.js <源目录>
 
 ## 2 分析
 
-交给 [`analyze-skill`](../analyze-skill/SKILL.md)：它读 Skill 实现，产出 `.data/mappings/<ref>.mapping.json`。
+交给 [`skill-analyzer`](../skill-analyzer/SKILL.md)：它读 Skill 实现，产出 `.data/mappings/<ref>.mapping.json`。
 **分析没有命令行**——它要读任意实现、做类型取舍，只能是 Skill。
 
 交付物是 Mapping：取舍直接落进去（列、类型、必填、default、transform），理由写进 `hint`——没有单独的待确认清单。

@@ -6,18 +6,13 @@
  * stdout 变成"一行一个事件"的 JSONL，这里把它整理成给人看的 live.log：
  *
  *   [msg]    模型说的进度（最后一条就是这次运行的"答案"）
- *   [cmd]    它跑的命令（截断，只为了看出它在干什么）
+ *   [cmd]    它跑的命令（原样，行内不截断——排查问题时"..."最碍事）
  *   [error]  运行期报错
  *
  * 只挑这三类：工具输出、思考过程与 token 统计都是噪声，需要时去看 artifacts /
  * stdout.log / stderr.log。解析不了的行原样透传——换成别的 agent CLI 时，live.log
  * 至少还是它的原始输出。
  */
-
-/** 命令行的展示上限：codex 的命令常是几百字符的一行 zsh -lc。 */
-const MAX_CMD = 160;
-
-const truncate = (text) => (text.length > MAX_CMD ? `${text.slice(0, MAX_CMD)}...` : text);
 
 /** 多行内容只在第一行加前缀、续行缩进：读起来是一块，而不是一行一条。 */
 const block = (prefix, text) =>
@@ -56,7 +51,7 @@ function createCodexEvents() {
       finalMessage = String(item.text);
       return block('[msg] ', item.text);
     }
-    if (item.type === 'command_execution' && item.command) return block('[cmd] ', truncate(String(item.command)));
+    if (item.type === 'command_execution' && item.command) return block('[cmd] ', String(item.command));
     return '';
   };
 

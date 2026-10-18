@@ -23,6 +23,11 @@ function formatBytes(value) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/**
+ * 时长的唯一格式化入口（Runs、Operations、Run Item 都走它）：
+ *   `404 ms` / `1.5 s` / `1m 8s` / `2m`
+ * 一分钟以上不补零（`1m 8s` 不写 `1m 08s`），正好整分钟就只写分钟（`2m 00s` → `2m`）。
+ */
 function formatDuration(ms) {
   if (!Number.isFinite(ms) || ms < 0) return '—';
   if (ms < 1000) return `${ms} ms`;
@@ -30,7 +35,7 @@ function formatDuration(ms) {
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
   const minutes = Math.floor(ms / 60_000);
   const seconds = Math.floor((ms % 60_000) / 1000);
-  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
 const STATUS_LABELS = {

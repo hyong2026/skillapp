@@ -27,8 +27,12 @@
 2. **JSON 状态文件一律「临时文件 + rename」原子更新**，读到的永远是完整的一份。
 3. **名字可读**，不塞随机数：`<Skill Name>` 是 Skill 名（CLI 里叫 `ref`），`<Skill Name>-<目标指纹>` 是 Template 名（指纹取 base + table + view 的 sha256 前 8 位）。
 
-## 为什么这里没有 package.json
+## 为什么 skills/ 里有一份 package.json
 
-装载进来的 Skill 可能是 Node、也可能是 Python——语言由 Skill 自己声明（Node Skill 想用 `require`，就自带一份带 `type` 的 `package.json`）。仓库根不替它决定。
+它是**模块系统边界**：只有一句 `//` 说明 + `private`，**不声明 `type`**，跟着仓库走（`.gitignore` 里 `!.data/skills/package.json`；清理内容目录后 `git checkout -- .data` 一起恢复，各目录 README 同理）。
+
+- 仓库根声明了 `"type": "module"`——那是给 `src/`、`test/`、内置 Skill 脚本用的。`skills/` 装的是**第三方 Skill 代码**，模块系统不该由仓库决定：Node 只认**最近的** `package.json`，这一份把查找截断在 `skills/` 这一层，里面的 `.js` 仍按 Node 默认解析。
+- 少了它就会出事：`skills/image-split/scripts/main.js` 是 `require('sharp')`、又没自带 package.json，会直接报 `require is not defined in ES module scope`。
+- Skill 自带 package.json（想声明 `type` 也行）时以它为准——它离得更近。
 
 📖 完整文档：仓库根 [`README.md`](../README.md)、[`docs/`](../docs/)（[架构](../docs/architecture.md)、[执行语义](../docs/run.md)、[GUI](../docs/gui.md)、[API](../docs/api.md)、[CLI](../docs/cli.md)）。

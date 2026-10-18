@@ -1,7 +1,7 @@
 import { api, startOperation, watchRun } from '../lib/api.js';
 import { dataPanel, dataTable, head, kv, pagedTable, panel, selectMenu, viewTitle } from '../lib/components.js';
 import { actionButton, fragment, h, setNotice } from '../lib/dom.js';
-import { encoded, formatDate, statusBadge, textBlock, triggerLabel } from '../lib/format.js';
+import { encoded, formatDate, formatDuration, statusBadge, textBlock, triggerLabel } from '../lib/format.js';
 import { hashLink, templateLink } from '../lib/links.js';
 import { openConfirmDialog } from '../lib/dialogs.js';
 import { renderViewContent } from '../lib/shell.js';
@@ -70,12 +70,14 @@ function runContent(runId, run) {
     hashLink(item.record_id, `#runs/${encoded(runId)}/${encoded(item.record_id)}`),
     statusBadge(item.status),
     item.stage || '—',
-    item.ms === null || item.ms === undefined ? '—' : `${item.ms} ms`,
+    formatDuration(item.ms),
     item.error || '—',
   ]);
   const total = run.total ?? items.length;
   const completed = run.completed ?? items.filter((item) => item.status !== 'queued' && item.status !== 'running').length;
   const percent = total ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  // Run 级失败会原样写到没跑完的行上：同样的文案就是同一件事。
+  const stalled = run.error ? items.filter((item) => item.error === run.error).length : 0;
   const actions = h('div', { className: 'run-actions' });
   if (isRunActive(run.status)) {
     const cancel = actionButton('Cancel', 'cancel');
@@ -150,7 +152,11 @@ function runContent(runId, run) {
       ['Work Hash', h('span', { className: 'mono', textContent: run.work_hash || '—' })],
     ]))),
     // 错误可能是整段 stderr（含换行与 JSON）：单独一块按日志渲染，别塞进 Summary 的一格里。
-    run.error ? panel('Error', h('div', { className: 'panel-body' }, textBlock(run.error))) : null,
+    // Run 半路失败时，run 级错误会被写到那几行上——顺带说清楚影响了几行。
+    run.error ? panel('Error', h('div', { className: 'panel-body' }, [
+      textBlock(run.error),
+      stalled ? h('p', { className: 'panel-note', textContent: `${stalled} row(s) did not finish.` }) : null,
+    ])) : null,
     panel('Run Items', h('div', { className: 'panel-body flush' }, dataTable(
       ['Record ID', 'Status', 'Stage', 'Duration', 'Error'],
       rows,

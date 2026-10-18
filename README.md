@@ -35,7 +35,7 @@ node src/server/index.js --port 4173         # 本机访问可省略 --token
 ```bash
 # 装载 = 复制（目录名就是 Skill Name）
 node src/cli/load-skill.js /path/to/skill
-# 分析：由 Agent 用 analyze-skill 完成 → .data/mappings/<Skill Name>.mapping.json
+# 分析：由 Agent 用 skill-analyzer 完成 → .data/mappings/<Skill Name>.mapping.json
 
 # 绑定：对齐列、设列顺序、写 Template，并自动自检
 node src/cli/bind-table.js --ref <ref> --url '<表格链接>'
@@ -54,9 +54,10 @@ node src/cli/run-template.js .data/templates/<Skill Name>-<目标指纹>.templat
 | 你说 | Agent 会做 |
 |---|---|
 | 「装载：/path/to/skill」 | 复制进 SkillApp |
-| 「分析它的 IO」 | 用 `analyze-skill` 产出一份 Mapping |
+| 「分析它的 IO」 | 用 `skill-analyzer` 产出一份 Mapping |
 | 「绑定到这张表：<链接>」（也会认「映射到这张表」） | 建列、设列顺序、出 Template |
 | 「执行 / 跑一批」 | 跑 `run-template.js --incremental` |
+| 「生图」 | 用 `image-generator` 出图（所有 Skill 共用的生图通路，后端在 `.env` 里配） |
 
 ## 术语
 
@@ -65,7 +66,7 @@ node src/cli/run-template.js .data/templates/<Skill Name>-<目标指纹>.templat
 | **Skill** | 带 `SKILL.md` 和可执行入口的目录，可能是 Node、也可能是 Python | `.data/skills/<Skill Name>/` |
 | **Skill Name** | 装载后的 Skill 名，取源目录最后一段；CLI 参数与 API 路径里写作 `ref` | 到处 |
 | **装载 Load** | 复制进内容层 + 固定内容指纹，**不碰表格** | `.data/skills/<Skill Name>/` |
-| **分析 Analyze** | 读实现产出 Mapping 草案，由 `analyze-skill` 完成 | `.data/mappings/<Skill Name>.mapping.json` |
+| **分析 Analyze** | 读实现产出 Mapping 草案，由 `skill-analyzer` 完成 | `.data/mappings/<Skill Name>.mapping.json` |
 | **Mapping** | Skill 的 IO 契约：输入 / 输出 / 命令模板（名词；动作是「绑定 Bind」） | `.data/mappings/<Skill Name>.mapping.json`（草案；生效的那份在 Template 内） |
 | **绑定 Bind** | 把 Mapping 对到某张表的列上：建列、排序、写 Template | `.data/templates/<Skill Name>-<目标指纹>.template.json` |
 | **Template** | 可运行的定义：Skill + 内容 hash + 目标表 + 生效 Mapping + limits；可归档（冻结，解冻前不能跑） | 同上 |
@@ -117,7 +118,7 @@ Mapping 的每个输入 / 输出都可以标 `mapped: false`：**不建列、不
 
 已知边界（刻意留着，不是遗漏）完整清单见 [docs/architecture.md](docs/architecture.md#已知边界)，要点：
 
-- 同一 Run 内按 `SKILLAPP_RUN_CONCURRENCY` 并发（默认 4、上限 8），跨实例无租约；`--incremental` 会反复捞出失败行；`.data/runs/` 只增不减。
+- 同一 Run 内按 `SKILLAPP_RUN_CONCURRENCY` 并发（默认 4、上限 8），跨实例无租约；`--incremental` 会反复捞出失败行（Skill 已跑完、只差回写的会**断点续跑**，复用产物）；`.data/runs/` 只增不减。
 - 一张表（含视图）一份 Template；Template 不进 Git，克隆后无法还原。
 - 只支持 **JSON stdout** 的 Skill，且必须有可执行入口。
 
@@ -125,7 +126,7 @@ Mapping 的每个输入 / 输出都可以标 `mapped: false`：**不建列、不
 
 ```
 skillapp/
-├── package.json               仓库元信息与两条脚本；**不声明 type**
+├── package.json               仓库元信息与两条脚本；`"type": "module"`（仓库代码一律 ESM）
 ├── src/                       引擎代码（ES 模块，零依赖，Node ≥ 22）
 │   ├── cli/                   可运行的命令薄壳
 │   ├── core/                  内部模块（CLI / HTTP / worker / 测试共用）
@@ -133,6 +134,7 @@ skillapp/
 │   └── web/                   零依赖静态控制台（app.js + index.html/styles.css，lib/ + views/）
 ├── .data/                     内容层 —— 除各目录 README 外不进 Git（见 .data/README.md）
 │   ├── skills/<Skill Name>/                      装载进来的 Skill
+│   │   └── package.json       模块系统边界：第三方 Skill 按 Node 默认模块系统解析
 │   ├── templates/<Skill Name>-<目标指纹>.template.json   Template（内含 Mapping）
 │   ├── mappings/<Skill Name>.mapping.json       Mapping 草案（分析产物）
 │   ├── operations/<operation_id>/operation.json   异步任务状态
@@ -140,7 +142,8 @@ skillapp/
 ├── test/                      引擎回归测试（node --test，零依赖）
 ├── .agents/skills/            项目级 Skill：SkillApp 自己的操作手册
 │   ├── skillapp/              操作入口：装载 / 分析 / 绑定 / 执行
-│   └── analyze-skill/         读 Skill → Mapping（IO 契约）
+│   ├── skill-analyzer/        读 Skill → Mapping（IO 契约）
+│   └── image-generator/       通用生图：官方 openai CLI 的薄封装（prompt / 脚本型 Skill 共用）
 ├── docs/                      文档（见下）
 └── README.md
 ```

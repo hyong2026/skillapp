@@ -1,9 +1,9 @@
 ---
-name: analyze-skill
+name: skill-analyzer
 description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mapping（IO 契约）。当需要把已有 Skill 转成 Template、或要确定某个 Skill 的输入输出时使用。
 ---
 
-# 分析 Skill 的 IO
+# 技能分析器
 
 把 Skill 的接口从实现里提取出来，变成可审的结构化契约。
 
@@ -35,8 +35,27 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mappi
   codex exec --skip-git-repo-check -c project_doc_max_bytes=0 -C {outdir} -s workspace-write "读取并严格遵循{skill.entry}的流程，内容={content}；风格={style}；…；以上留空或写 auto 表示由你自动选择；产物全部写入{outdir}；最后一条消息只输出一行 JSON：files 为产物绝对路径数组、count 为数量"
   ```
 
-- 这类 Skill 没有结构化 stdout，产物是写进 `{outdir}` 的文件：所以**必须**在指令里要求"最后一条消息只输出一行 JSON"，输出列按 `from: "stdout.files[].path"`（`attachment`）与 `stdout.count`（`number`）写，并在 `hint` 里注明"不是纯 JSON 时该行失败"。单行耗时可能很长，`limits.timeout_s` 给足（例如 1800）。
+- 这类 Skill 没有结构化 stdout，产物是写进 `{outdir}` 的文件：所以**必须**在指令里要求"最后一条消息只输出一行 JSON"，形如 `{"files":["<绝对路径>", …],"count":N}` —— `files` 是**路径字符串数组**，于是输出列写 `from: "stdout.files[]"`（`attachment`）与 `stdout.count`（`number`），并在 `hint` 里注明"不是纯 JSON 时该行失败"。**别写 `stdout.files[].path`**：那是对象数组的写法，配路径数组会摊出一串 undefined，运行时报 `Expression resolved to no file paths`。单行耗时可能很长，`limits.timeout_s` 给足（例如 1800）。
+- **要联网就加沙箱开关**：Codex 的沙箱默认把 agent 的 shell 断网，Skill 需要联网（生图、下载 URL、调外部 API）时，`cmd` 里必须再加 `-c sandbox_workspace_write.network_access=true`，否则请求直接被挡下（表现为 `000` / 连接失败）：
+
+  ```
+  codex exec --skip-git-repo-check -c project_doc_max_bytes=0 -C {outdir} -s workspace-write -c sandbox_workspace_write.network_access=true "…"
+  ```
 - **不要去读 SkillApp 自己的 `src/`**（执行器、`src/core/mapping.js` 的校验、有没有"prompt 运行器"都不是你要确认的事——本规则就是全部约束）。
+
+## 生图：用内置的 image-generator
+
+需要出图的 Skill（prompt 型或脚本型）**只用这一条通路**：
+
+```
+node "$SKILLAPP_IMAGE_CLI" --prompt "…" --out <路径>/01-cover.png [--size 1248x1664] [--ref <已生成的图>] [--json]
+```
+
+`SKILLAPP_IMAGE_CLI` 由 SkillApp 注入（脚本绝对路径）；别去猜 Codex 原生 `image_gen` 工具能不能用，也别自己写 HTTP。
+
+- **prompt 型**：指令里写明"生图一律调用上面这条命令"，并要求"命令失败就立刻停、把 stderr 那行原因写进最后一条消息；不要排查环境、不要用 SVG/HTML 顶替"。最后一条消息原样用它的 JSON（`{"files":["<绝对路径>", …],"count":N}`），所以产物列写 `from: "stdout.files[]"`（`attachment`）+ `stdout.count`（`number`）。
+- **脚本型**：在入口代码里 spawn 这条命令即可。
+- 需要生图的 Skill **一定同时加上**上一节的 `-c sandbox_workspace_write.network_access=true`；参数与失败信息见 [`image-generator/SKILL.md`](../image-generator/SKILL.md)。
 
 ## 步骤
 
@@ -93,8 +112,10 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mappi
 | 写法 | 含义 |
 |---|---|
 | `{key}` | 该输入的取值；未定义则报错——**必填参数**用这种 |
-| `{key...}` | 展开为数组，用位置参数传多个文件 |
+| `{key...}` | 位置参数：展开为数组，传多个文件；嵌在引号里的指令文本中则展开成**空格分隔**的列表 |
 | `{--flag key}` | **成对参数**：值空或该列已被删除时整对省略——**可选参数**必须用这种，否则会留下悬空的 flag |
+
+指令文本里的可选值留空就是空串（例如 `补充备注={notes}` 直接渲染成 `补充备注=`），不必为"可能没有值"另造写法。
 
 执行器固定提供的变量：`{skill.entry}`、`{outdir}`。
 

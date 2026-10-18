@@ -9,7 +9,7 @@ node src/cli/run-template.js <template.json> [--incremental]
 node src/cli/unload-skill.js <ref> [--with-runs]
 ```
 
-**分析（Analyze）没有独立命令**：它要读任意实现、做类型取舍，只能是 Skill。由 Agent 用 [`.agents/skills/analyze-skill/`](../.agents/skills/analyze-skill/) 完成，产出 `.data/mappings/<Skill Name>.mapping.json`（图形界面里的 `Analyze` 按钮走的是同一个分析器）。
+**分析（Analyze）没有独立命令**：它要读任意实现、做类型取舍，只能是 Skill。由 Agent 用 [`.agents/skills/skill-analyzer/`](../.agents/skills/skill-analyzer/) 完成，产出 `.data/mappings/<Skill Name>.mapping.json`（图形界面里的 `Analyze` 按钮走的是同一个分析器）。
 
 ## 共同约定
 
@@ -87,7 +87,7 @@ node src/cli/unload-skill.js --all --yes        # 清空整个内容层
 # 图形控制台
 SKILLAPP_WEB_TOKEN=<token>              # 非本机监听时必须；改动需重启
 
-# 分析器（Analyze 按钮 / analyze-skill 调用）
+# 分析器（Analyze 按钮 / skill-analyzer 调用）
 SKILLAPP_ANALYZE_COMMAND=codex          # 默认 codex
 SKILLAPP_ANALYZE_MODEL=<model>          # 可选，留空用命令自带默认
 SKILLAPP_ANALYZE_REASONING_EFFORT=low   # low / medium / high
@@ -97,20 +97,33 @@ SKILLAPP_ANALYZE_ARGS='[]'              # 高级：完全自定义分析器参�
 # 执行（Run）
 SKILLAPP_RUN_CONCURRENCY=4              # 同一 Run 内同时跑几行，默认 4、上限 8；改完即时生效
 
+# 通用生图（所有 Skill 共用，见下节）
+SKILLAPP_IMAGE_BASE_URL=https://api.example.com/v1   # OpenAI 兼容端点（必填）
+SKILLAPP_IMAGE_API_KEY=sk-...                        # 密钥（必填）
+SKILLAPP_IMAGE_MODEL=gpt-image-2.5-flare             # 模型 ID（必填）
+# 可选：_SIZE / _QUALITY / _TIMEOUT_MS / _OPENAI_CLI
+
 # 内容层与依赖
 SKILLAPP_ROOT=<dir>                     # 内容根，默认仓库根
 SKILLAPP_DATA_DIR=<dir>                 # 内容目录，默认 <root>/.data
 SKILLAPP_LARK_MODULE=<path>             # 替换 lark 实现（测试用）
 ```
 
-图形控制台提供了这套配置的 HTTP 接口（白名单：`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS` 与 `SKILLAPP_RUN_CONCURRENCY`，写入仓库根 `.env` 并立即生效）；页面上的 **Settings** 目前只展示运行信息，见 [gui.md](gui.md#settings) 与 [api.md](api.md)。
+图形控制台提供了这套配置的 HTTP 接口（白名单：`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`、`SKILLAPP_RUN_CONCURRENCY`、`SKILLAPP_IMAGE_BASE_URL / _MODEL / _SIZE / _TIMEOUT_MS`，写入仓库根 `.env` 并立即生效；`SKILLAPP_IMAGE_API_KEY` 与 `SKILLAPP_WEB_TOKEN` 一样只在页面显示"已设置"）；见 [gui.md](gui.md#settings) 与 [api.md](api.md)。
+
+## 通用生图：.agents/skills/image-generator
+
+生图只有这一条通路，**prompt 型与脚本型 Skill 共用**：官方 `openai` CLI 的薄封装（`openai --api-key … --base-url … images generate|edit …`；本机需装 `openai` ≥ 1.30）。端点 / 密钥 / 模型来自上面的 `SKILLAPP_IMAGE_*`，一律显式传，CLI 自己的配置插不进来；仓库里不自己发 HTTP。
+
+- **运行 Skill 时，宿主会把这支脚本的绝对路径注入为 `SKILLAPP_IMAGE_CLI`**（见 [run.md](run.md)），所以 Skill 里写 `node "$SKILLAPP_IMAGE_CLI" …` 即可，不必知道仓库在哪、cwd 是什么。
+- 参数、`--json` 输出、失败信息、给 prompt 型 Skill 的注意事项：见 [`.agents/skills/image-generator/SKILL.md`](../.agents/skills/image-generator/SKILL.md)。
 
 ## 做同一件事的三种入口
 
 | 事情 | CLI | HTTP | GUI |
 |---|---|---|---|
 | 装载 | `load-skill.js` | `POST /api/skills` | Skills → `Load` |
-| 分析 | Agent + `analyze-skill` | `POST /api/skills/:ref/analyze` | Skill 详情 → `Analyze` |
+| 分析 | Agent + `skill-analyzer` | `POST /api/skills/:ref/analyze` | Skill 详情 → `Analyze` |
 | 绑定 | `bind-table.js` | `POST /api/skills/:ref/bind` | Skill 详情 → `Bind Table` |
 | 执行 | `run-template.js` | `POST /api/runs` | Template 详情 → `Run` |
 | 卸载 | `unload-skill.js` | `DELETE /api/skills/:ref` | Skill 详情 → `Unload` |

@@ -21,6 +21,14 @@ const RUN_CONCURRENCY_MAX = 8;
 const TERMINAL_STATUSES = new Set(['completed', 'partial', 'failed', 'canceled', 'interrupted']);
 
 /**
+ * 宿主提供给 Skill 的通用生图入口（`node "$SKILLAPP_IMAGE_CLI" --prompt … --out …`）。
+ *
+ * 它是 SkillApp 自带的 Skill（`.agents/skills/image-generator`），模型 / 中转站 / 密钥来自
+ * `SKILLAPP_IMAGE_*`。给绝对路径是为了让 Skill 不必知道自己在哪个仓库里、cwd 是什么。
+ */
+const IMAGE_CLI = path.resolve(import.meta.dirname, '..', '..', '.agents', 'skills', 'image-generator', 'scripts', 'generate.js');
+
+/**
  * 同一 Run 内同时跑几行：`SKILLAPP_RUN_CONCURRENCY`（`.env` / Settings 里改，默认 4）。
  * 每次调用时读取，所以改完不必重启；上限 8——再高只会让飞书接口和本机 CPU 互相排队。
  */
@@ -186,23 +194,40 @@ function tokenize(cmd) {
   return started ? [...tokens, cur] : tokens;
 }
 
+// mapping.cmd 的三种 token 写法。整块就是一个花括号的才按命令参数处理，嵌在文本里的按文本处理。
+const PAIRED_TOKEN = /^\{(\S+)\s+(\w+)\}$/; // {--flag key}
+const SPLAT_TOKEN = /^\{(\w+)\.\.\.\}$/; // {key...}
+const SINGLE_TOKEN = /^\{([\w.]+)\}$/; // {key} / {skill.entry}
+const POSITIONAL_TOKEN = /^\{(\w+)(?:\.\.\.)?\}$/; // 必须有值的位置参数
+const TEXT_PLACEHOLDER = /\{([\w.]+?)(\.\.\.)?\}/g; // 文本里的占位符（可能带 ... 后缀）
+
+/** 文本里数组怎么落地：`{key...}` 空格连接（贴近位置参数），`{key}` 逗号连接。 */
+function spliceText(value, splat) {
+  if (Array.isArray(value)) return value.join(splat ? ' ' : ', ');
+  return value === null || value === undefined ? '' : String(value);
+}
+
 /**
  * mapping.cmd 的模板语法：
  *   {key}         该值；未定义则报错 —— 必填参数
  *   {key...}      展开为数组，位置参数传多个文件
  *   {--flag key}  成对参数：值为空或该列已被删除时整对省略 —— 可选参数
+ *
+ * prompt 型 Skill 的整段指令带引号，是**一个** token：那里没有 argv 的位置概念，
+ * 占位符就地替换成文本——`{key...}` 展开成空格分隔的列表，可选值留空渲染成空串
+ * （留空是它的常态：`参考图=` / `补充备注=` 照原样进指令，必填缺失由 prepareInputs 报）。
  */
 function buildArgv(cmd, vars) {
   const argv = [];
   for (const tok of tokenize(cmd)) {
-    const paired = /^\{(\S+)\s+(\w+)\}$/.exec(tok);
+    const paired = PAIRED_TOKEN.exec(tok);
     if (paired) {
       const v = resolvePath(vars, paired[2]);
       if (v !== undefined && v !== null && v !== '') argv.push(paired[1], String(v));
       continue;
     }
 
-    const splat = /^\{(\w+)\.\.\.\}$/.exec(tok);
+    const splat = SPLAT_TOKEN.exec(tok);
     if (splat) {
       const arr = resolvePath(vars, splat[1]);
       if (!Array.isArray(arr)) throw new Error(`{${splat[1]}...} in cmd is not an array`);
@@ -210,11 +235,17 @@ function buildArgv(cmd, vars) {
       continue;
     }
 
-    argv.push(tok.replace(/\{([\w.]+)\}/g, (whole, key) => {
-      const v = resolvePath(vars, key);
-      if (v === undefined) throw new Error(`{${key}} in cmd is undefined`);
-      return String(v);
-    }));
+    const single = SINGLE_TOKEN.exec(tok);
+    if (single) {
+      const v = resolvePath(vars, single[1]);
+      if (v === undefined) throw new Error(`{${single[1]}} in cmd is undefined`);
+      // 位置参数传数组只有 `{key...}` 一种写法，别让它悄悄变成 "a,b" 一个参数。
+      if (Array.isArray(v)) throw new Error(`{${single[1]}} is an array; write {${single[1]}...} to expand it`);
+      argv.push(String(v));
+      continue;
+    }
+
+    argv.push(tok.replace(TEXT_PLACEHOLDER, (whole, key, dots) => spliceText(resolvePath(vars, key), dots)));
   }
   return argv;
 }
@@ -240,15 +271,44 @@ function withCodexEvents(argv) {
   ];
 }
 
-/** cmd 里以单独变量出现（`{key}` / `{key...}`）的输入必须有值——未映射就没法满足。 */
-function requiredKeysInCmd(cmd) {
-  const keys = [];
+/**
+ * 扫一遍 cmd，供运行前核对（preflight）：引用了哪些变量、哪些是必须有值的位置参数、
+ * 哪些整块花括号根本不合法。运行前就能说清楚，不必等某一行跑起来才报错。
+ */
+function scanCmd(cmd) {
+  const names = new Set();
+  const positionals = new Set();
+  const malformed = [];
   for (const token of tokenize(cmd)) {
-    const match = /^\{(\w+)(?:\.\.\.)?\}$/.exec(token);
-    if (match) keys.push(match[1]);
+    const paired = PAIRED_TOKEN.exec(token);
+    if (paired) {
+      for (const part of paired[1].split(/\s+/).filter(Boolean)) {
+        if (!part.startsWith('-')) names.add(part);
+      }
+      names.add(paired[2]);
+      continue;
+    }
+    const positional = POSITIONAL_TOKEN.exec(token);
+    if (positional) {
+      names.add(positional[1]);
+      positionals.add(positional[1]);
+      continue;
+    }
+    const single = SINGLE_TOKEN.exec(token);
+    if (single) {
+      names.add(single[1]);
+      continue;
+    }
+    // 整块花括号却三种写法都不是（例如 `{--format}`）：写错了，别当普通文本传下去。
+    if (/^\{[^{}]*\}$/.test(token)) {
+      malformed.push(token);
+      continue;
+    }
+    for (const match of token.matchAll(TEXT_PLACEHOLDER)) names.add(match[1]);
   }
-  return keys;
+  return { names, positionals: [...positionals], malformed };
 }
+
 
 // ─── 输入指纹与运行历史 ───────────────────────────────────────────────────
 
@@ -264,15 +324,27 @@ const fingerprintOf = (inputs, cells) =>
 
 const withoutLiveName = ({ field_name, ...field }) => field;
 
-/** Skill、命令、目标与生效映射共同组成一次“工作版本”。任一变化都应让 --incremental 重跑。 */
+const shortHash = (value) => 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
+
+/** 工作版本 = Skill + 命令 + 目标 + 输入 + 输出定义；任一变化都该让 --incremental 重跑。 */
 function workHashOf(tpl, inputs, outputs) {
-  return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify({
+  return shortHash({
     skill_hash: tpl.skill.hash,
     target: tpl.target,
     cmd: tpl.mapping.cmd,
     inputs: inputs.map(withoutLiveName),
     outputs: outputs.map(withoutLiveName),
-  })).digest('hex').slice(0, 16);
+  });
+}
+
+/** 同一个工作版本里"要不要跑 Skill"的那半（不含输出定义）：续跑只认它，所以改 `from` 表达式不必重跑 Skill。 */
+function execHashOf(tpl, inputs) {
+  return shortHash({
+    skill_hash: tpl.skill.hash,
+    target: tpl.target,
+    cmd: tpl.mapping.cmd,
+    inputs: inputs.map(withoutLiveName),
+  });
 }
 
 /**
@@ -292,7 +364,8 @@ function loadHistory(templateId) {
     const run = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (run.template_id !== templateId) continue;
     for (const { record_id, status, input_hash } of run.items) {
-      history.set(record_id, { status, input_hash, work_hash: run.work_hash });
+      // run_id 指向这份记录的目录：失败行要续跑时得回去拿它的 stdout 与产物。
+      history.set(record_id, { status, input_hash, work_hash: run.work_hash, exec_hash: run.exec_hash, run_id: runId });
     }
   }
   return history;
@@ -317,30 +390,61 @@ function upToDate(history, recordId, inputHash, workHash) {
  * 列可以被手工删除——那是预期用法：删掉的列从映射中剔除，执行时只读写剩下的。
  * 三类情况仍拒绝运行：Skill 指纹不符；必填输入被删除；列还在但类型不符。
  */
-function preflight(tpl) {
-  const ref = path.basename(tpl.skill.path);
+/**
+ * 运行前核对里「只看本地文件」的那一半：归档、Skill 指纹、cmd 模板语法。
+ *
+ * 单独拆出来是给服务端用的——它不碰飞书，`start()` / `preview()` 就能在起 worker 之前
+ * 拒绝，而不是先建一个 Run 再把它标成 Failed（那会留下一条谁也看不懂的空记录）。
+ */
+function templateProblems(tpl, dataDir) {
   const reload = `node src/cli/load-skill.js <source-dir>`;
-  const skillDir = path.join(DATA_DIR, tpl.skill.path);
+  const skillDir = path.join(dataDir, tpl.skill.path);
+  const problems = [];
 
   if (tpl.archived_at) {
-    throw new Error(`Template is archived (frozen at ${tpl.archived_at}); unarchive it before running`);
+    problems.push(`Template is archived (frozen at ${tpl.archived_at}); unarchive it before running`);
+  } else if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) {
+    problems.push(`Skill is not loaded: ${tpl.skill.path}\n  Run first: ${reload}`);
+  } else {
+    const live = skillHash(skillDir);
+    if (live !== tpl.skill.hash) {
+      problems.push(`Skill hash mismatch; run refused:\n  template = ${tpl.skill.hash}\n  on-disk  = ${live}\n  Reload: ${reload}`);
+    }
   }
-  if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) {
-    throw new Error(`Skill is not loaded: ${tpl.skill.path}\n  Run first: ${reload}`);
-  }
-  const live = skillHash(skillDir);
-  if (live !== tpl.skill.hash) {
-    throw new Error(`Skill hash mismatch; run refused:\n  template = ${tpl.skill.hash}\n  on-disk  = ${live}\n  Reload: ${reload}`);
+
+  // cmd 是纯文本模板，语法错、写错变量名都只会在某一行跑起来时才炸——先扫一遍。
+  const scan = scanCmd(tpl.mapping.cmd);
+  if (scan.malformed.length) {
+    problems.push(`cmd has a malformed placeholder: ${scan.malformed.join(', ')}\n  Fix: use {key}, {key...} or {--flag key}`);
   }
 
   // 模板里只有已映射的输入；cmd 却把它当位置参数用时只能逐行报 undefined——提前说清楚。
   const mappedKeys = new Set(tpl.mapping.inputs.map((f) => f.key));
-  const orphans = [...new Set(requiredKeysInCmd(tpl.mapping.cmd)
-    .filter((key) => !BUILTIN_VARS.has(key) && !mappedKeys.has(key)))];
+  const orphans = scan.positionals.filter((key) => !BUILTIN_VARS.has(key) && !mappedKeys.has(key));
   if (orphans.length) {
-    throw new Error(`Input is not mapped but cmd needs it:\n  - ${orphans.join('\n  - ')}\n  Fix: map the input, or drop its variable from cmd`);
+    problems.push(`Input is not mapped but cmd needs it:\n  - ${orphans.join('\n  - ')}\n  Fix: map the input, or drop its variable from cmd`);
   }
 
+  const knownKeys = new Set(['skill.entry', ...BUILTIN_VARS, ...mappedKeys]);
+  const unknown = [...scan.names].filter((key) => !knownKeys.has(key));
+  if (unknown.length) {
+    problems.push(`cmd references unknown variables:\n  - ${unknown.join('\n  - ')}\n  Fix: correct the name, or map an input with that key`);
+  }
+  return problems;
+}
+
+/**
+ * 运行前核对：返回实际生效的映射；有任何一条不过就拒绝运行。
+ *
+ * 列可以被手工删除——那是预期用法：删掉的列从映射中剔除，执行时只读写剩下的。
+ * 本地那几条（归档 / Skill 指纹 / cmd 语法）走 templateProblems，这里再核对活表：
+ * 必填输入被删除、列还在但类型不符、主字段没了。
+ */
+function preflight(tpl) {
+  const local = templateProblems(tpl, DATA_DIR);
+  if (local.length) throw new Error(local.join('\n\n'));
+
+  const skillDir = path.join(DATA_DIR, tpl.skill.path);
   const fields = lark(['base', '+field-list', ...tableFlags(tpl)]).data.fields;
   const byId = new Map(fields.map((f) => [f.id, f]));
   const problems = [];
@@ -368,6 +472,83 @@ function preflight(tpl) {
     .filter((f) => !byId.has(f.field_id))
     .map(named);
   return { skillDir, inputs, outputs, dropped };
+}
+
+// ─── 断点续跑 ─────────────────────────────────────────────────────────────
+
+/** 行目录里的 stdout.json：Skill 解析后的输出，回写失败后靠它续跑（也方便排查"到底吐了什么"）。 */
+function writeStdoutJson(recordDir, stdout) {
+  const file = path.join(recordDir, 'stdout.json');
+  fs.mkdirSync(recordDir, { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(stdout, null, 2) + '\n');
+  fs.renameSync(tmp, file);
+}
+
+/** 把 stdout JSON 里指向上一次行目录的路径改写到这次的行目录（其余原样，例如 /tmp 下的中间文件）。 */
+function remapPaths(value, from, to) {
+  if (typeof value === 'string') {
+    return value.startsWith(`${from}${path.sep}`) ? path.join(to, path.relative(from, value)) : value;
+  }
+  if (Array.isArray(value)) return value.map((entry) => remapPaths(entry, from, to));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, remapPaths(entry, from, to)]));
+  }
+  return value;
+}
+
+/** 这次 Run 里实际要用到的附件产物（按 from 表达式从 stdout 取出来的绝对路径）。 */
+function attachmentPaths(outputs, stdout) {
+  const files = [];
+  for (const output of outputs) {
+    if (output.type !== 'attachment') continue;
+    for (const file of [].concat(evalFrom(output.from, stdout))) {
+      if (typeof file === 'string' && file.trim()) files.push(file);
+    }
+  }
+  return [...new Set(files)];
+}
+
+/** 上次失败、输入与 exec 版本没变、stdout.json 在、要回写的产物都还在 → 返回它；否则 null（老实重跑）。 */
+function resumePoint(ctx, recordId, inputHash, runsDir = RUNS_DIR) {
+  if (ctx.dryRun || ctx.trigger !== 'incremental') return null; // 全量 = 无条件重跑
+  const last = ctx.history?.get(recordId);
+  if (!last || last.status !== 'failed') return null;
+  if (last.input_hash !== inputHash || last.exec_hash !== ctx.execHash) return null;
+  const prevRecordDir = path.join(runsDir, last.run_id, recordId);
+  const file = path.join(prevRecordDir, 'stdout.json');
+  if (!fs.existsSync(file)) return null;
+  let stdout;
+  try {
+    stdout = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+  try {
+    if (attachmentPaths(ctx.outputs, stdout).some((entry) => !fs.existsSync(entry))) return null;
+  } catch {
+    return null; // 表达式对不上这份 stdout
+  }
+  return { runId: last.run_id, prevRecordDir, stdout };
+}
+
+/** 把上一次的产物搬进这次的行目录（硬链接优先，跨卷则复制），并返回改写过路径的 stdout。 */
+function reuseOutputs(ctx, resume, recordDir) {
+  let reused = 0;
+  for (const file of attachmentPaths(ctx.outputs, resume.stdout)) {
+    if (!file.startsWith(`${resume.prevRecordDir}${path.sep}`)) continue; // 行目录之外的文件（例如 /tmp）不动
+    const dest = path.join(recordDir, path.relative(resume.prevRecordDir, file));
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    try {
+      fs.linkSync(file, dest);
+    } catch {
+      fs.copyFileSync(file, dest);
+    }
+    reused += 1;
+  }
+  const stdout = remapPaths(resume.stdout, resume.prevRecordDir, recordDir);
+  writeStdoutJson(recordDir, stdout);
+  return { stdout, reused };
 }
 
 // ─── 单行执行 ─────────────────────────────────────────────────────────────
@@ -436,6 +617,18 @@ async function prepareInputs(ctx, recordId, recordDir, cells) {
   return { vars };
 }
 
+/** 表达式对不上时点出 Skill 实际吐的形状：`stdout.files[]` 与 `stdout.files[].path` 只差一个后缀。 */
+function shapeHint(expression, stdout) {
+  const root = /^stdout\.([\w]+)/.exec(expression || '')?.[1];
+  if (!root || !stdout || typeof stdout !== 'object' || !(root in stdout)) {
+    const keys = stdout && typeof stdout === 'object' ? Object.keys(stdout).join(', ') || '(none)' : typeof stdout;
+    return `\n  stdout has: ${keys}`;
+  }
+  const value = stdout[root];
+  const shape = Array.isArray(value) ? `an array of ${typeof value[0]}` : typeof value;
+  return `\n  stdout.${root} is ${shape}`;
+}
+
 /**
  * 按 mapping 回写该行：先解析全部输出，再提交。
  *
@@ -457,7 +650,7 @@ async function writeBack(ctx, item, stdout) {
     // 取值表达式和 Skill 实际输出对不上时（例如输出的是路径数组，表达式却按对象数组取 .path），
     // walk 会摊出一串 undefined；带着它去调 lark-cli 只会换来一句看不懂的参数校验错误。
     const files = [...new Set([].concat(evalFrom(o.from, stdout)).filter((p) => typeof p === 'string' && p.trim()))];
-    if (!files.length) throw new Error(`Expression resolved to no file paths: ${o.from}`);
+    if (!files.length) throw new Error(`Expression resolved to no file paths: ${o.from}${shapeHint(o.from, stdout)}`);
     item.stage = 'writeback';
     ctx.emit({ type: 'item-stage', record_id: item.record_id, stage: 'writeback' });
     await updateRow(tpl, item.record_id, { [o.field_id]: null }); // 上传是追加语义，先清空
@@ -480,6 +673,8 @@ function spawnSkill(bin, args, options) {
     const child = spawn(bin, args, {
       cwd: options.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // 除了继承环境（.env 里的 SKILLAPP_IMAGE_* 等），再告诉 Skill 生图入口在哪。
+      env: { ...process.env, SKILLAPP_IMAGE_CLI: IMAGE_CLI },
     });
     let stdout = '';
     let stderr = '';
@@ -519,17 +714,48 @@ function spawnSkill(bin, args, options) {
   });
 }
 
+/**
+ * 一行怎么跑。
+ *
+ * 包一层 catch：行内的意外错误（飞书 CLI 抛错、cmd 拼不出来…）只算**这一行**失败，
+ * 不能让它冒泡出去打断 Run——那会留下一个永远 Running 的 Item（Run 是记录，行是明细，
+ * 两者不能各说各话）。可控的错误（校验不过、退出码非 0）仍在下面 return fail(...)。
+ */
 async function runRow(ctx, row) {
+  const item = { record_id: row.record_id, status: 'pending', stage: 'validate', ms: null, error: null, input_hash: null };
+  try {
+    return await runRowSteps(ctx, row, item);
+  } catch (err) {
+    return { ...item, status: 'failed', error: err?.message || String(err), stage: item.stage || null };
+  }
+}
+
+async function runRowSteps(ctx, row, item) {
   const { tpl, skillDir, workdir, dryRun } = ctx;
   const { record_id: recordId, cells } = row;
   const recordDir = path.join(workdir, recordId);
-  const item = { record_id: recordId, status: 'pending', stage: 'validate', ms: null, error: null, input_hash: null };
   const fail = (error) => ({ ...item, status: 'failed', error, stage: item.stage || null });
 
   // 1) 先算指纹（失败行也要有，便于诊断）
   item.input_hash = fingerprintOf(ctx.inputs, cells);
 
-  // 2) 校验输入并组装命令
+  // 2) 能续就续：只补回写，不再跑 Skill（判定见 resumePoint）。
+  const resume = resumePoint(ctx, recordId, item.input_hash);
+  let stdout = null;
+  if (resume) {
+    item.resumed_from = resume.runId;
+    item.stage = 'writeback';
+    const { stdout: reusedStdout, reused } = reuseOutputs(ctx, resume, recordDir);
+    stdout = reusedStdout;
+    // 日志里留一句：这行没有重跑 Skill，免得看日志的人以为它什么都没干。
+    const note = `[skillapp] resumed from ${resume.runId}: reused ${reused} file(s); the Skill was not run again\n`;
+    const stream = /^SKILL\.md$/i.test(String(ctx.tpl.skill?.entry || '')) ? 'live' : 'stdout';
+    appendStreamLog(recordDir, stream, note);
+    ctx.emit({ type: 'item-log', record_id: recordId, stream, chunk: note });
+    return (await finishRow(ctx, item, stdout, fail)) ?? { ...item, status: 'succeeded', stage: null };
+  }
+
+  // 3) 校验输入并组装命令
   const { vars, error } = await prepareInputs(ctx, recordId, recordDir, cells);
   if (error) return fail(error);
 
@@ -590,7 +816,6 @@ async function runRow(ctx, row) {
 
   // 没有输出列的 Template 不回写：这类 Skill 的结果落在别处（例如输入里给的另一张表），
   // 所以也不必解析 stdout —— 它不需要吐 JSON。
-  let stdout = null;
   if (ctx.outputs.length) {
     try {
       // 事件流模式下答案在最后一条 agent 消息里；不是事件流就还是 stdout 原文。
@@ -598,15 +823,21 @@ async function runRow(ctx, row) {
     } catch {
       return fail('Skill output is not valid JSON');
     }
+    // 落盘"Skill 到底吐了什么"：回写失败时续跑靠它，排查也靠它（见 resumePoint）。
+    if (!dryRun) writeStdoutJson(recordDir, stdout);
   }
 
-  // 4) 回写
+  return (await finishRow(ctx, item, stdout, fail)) ?? { ...item, status: 'succeeded', stage: null };
+}
+
+/** 回写；失败时返回失败态（调用方直接用它，别自己再判一次）。 */
+async function finishRow(ctx, item, stdout, fail) {
   try {
     await writeBack(ctx, item, stdout);
   } catch (err) {
-    return { ...item, status: 'failed', error: err.message };
+    return fail(err.message);
   }
-  return { ...item, status: 'succeeded', stage: null };
+  return null;
 }
 
 // ─── 服务接口 ─────────────────────────────────────────────────────────────
@@ -638,7 +869,7 @@ function selectRows(tpl, options) {
     throw new Error(`Selected ${rows.length} rows, exceeding the Template limit of ${cap}; split the table or raise limits.max_rows_per_run`);
   }
 
-  return { ...normalized, skillDir, inputs, outputs, dropped, workHash, all, rows };
+  return { ...normalized, skillDir, inputs, outputs, dropped, workHash, execHash: execHashOf(tpl, inputs), history, all, rows };
 }
 
 function previewTemplate(tpl, options = {}) {
@@ -664,6 +895,7 @@ function makeRun(tpl, selected, runId, runDir, startedAt, templateName = null) {
     skill_entry: tpl.skill?.entry || null,
     skill_hash: tpl.skill.hash,
     work_hash: selected.workHash,
+    exec_hash: selected.execHash,
     trigger: selected.trigger,
     dry_run: selected.dryRun,
     started_at: startedAt,
@@ -723,6 +955,9 @@ async function runTemplate({
     outputs: selected.outputs,
     workdir,
     dryRun: selected.dryRun,
+    trigger: selected.trigger,
+    execHash: selected.execHash,
+    history: selected.history,
     emit,
   };
 
@@ -761,6 +996,10 @@ async function runTemplate({
 
 export {
   generateRunId,
+  buildArgv,
+  templateProblems,
+  resumePoint,
+  reuseOutputs,
   normalizeOptions,
   previewTemplate,
   runTemplate,

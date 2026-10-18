@@ -15,6 +15,11 @@ const EDITABLE = [
   { key: 'SKILLAPP_ANALYZE_TIMEOUT_MS', label: '分析超时 (ms)', hint: '默认 900000', placeholder: '900000' },
   { key: 'SKILLAPP_RUN_CONCURRENCY', label: 'Run 并发数', hint: '同时跑几行，默认 4，上限 8', placeholder: '4' },
   { key: 'SKILLAPP_PAGE_SIZE', label: '每页条数', hint: '列表每页显示几条，默认 10，上限 200', placeholder: '10' },
+  // 通用生图（.agents/skills/image-generator）：任何 Skill 都通过它出图。
+  { key: 'SKILLAPP_IMAGE_BASE_URL', label: '生图端点', hint: 'OpenAI 兼容，例如 https://api.example.com/v1', placeholder: 'https://api.example.com/v1' },
+  { key: 'SKILLAPP_IMAGE_MODEL', label: '生图模型', hint: '例如 gpt-image-2.5-flare', placeholder: 'gpt-image-2.5-flare' },
+  { key: 'SKILLAPP_IMAGE_SIZE', label: '生图尺寸', hint: '默认尺寸，例如 1024x1536；留空用模型默认', placeholder: '1024x1536' },
+  { key: 'SKILLAPP_IMAGE_TIMEOUT_MS', label: '生图超时 (ms)', hint: '单张图的超时，默认 180000', placeholder: '180000' },
 ];
 
 const READONLY = [
@@ -22,6 +27,7 @@ const READONLY = [
   { key: 'SKILLAPP_DATA_DIR', label: '内容目录', hint: 'Skill / Template / Run 的存放位置，改动需重启' },
   { key: 'SKILLAPP_ROOT', label: '内容根', hint: '默认仓库根，改动需重启' },
   { key: 'SKILLAPP_LARK_MODULE', label: 'lark 实现模块', hint: '默认走 lark-cli，改动需重启' },
+  { key: 'SKILLAPP_IMAGE_API_KEY', label: '生图密钥', secret: true, hint: '写在 .env 里，不在页面回显' },
 ];
 
 const EDITABLE_KEYS = new Set(EDITABLE.map((entry) => entry.key));

@@ -12,11 +12,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { escapeHtml, highlightText, jsonText } from '../src/web/lib/highlight.js';
+import { formatDuration } from '../src/web/lib/format.js';
 
 test('jsonText：对象与 JSON 字符串都整理成好看的文本，非 JSON 交给调用方兜底', () => {
   assert.equal(jsonText({ count: 3 }), '{\n  "count": 3\n}');
   assert.equal(jsonText('{"count":3}'), '{\n  "count": 3\n}');
   assert.equal(jsonText('plain <text>'), null);
+});
+
+test('时长格式：整分钟只写分钟，秒不补零（Runs / Operations / Run Item 共用这一份）', () => {
+  assert.equal(formatDuration(null), '—');
+  assert.equal(formatDuration(Number.NaN), '—');
+  assert.equal(formatDuration(404), '404 ms', '不到一秒还是毫秒');
+  assert.equal(formatDuration(1500), '1.5 s');
+  assert.equal(formatDuration(60_000), '1m', '正好整分钟不写 0 秒');
+  assert.equal(formatDuration(120_000), '2m');
+  assert.equal(formatDuration(68_000), '1m 8s', '秒不补零');
+  assert.equal(formatDuration(94_361), '1m 34s');
+  assert.equal(formatDuration(3_600_000), '60m', '目前不做小时，分钟一直涨');
 });
 
 test('逐行高亮：转义内容、标记 token，且不依赖整段是合法 JSON', () => {

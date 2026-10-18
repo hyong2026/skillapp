@@ -25,6 +25,7 @@
 - `{skill.entry}` 展开成**绝对路径**；`{outdir}` 是该行在 Run 目录里的 `artifacts/`（同样是绝对路径）。
 - **子进程的 cwd 是内容层根**（`.data/`），不是 Skill 目录。这样 Skill 自己调用 `lark-cli` 时，写进 `.data/runs/...` 的文件才落在它的写盘白名单里（lark-cli 只允许写 cwd / `/tmp` / `~/files`）。
 - Skill 需要临时文件就写 `{outdir}` 或 `/tmp`，别依赖相对路径。
+- 需要生图用宿主注入的入口 `node "$SKILLAPP_IMAGE_CLI" …`（配置见 [cli.md](cli.md#通用生图agentsskillsimage-generator)）；**prompt 型的 `cmd` 还要带 `-c sandbox_workspace_write.network_access=true`**，否则沙箱断网、请求发不出去。
 
 命令模板的三种写法：
 
@@ -34,6 +35,10 @@
 | `{key...}` | 展开成多个位置参数（一组文件） |
 | `{--flag key}` | 成对参数；值为空或该列已被删除时**整对省略** |
 
+prompt 型 Skill 的整段指令带引号，是**一个** token：那里没有 argv 的位置概念，占位符就地替换成文本——`{key}` 取标量（数组用逗号连接），`{key...}` 展开成**空格分隔**的列表，取不到值渲染成空串（默认留空是它的常态，如 `参考图=` / `补充备注=`）。必填输入缺失仍会在校验阶段报 `… is required`。
+
+`cmd` 是纯文本模板，写错只会在某一行跑起来时才炸。所以 **Run 与 Preview 之前都会先扫一遍 `cmd`**：整块却不成形的占位符（如 `{--format}`）、引用了不存在的变量、位置参数用的是未映射的列，都在开跑前就拒绝，不会留下一个 Failed 的 Run。
+
 ## 并发
 
 同一 Run 内默认**同时跑 4 行**：开 N 个 worker 抢同一个行号游标，一行跑完再领下一行。
@@ -42,6 +47,16 @@
 - 行与行之间没有共享状态：各读自己的单元格、各写自己的记录、产物在自己的 `<record_id>/artifacts/` 里；附件列也是"清自己那一格再上传"，所以不会互踩。
 - 飞书调用分两类：**按行**发生的（下载附件、回写、上传）走异步的 `larkAsync`，所以表 IO 也并行；**整表只做一次**的（`record-list`、`preflight` 的 `field-list`）走同步的 `lark`，在行开跑之前就做完了。同一行的多个附件也是一起下（`Promise.all`）。
 - 进度按完成数递增（`run.completed`），`item-started` / `item-finished` 事件会交错推送，行序仍按表格顺序落在 `run.json`。
+- **行内的意外错误只算这一行失败**（例如飞书 CLI 抛错、`cmd` 拼不出来）：其余行照跑，Run 正常收尾。Run 级失败（worker 崩了、服务重启、取消）也只把 Run 置终态——同一次落盘会把所有还挂在 `queued` / `running` 的行一起收敛（`failed` / `interrupted` / `canceled`）并重算计数，所以不会出现「Run Failed 但 Item 还在 Running」。
+
+## 断点续跑
+
+Retry / 再跑一次增量时，**已经成功的行本来就不会被选中**；这里说的是另一半——上次 **Skill 已经跑完、只是回写失败**的行（列类型不对、授权过期、`from` 表达式写错…）：重试时不该再把贵的 Skill 跑一遍。
+
+- 每个可选中的条件都满足才续：上次**失败**、输入指纹与 **exec 版本**（Skill + 命令 + 目标 + 输入）没变、`<record>/stdout.json` 还在（说明 Skill 跑完了）、这次要回写的产物文件都还在。
+- 续跑 = 跳过 校验 / 下载 / 执行，把上次的产物**硬链接**（跨卷则复制）进这次 Run 的行目录，然后按**解析后的 `stdout.json`** 重新回写。所以"把 `stdout.files[].path` 改成 `stdout.files[]` 再重试"这种修法，不必重新生图。
+- 只要有一条不成立就老实全量重跑：换了输入、换了 Skill 或 cmd、上次 Skill 中途失败、产物被删、或者用 `--all`（All Rows）跑——全量语义就是**无条件重跑**。
+- 这一行会记 `resumed_from: <旧 run_id>`，UI 上显示为 `Resumed From`；日志里也留一句 `[skillapp] resumed from …`，免得看日志的人以为它什么都没干。
 
 ## 写回
 
@@ -79,6 +94,7 @@
 └── <record_id>/
     ├── downloads/               输入附件快照
     ├── artifacts/               该行的产物（{outdir}）
+    ├── stdout.json              Skill 解析后的输出（回写失败时续跑靠它，也方便排查"到底吐了什么"）
     └── logs/
         ├── stdout.log           进程的 stdout 原文
         ├── stderr.log           脚本型 Skill 的 stderr 原文
@@ -126,6 +142,8 @@
     { "key": "prefix", "label": "文件名前缀", "type": "text", "mapped": false }  // 不建列、不读、不写
   ],
   "outputs": [
+    // 元素是对象（有 path 字段）就用 stdout.files[].path；元素本身就是路径字符串就用 stdout.files[]。
+    // 写反了会摊出一串 undefined，运行时报 `Expression resolved to no file paths`。
     { "key": "tiles", "label": "切片", "type": "attachment", "from": "stdout.files[].path" },
     { "key": "tile_count", "label": "切片数", "type": "number", "from": "stdout.grid.total", "round": 0 }
   ],

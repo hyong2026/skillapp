@@ -1,10 +1,10 @@
 # mappings/
 
 Mapping —— Skill 的 **IO 契约（草案）**：输入、输出与命令模板。
-`analyze-skill` 写它，`bind-table.js` 读它；界面上就是 Skill 详情里的 `IO Schema` 面板。
+`skill-analyzer` 写它，`bind-table.js` 读它；界面上就是 Skill 详情里的 `IO Schema` 面板。
 
 ```text
-analyze-skill  →  mappings/<Skill Name>.mapping.json  →  bind-table.js  →  templates/…
+skill-analyzer  →  mappings/<Skill Name>.mapping.json  →  bind-table.js  →  templates/…
                             ↑
                     面板里的改名 / 勾选 / 排序（即时保存）
 ```
