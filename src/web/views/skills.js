@@ -135,11 +135,8 @@ async function skillView(ref) {
       : panel(SCHEMA_PANEL_TITLE, h('div', { className: 'panel-body schema-body' }, empty('No Mapping available.'))));
   };
   const setAnalysisLoading = () => {
-    const current = contractSlot.firstElementChild;
-    const height = current ? Math.round(current.getBoundingClientRect().height) : 0;
-    const loading = loadingPanel(SCHEMA_PANEL_TITLE, 'Analyzing Skill IO...', 'schema-body');
-    if (height) loading.style.minHeight = `${height}px`;
-    contractSlot.replaceChildren(loading);
+    // 不继承上一份 Schema 的高度（那会把"分析中"撑成一大片空白），回到面板的默认高度。
+    contractSlot.replaceChildren(loadingPanel(SCHEMA_PANEL_TITLE, 'Analyzing Skill IO...', 'schema-body'));
   };
   const restoreAnalysis = () => paintAnalysis();
   paintAnalysis();

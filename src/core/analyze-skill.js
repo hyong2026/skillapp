@@ -8,7 +8,7 @@ import { readJson } from './json-file.js';
 import { assertRef } from './ref.js';
 import { readMapping, saveMapping, validateMapping } from './mapping.js';
 
-function analyzerArgs(outputPath = null) {
+function analyzerArgs(skillDir, outputPath = null) {
   if (process.env.SKILLAPP_ANALYZE_ARGS) {
     let parsed;
     try {
@@ -24,9 +24,12 @@ function analyzerArgs(outputPath = null) {
   const args = [
     'exec',
     '--ephemeral',
+    // 工作目录就设在被分析的 Skill 里（而不是 SkillApp 仓库）：模型不会顺手去读
+    // SkillApp 自己的 src/ 实现，那是分析对象之外的东西。
+    '--skip-git-repo-check',
     '--sandbox', 'workspace-write',
     '--color', 'never',
-    '-C', ROOT,
+    '-C', skillDir,
     '--add-dir', DATA_DIR,
     // 不把仓库 AGENTS.md 注入分析器上下文：那是给开发 Agent 看的规则，与"分析技能"无关。
     '-c', 'project_doc_max_bytes=0',
@@ -80,7 +83,8 @@ SKILL.md 内容：
 ${skillMd}
 
 交付要求：
-- 以实现为准：按上面的清单读入口实现即可，**不要探索仓库、不要搜索其它 *.mapping.json 样例、不要执行 find /、不要用 cat -A / od / hexdump 反复看同一个文件**。
+- 以实现为准：按上面的清单读入口实现即可。**SkillApp 自己的 src/（执行器、校验器、mapping.js 的约束）不是分析对象，不要去读、也不要找所谓"prompt 运行器"** —— 规则已经写全，含 prompt 型 Skill（清单里没有代码）的 cmd 形态。
+- 也不要搜索其它 *.mapping.json 样例、不要执行 find /、不要用 cat -A / od / hexdump 反复看同一个文件。
 - 所有判断都已经落进 Mapping（列、类型、必填、默认值、transform），没有独立报告、没有 questions。
 - ${delivery} 这与 analyze-skill 规则里"写 .data/mappings/<ref>.mapping.json"的分工不同：落盘由 SkillApp 负责。`;
 }
@@ -154,7 +158,7 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
   const outputPath = process.env.SKILLAPP_ANALYZE_ARGS
     ? null
     : path.join(os.tmpdir(), `skillapp-analyze-${process.pid}-${Date.now()}.json`);
-  const args = [...analyzerArgs(outputPath), promptFor(ref, skillDir, mappingPath, { outputPath })];
+  const args = [...analyzerArgs(skillDir, outputPath), promptFor(ref, skillDir, mappingPath, { outputPath })];
   const timeoutMs = Number(process.env.SKILLAPP_ANALYZE_TIMEOUT_MS || 15 * 60 * 1000);
   const effectiveTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15 * 60 * 1000;
 
@@ -176,6 +180,8 @@ function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
 
     emit({ stage: 'analyze', message: 'Analyzing Skill IO' });
     const child = spawn(command, args, {
+      // 进程 cwd 仍是仓库根（SKILLAPP_ANALYZE_COMMAND 可能是相对路径）；
+      // 「不要乱读仓库」靠的是上面 -C 把分析器的工作目录设在 Skill 目录。
       cwd: ROOT,
       env: {
         ...process.env,

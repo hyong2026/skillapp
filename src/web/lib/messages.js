@@ -106,16 +106,21 @@ function messageRow(operation, { onCancel, onClose }) {
   ]);
   row.dataset.operationId = operation.operation_id;
 
-  // 跑完的任务：整行可点，直接进对应详情页（进行中的不给点，避免误跳）。
-  const hash = active ? null : detailHash(operation);
+  // 整行可点，直接进对应详情页；进行中也一样可点——Run 详情本来就是实时页，进去正好看进度。
+  const hash = detailHash(operation);
   if (hash) {
     const open = () => { location.hash = hash; };
     row.classList.add('is-clickable');
     row.setAttribute('role', 'link');
     row.tabIndex = 0;
     row.title = 'Open details';
-    row.addEventListener('click', open);
+    // 行内的按钮（Cancel / Dismiss）自己处理，点它们不要顺手跳走。
+    row.addEventListener('click', (event) => {
+      if (event.target.closest('button')) return;
+      open();
+    });
     row.addEventListener('keydown', (event) => {
+      if (event.target !== row) return;
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       open();

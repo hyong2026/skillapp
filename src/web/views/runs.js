@@ -63,7 +63,7 @@ async function runsView() {
   );
 }
 
-function runContent(runId, run, liveLogs) {
+function runContent(runId, run) {
   const deleted = Boolean(run.deleted_at);
   const items = Array.isArray(run.items) ? run.items : [];
   const rows = items.map((item) => [
@@ -132,17 +132,6 @@ function runContent(runId, run, liveLogs) {
     actions.append(remove);
   }
 
-  const logPanel = h('div', { className: 'live-logs' });
-  for (const [recordId, streams] of liveLogs.entries()) {
-    logPanel.append(h('section', { className: 'live-log' }, [
-      h('h3', { textContent: recordId }),
-      h('div', { className: 'detail-grid' }, [
-        panel('Stdout', h('div', { className: 'panel-body' }, textBlock(streams.stdout))),
-        panel('Stderr', h('div', { className: 'panel-body' }, textBlock(streams.stderr))),
-      ]),
-    ]));
-  }
-
   return fragment(
     h('div', { className: 'view-head' }, [
       viewTitle(run.run_id || runId, [{ label: 'Runs', href: '#runs' }]),
@@ -168,22 +157,20 @@ function runContent(runId, run, liveLogs) {
       'Run Items',
       'table-run-items',
     ))),
-    logPanel.childElementCount ? panel('Live Output', h('div', { className: 'panel-body' }, logPanel)) : null,
   );
 }
 
 async function runView(runId) {
   const initial = await api(`/api/runs/${encoded(runId)}`);
-  const liveLogs = new Map();
   let currentRun = initial;
   let queued = false;
   const refresh = (run, { animate = false } = {}) => {
     currentRun = run;
     // The run view repaints itself on every stream event, so it renders
     // directly and returns nothing for `render()` to place.
-    renderViewContent(runContent(runId, run, liveLogs), { animate });
+    renderViewContent(runContent(runId, run), { animate });
   };
-  // 日志是按块推的：合并成一帧一次重画，别让页面每秒重画几十次。
+  // 事件是按块推的：合并成一帧一次重画，别让页面每秒重画几十次。
   const refreshSoon = () => {
     if (queued) return;
     queued = true;
@@ -200,14 +187,9 @@ async function runView(runId) {
       refreshSoon();
       return;
     }
-    if (event.type === 'item-log') {
-      const streams = liveLogs.get(event.record_id) || { stdout: '', stderr: '' };
-      streams[event.stream] = `${streams[event.stream]}${event.chunk}`.slice(-24000);
-      liveLogs.set(event.record_id, streams);
-      refreshSoon();
-      return;
+    if (event.run) {
+      refresh(event.run);
     }
-    if (event.run) refresh(event.run);
     if (event.type === 'error') setNotice(event.error?.message || 'Run failed', true);
   });
   return null;

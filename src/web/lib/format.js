@@ -67,6 +67,24 @@ function triggerLabel(value) {
   return safe || '—';
 }
 
+/**
+ * Prompt 型 Skill：入口就是 SKILL.md（cmd 一般交给 `codex exec`），没有脚本可跑。
+ * 这类 Run 的过程输出走"实时日志"，脚本型 Skill 则给 stdout / stderr 两块完整日志。
+ */
+function isPromptSkill(run) {
+  return /^SKILL\.md$/i.test(String(run?.skill_entry || '').trim());
+}
+
+/**
+ * Inputs 表里合并显示的「Required [Default]」：必填只写 `Yes`；非必填带默认值时写 `No [cute]`。
+ * 存储上 required 与 default 仍是两个独立字段，只是界面上并成一列（默认值不可编辑）。
+ */
+function requiredDefault(spec) {
+  if (spec?.required === true) return 'Yes';
+  const value = spec?.default;
+  return value === undefined || value === null || value === '' ? 'No' : `No [${formatMeta(value)}]`;
+}
+
 function formatMeta(value) {
   if (value === undefined || value === null || value === '') return '—';
   if (typeof value === 'object') return JSON.stringify(value);
@@ -130,6 +148,8 @@ export {
   formatDuration,
   statusBadge,
   triggerLabel,
+  isPromptSkill,
+  requiredDefault,
   formatMeta,
   specMeta,
   codeBlock,

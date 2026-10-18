@@ -59,6 +59,20 @@ test('Mapping：非必填输入与输出都可以未映射，必填输入不行�
   })), /mapped must be a boolean/);
 });
 
+test('Mapping：有默认值的输入不会被当成必填（空格由默认值兜住）', () => {
+  const mapping = validateMapping(base({
+    inputs: [
+      { key: 'style', label: '风格', type: 'select', required: true, default: 'auto', options: ['auto', 'cute'] },
+      { key: 'content', label: '内容', type: 'text', required: true },
+      { key: 'flag', label: '开关', type: 'checkbox', required: true, default: false },
+    ],
+  }));
+  assert.equal(mapping.inputs[0].required, false, 'default=auto ⇒ 不是必填');
+  assert.equal(mapping.inputs[0].default, 'auto', 'default 本身要留着');
+  assert.equal(mapping.inputs[1].required, true, '没默认值的必填保持必填');
+  assert.equal(mapping.inputs[2].required, false, 'default=false 也算有默认值');
+});
+
 test('Template 身份：文件名带目标指纹，视图也算目标', () => {
   assert.match(templateFileName('image-merge', A), /^image-merge-[0-9a-f]{8}\.template\.json$/);
   assert.equal(targetKey(A).length, 8);

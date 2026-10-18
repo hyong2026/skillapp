@@ -24,6 +24,20 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mappi
 
 文档与实现不一致时视为缺陷，逐条列入风险清单。典型：文档声称「按输出文件名后缀选择格式」，实现写死 `.png()`——用户选 JPG 会静默拿到 PNG。
 
+### prompt 型 Skill（文件清单里没有代码）
+
+有些 Skill 本身就是提示词：`SKILL.md`（必要时加 `references/`）就是全部实现，没有可执行入口。
+
+- **把 `SKILL.md` 当实现读**：参数、默认值、取值范围、产物都从它的说明、选项表、示例调用里取。
+- `cmd` 用这个固定形态（把自然语言指令交给 `codex exec`，让它按 SKILL.md 干活；各输入写成「名称={key}」）。**整段指令必须用双引号包成单个 token** —— `cmd` 按空白切成 argv，不包引号的话后面的词会被当成多余的位置参数（运行时报 `unexpected argument`）：
+
+  ```
+  codex exec --skip-git-repo-check -c project_doc_max_bytes=0 -C {outdir} -s workspace-write "读取并严格遵循{skill.entry}的流程，内容={content}；风格={style}；…；以上留空或写 auto 表示由你自动选择；产物全部写入{outdir}；最后一条消息只输出一行 JSON：files 为产物绝对路径数组、count 为数量"
+  ```
+
+- 这类 Skill 没有结构化 stdout，产物是写进 `{outdir}` 的文件：所以**必须**在指令里要求"最后一条消息只输出一行 JSON"，输出列按 `from: "stdout.files[].path"`（`attachment`）与 `stdout.count`（`number`）写，并在 `hint` 里注明"不是纯 JSON 时该行失败"。单行耗时可能很长，`limits.timeout_s` 给足（例如 1800）。
+- **不要去读 SkillApp 自己的 `src/`**（执行器、`src/core/mapping.js` 的校验、有没有"prompt 运行器"都不是你要确认的事——本规则就是全部约束）。
+
 ## 步骤
 
 1. 读 `SKILL.md`，定位入口（脚本 / CLI / 函数）
@@ -42,6 +56,20 @@ description: 读取一个本地 Agent Skill 的实现，产出结构化的 Mappi
 | `opens` | `values` / `free` | 取值是否可枚举 |
 
 `machine` 类参数**不写进 `mapping.json`**；它们由 `cmd` 里的固定写法（如 `{outdir}`）承担。
+
+### `required` 怎么定（只对输入）
+
+判据只有一个：**这一格允不允许为空**。跟这个参数"看起来重不重要"无关，也跟"这列要不要保留"无关。
+
+| 情况 | `required` |
+|---|---|
+| 空格就做不了：`cmd` 里是不可省略的 `{key}`，实现没有兜底，缺了就报错 | `true` |
+| 有 `default`（空格就用默认值兜住） | `false` —— 有默认值就说明允许空，两个键不能同时出现 |
+| 实现 / 文档 / Notes 说「可留空 / 可选 / optional / 不填则 … / 可整列为空」 | `false` |
+| 只说「这一列要保留、别删列」，值可以为空 | `false` —— 列的存在 ≠ 必填 |
+| `checkbox`（未勾选即 false） | 一般 `false`，除非实现要求必须显式选择 |
+
+`hint`（界面上的 Notes）与 `required` 必须自洽：写了"可留空 / 可选"就不能标必填；标了必填就要写清空值会怎样（例如"缺少则整批失败"）。
 
 ## 字段映射规则
 
@@ -113,8 +141,8 @@ out: 切片数        ← 输出
 
 各键的含义：
 
-- `required` —— 只对输入有意义；必填项的列名行首会加全角 `＊`
-- `default` —— 单元格为空时的取值；列被删除则不传该参数，由 Skill 自己决定
+- `required` —— 只对输入有意义；必填项的列名行首会加全角 `＊`（判定见上面「`required` 怎么定」）
+- `default` —— 单元格为空时的取值；列被删除则不传该参数，由 Skill 自己决定。**有 `default` 的输入一定不是必填**
 - `validate` —— `enum` / `min` / `max` / `count` / `min_count` / `max_count`
 - `transform` —— 列值 → 命令行值 的映射（如 `PNG` → `png`）
 - `hint` —— 写进列的 description，给人看；输入与输出都可以有（界面上的 `Notes` 列）

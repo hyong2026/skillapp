@@ -1,5 +1,5 @@
 import { actionButton, h, icon, setNotice } from './dom.js';
-import { formatMeta, specMeta } from './format.js';
+import { requiredDefault, specMeta } from './format.js';
 
 function panel(title, body, actions = null) {
   const header = title || actions
@@ -342,34 +342,12 @@ function clearDropHints(scope) {
   }
 }
 
-function inputRows(specs) {
-  return specs.map((spec) => [
-    spec.label || spec.key,
-    h('span', { className: 'mono', textContent: spec.key || '—' }),
-    h('span', { className: 'mono', textContent: spec.type || '—' }),
-    spec.required ? 'Yes' : 'No',
-    formatMeta(spec.default),
-    specMeta(spec),
-  ]);
-}
-
-function outputRows(specs) {
-  return specs.map((spec) => [
-    spec.label || spec.key,
-    h('span', { className: 'mono', textContent: spec.key || '—' }),
-    h('span', { className: 'mono', textContent: spec.type || '—' }),
-    h('span', { className: 'mono', textContent: spec.from || '—' }),
-    spec.round === undefined ? '—' : spec.round,
-  ]);
-}
-
 function mappingInputRows(entries) {
   return entries.map((entry) => [
     entry.key,
     h('span', { className: 'mono', textContent: entry.field_id || '—' }),
     h('span', { className: 'mono', textContent: entry.type || '—' }),
-    entry.required ? 'Yes' : 'No',
-    formatMeta(entry.default),
+    requiredDefault(entry),
     specMeta(entry),
   ]);
 }
@@ -380,7 +358,6 @@ function mappingOutputRows(entries) {
     h('span', { className: 'mono', textContent: entry.field_id || '—' }),
     h('span', { className: 'mono', textContent: entry.type || '—' }),
     h('span', { className: 'mono', textContent: entry.from || '—' }),
-    entry.round === undefined ? '—' : entry.round,
     entry.hint || '—',
   ]);
 }
@@ -389,8 +366,9 @@ function mappingOutputRows(entries) {
 function editableSchemaTable(kind, specs, canEdit, onSave) {
   const isInput = kind === 'inputs';
   const headers = isInput
-    ? ['', 'Field', 'Key', 'Type', 'Required', 'Default', 'Notes']
-    : ['', 'Field', 'Key', 'Type', 'Value Path', 'Precision', 'Notes'];
+    // Required 与 Default 在界面上并成一列（存储上仍是两个字段）；输出不显示 Precision。
+    ? ['', 'Field', 'Key', 'Type', 'Required [Default]', 'Notes']
+    : ['', 'Field', 'Key', 'Type', 'Value Path', 'Notes'];
   const table = h('table', { className: `schema-table schema-table-${isInput ? 'inputs' : 'outputs'}` });
   const colgroup = h('colgroup');
   for (let i = 0; i < headers.length; i += 1) colgroup.append(h('col'));
@@ -547,14 +525,12 @@ function editableSchemaTable(kind, specs, canEdit, onSave) {
       ];
       if (isInput) {
         cells.push(
-          h('td', { textContent: spec.required ? 'Yes' : 'No' }),
-          h('td', { textContent: formatMeta(spec.default) }),
+          h('td', { textContent: requiredDefault(spec) }),
           h('td', { textContent: specMeta(spec) }),
         );
       } else {
         cells.push(
           h('td', {}, h('span', { className: 'mono', textContent: spec.from || '—' })),
-          h('td', { textContent: spec.round === undefined ? '—' : String(spec.round) }),
           h('td', { textContent: specMeta(spec) }),
         );
       }

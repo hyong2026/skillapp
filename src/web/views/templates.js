@@ -14,13 +14,13 @@ function templateDefinitionPanel(template) {
   const outputs = Array.isArray(template?.mapping?.outputs) ? template.mapping.outputs : [];
   return togglePanel('Template Definition', 'JSON', () => h('div', { className: 'contract-body' }, [
     section(`Inputs (${inputs.length})`, dataTable(
-      ['Key', 'Field ID', 'Type', 'Required', 'Default', 'Notes'],
+      ['Key', 'Field ID', 'Type', 'Required [Default]', 'Notes'],
       mappingInputRows(inputs),
       'Template Input Mapping',
       'contract-table',
     )),
     section(`Outputs (${outputs.length})`, dataTable(
-      ['Key', 'Field ID', 'Type', 'Value Path', 'Precision', 'Notes'],
+      ['Key', 'Field ID', 'Type', 'Value Path', 'Notes'],
       mappingOutputRows(outputs),
       'Template Output Mapping',
       'contract-table',

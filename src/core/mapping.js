@@ -17,6 +17,11 @@ function mappingPath(ref, dataDir = null) {
   return path.join(dir, `${assertRef(ref)}${MAPPING_SUFFIX}`);
 }
 
+/** 有默认值就一定不是必填：空格会用默认值兜住，说明这一格允许空。 */
+function hasDefault(spec) {
+  return spec.default !== undefined && spec.default !== null && spec.default !== '';
+}
+
 function assertSpec(spec, role, index) {
   const label = `${role} ${index + 1}`;
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
@@ -74,7 +79,10 @@ function validateMapping(input) {
   return {
     ...input,
     skill: { ...input.skill },
-    inputs: input.inputs.map((spec) => ({ ...spec })),
+    // required 与 default 不能同时存在：分析器偶尔会两个都写，这里统一按语义纠正。
+    inputs: input.inputs.map((spec) => (spec.required === true && hasDefault(spec)
+      ? { ...spec, required: false }
+      : { ...spec })),
     outputs: input.outputs.map((spec) => ({ ...spec })),
   };
 }

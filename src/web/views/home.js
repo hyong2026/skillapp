@@ -114,10 +114,8 @@ async function homeView() {
     if (!state.ref) return;
     state.busy = 'analyze';
     paint();
-    const height = Math.round(analyzeSlot.getBoundingClientRect().height);
-    const loading = loadingPanel('IO Schema', 'Analyzing IO...');
-    if (height) loading.style.minHeight = `${height}px`;
-    analyzeSlot.replaceChildren(loading);
+    // 同上：分析中用面板默认高度，不继承上一份 Schema 的高度。
+    analyzeSlot.replaceChildren(loadingPanel('IO Schema', 'Analyzing IO...'));
     try {
       await startOperation(`/api/skills/${encoded(state.ref)}/analyze`, {}, 'POST');
       state.skill = await api(`/api/skills/${encoded(state.ref)}`);

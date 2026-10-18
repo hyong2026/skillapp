@@ -281,7 +281,11 @@ class ReadModel {
     const recordDir = path.join(this.runsDir, runId, recordId);
     return {
       ...item,
+      // Run Item 页要靠它区分 prompt 型 Skill（Live Log）与脚本型（Stdout / Stderr Logs）。
+      skill_entry: run.skill_entry || null,
       logs: {
+        // prompt 型 Skill 的进度日志（live-log.js 整理过的事件流）。
+        live: readLog(recordDir, 'live'),
         stdout: readLog(recordDir, 'stdout'),
         stderr: readLog(recordDir, 'stderr'),
       },

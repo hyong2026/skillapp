@@ -51,6 +51,7 @@ function summaryOfRun(run) {
     run_id: run.run_id,
     template_id: run.template_id || null,
     template_name: run.template_name || null,
+    skill_entry: run.skill_entry || null,
     status: run.status || 'unknown',
     trigger: run.trigger || null,
     dry_run: Boolean(run.dry_run),

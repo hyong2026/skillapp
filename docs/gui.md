@@ -44,6 +44,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - Skill 状态：`Unanalyzed / Analyzing / Ready / Stale / Unverified / Invalid`。
 - `IO Schema` 默认展示结构化 Inputs / Outputs（分析产出的 IO 契约，还没绑定到表），`JSON` 开关看原文。
   - 行首勾选框决定该列是否参与映射：取消勾选 = 不建列、不读取、不回写，整行退成次要色；必填输入的勾选框默认勾上且不可改。
+  - Inputs 把 Required 与 Default 合成一列显示（`Required [Default]`，如 `Yes` / `No [cute]`）——只是界面合并，存储上仍是两个字段；Outputs 不显示 Precision（仍保留在 JSON 里）。
   - 列名、勾选、排序都是**即时保存、不重绘页面**（只重建这张表，也不弹提示）；但要**重新执行一次 `Bind Table`** 才会写进 Template。
 - 右上角动作：`Analyze / Re-analyze`（持久化任务，刷新后仍显示 Loading）、`Bind Table`（填 Lark Base URL，启动绑定任务）、`Unload`（弹框确认后删除本地副本、Mapping、Template 与关联 Run；飞书列不删）。
 
@@ -52,7 +53,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - 列表：`Template Name / Template ID / IO / Last Run / Created`；`Template Name` 是文件名 `<Skill Name>-<目标指纹>` 且带链接（链接锚点用 `template_id`）。
 - 右上角 `Show Archived`（默认不勾）：勾上后连归档的一起列出，归档行带 `Archived` 徽标。
 - 详情：面包屑 `Templates`，标题就是 Template Name；Summary 展示 Template ID、Skill Name、Skill Hash、Lark Base URL、Created，归档后多一行 `Archived` 徽标。
-- `Template Definition` 展示已映射的 Inputs / Outputs（与表里的列一一对应），`JSON` 开关看完整 Template JSON。
+- `Template Definition` 展示已映射的 Inputs / Outputs（与表里的列一一对应，列宽与 IO Schema 同一套规则，同样把 Required / Default 合成一列、不显示 Precision），`JSON` 开关看完整 Template JSON。
 - 右上角动作：`Run`、`Archive` / `Unarchive`。
   - `Run` 先做一次 dry-run 预览。弹框固定列出 `Lark Base URL / Trigger / Rows in table / Rows to process`（未加载出来的值是 `—`；`Lark Base URL` 打开时就按 Target 填好，不依赖预览、勾选 All Rows 也不会刷新，长链接整段换行）；**`All Rows` 勾选框在弹框左下角**，切换即重新预览、弹框高度不变，再点弹框里的 `Run` 才真正提交。失败（如飞书未授权）也在弹框里给出可操作提示。没有 Preview 按钮——预览已经成为 Run 的第一步。
   - 没有要跑的行时，`Rows to process` 会是 `0`，弹框里的 `Run` 也会被禁用。
@@ -61,8 +62,8 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 ### Runs
 
 - 列表：`Run ID / Status / Template Name / Trigger / Succeeded / Total / Started`；右上角 `Show Deleted` 勾选框（逻辑删除的 Run 默认不列，勾上才出现，行内带 `Deleted` 徽标）与 `All Triggers` 下拉（服务端过滤）。
-- 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Work Hash）；有错误时多一块 `Error` 面板（按日志渲染：带行号、整段是 JSON 才高亮），`Run Items` 表、Live Output（stdout/stderr 带行号，日志整段是 JSON 时做语法高亮，纯文本原样显示）。
-- Run Item 详情：状态、阶段、耗时、错误、Input Hash、Artifacts 卡片与 stdout/stderr 日志。
+- 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Work Hash）；有错误时多一块 `Error` 面板（按日志渲染：带行号、整段是 JSON 才高亮），`Run Items` 表。日志一律点进 Run Item 看，这一页不重复展示。
+- Run Item 详情：状态、阶段、耗时、错误、Input Hash、Artifacts 卡片；日志分两套 —— prompt 型给 `Live Log`（`live.log`，由 SSE 实时追加；滚动**贴底才跟随**——本来就停在末尾时新输出自动跟到底，往上翻看历史时不会被拽回去），脚本型跑完后给 `Stdout Logs` / `Stderr Logs`。
 - 运行中的 Run 可 `Cancel`；终态且有失败行时可 `Retry`（等价于再跑一次增量，产生新 Run）；终态可 `Delete`（确认弹框 → `delete-run` 操作，**逻辑删除**：只打 `deleted_at`，文件/日志/产物都留着，所以 Message 与 Operations 里的链接照样打得开，详情页显示 `Deleted` 徽标且不再给 Delete 按钮；没有反向操作，也不释放磁盘）。跑着的 Run 要先取消。
 - 详情页靠 SSE 实时重画：重画**不重播入场动画**（否则每次事件都闪一下 2px/透明度，看着像抖动），日志按块推到页面时**合并成 120ms 一次重画**。
 

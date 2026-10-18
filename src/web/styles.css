@@ -87,6 +87,15 @@
   --title-size: var(--text-2xl);
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --font-sans: var(--font-mono);
+  /* 契约类表格（IO Schema / Template Definition）共用一套列宽比例：
+     两张表列数不同（schema 多一列拖拽列，Field 对应 Field ID），
+     但数据列逐列同比例，看起来完全一致。 */
+  --drag-col: 56px;
+  --col-field: 15%;  /* Field / Field ID */
+  --col-key: 12%;    /* Key */
+  --col-type: 12%;   /* Type */
+  --col-meta: 17%;   /* inputs: Required [Default] · outputs: Value Path */
+  --col-notes: 44%;  /* Notes */
 }
 
 /* 浅色主题：只覆盖上表里的变量，规则本身一行不改。默认仍走上面那套深色值
@@ -427,6 +436,8 @@ h3 { color: var(--text-strong); font-size: var(--text-md); font-weight: 600; }
 }
 .panel-body { padding: 18px; }
 .panel-body.flush { padding: 0; }
+/* 面板里的一行说明（例如日志只加载了前几行）。 */
+.panel-note { margin: 0 0 12px; color: var(--muted-2); font-size: var(--text-xs); }
 .code-toggle {
   display: inline-flex;
   align-items: center;
@@ -472,29 +483,27 @@ tr.drag-over td { box-shadow: inset 0 2px 0 var(--accent); }
 tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 /* 固定列宽、允许收缩：这张表不靠横向滚动条兜底，所以要盖掉 table 的 min-width: 720px。 */
 .schema-table { width: 100%; min-width: 0; table-layout: fixed; }
-.schema-table th { white-space: normal; overflow: hidden; }
+/* 表头允许折行：列宽由比例决定，nowrap 的长表头（Required [Default]）会压到隔壁列。 */
+.schema-table th, .contract-table th { white-space: normal; overflow: hidden; }
 /* 契约类表格的单元格一律允许在任意位置断行：长串（enum=[...] / transform={...}）
    自然折行、把行撑高，而不是被裁掉或压到隔壁列。 */
 .schema-table td, .contract-table td { overflow-wrap: anywhere; }
-/* Inputs / Outputs 列数一致，按位置统一列宽。中间列按"实测内容 + 单元格左右各 16px 内边距
-   + 余量"给宽度（Type 需 104px、Value Path 需 205px、Key 需 126px），剩下的留给 Notes。 */
-.schema-table col:nth-child(1) { width: 56px; }
-.schema-table col:nth-child(2) { width: 14%; }
-.schema-table col:nth-child(3) { width: 12%; }
-.schema-table col:nth-child(4) { width: 10%; }
-.schema-table col:nth-child(5) { width: 20%; }
-.schema-table col:nth-child(6) { width: 9%; }
-.schema-table col:nth-child(7) { width: 30%; }
-/* Template 详情里的 Template Definition：列宽与 IO Schema 同一套比例。 */
+/* Inputs / Outputs 都是 6 列（首列是拖拽+勾选）；列宽取自上面那套共用比例。 */
+.schema-table col:nth-child(1) { width: var(--drag-col); }
+.schema-table col:nth-child(2) { width: var(--col-field); }
+.schema-table col:nth-child(3) { width: var(--col-key); }
+.schema-table col:nth-child(4) { width: var(--col-type); }
+.schema-table col:nth-child(5) { width: var(--col-meta); }
+.schema-table col:nth-child(6) { width: var(--col-notes); }
+/* Template 详情里的 Template Definition：没有拖拽列，其余与 IO Schema 同一套比例。 */
 .contract-table { table-layout: fixed; }
-.contract-table col:nth-child(1) { width: 12%; }
-.contract-table col:nth-child(2) { width: 10%; }
-.contract-table col:nth-child(3) { width: 10%; }
-.contract-table col:nth-child(4) { width: 19%; }
-.contract-table col:nth-child(5) { width: 9%; }
-.contract-table col:nth-child(6) { width: 40%; }
+.contract-table col:nth-child(1) { width: var(--col-key); }
+.contract-table col:nth-child(2) { width: var(--col-field); }
+.contract-table col:nth-child(3) { width: var(--col-type); }
+.contract-table col:nth-child(4) { width: var(--col-meta); }
+.contract-table col:nth-child(5) { width: var(--col-notes); }
 .schema-table td { overflow: hidden; }
-.drag-cell { width: 56px; padding: 10px 6px !important; text-align: center; }
+.drag-cell { width: var(--drag-col); padding: 10px 6px !important; text-align: center; }
 .drag-cell-inner { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .map-check { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .map-check:disabled { cursor: default; opacity: .55; }
@@ -597,10 +606,12 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 /* Run items: fixed columns so SSE-driven row updates cannot reflow the table. */
 .table-run-items { table-layout: fixed; }
 .table-run-items td { overflow-wrap: anywhere; }
-.table-run-items col:nth-child(1) { width: 176px; }
-.table-run-items col:nth-child(2) { width: 104px; }
-.table-run-items col:nth-child(3) { width: 128px; }
-.table-run-items col:nth-child(4) { width: 104px; }
+/* 列宽按"内容 + 左右各 16px 内边距"给足：Status 的徽标（Completed 约 95px）、
+   Duration 的值（12px 等宽下 `405800 ms` 约 105px）都不再折行。 */
+.table-run-items col:nth-child(1) { width: 160px; }
+.table-run-items col:nth-child(2) { width: 132px; }
+.table-run-items col:nth-child(3) { width: 104px; }
+.table-run-items col:nth-child(4) { width: 124px; }
 .table-run-items col:nth-child(5) { width: auto; }
 .table-run-items td:nth-child(1), .table-run-items td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-logs { display: grid; gap: 14px; }

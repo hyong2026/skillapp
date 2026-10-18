@@ -61,6 +61,10 @@ function makeFixture(mode) {
     // 报告自己看到的 cwd：用来钉住「Skill 子进程的 cwd = 内容层根」
     : mode === 'cwd'
       ? 'process.stdout.write(JSON.stringify({ value: process.cwd() }) + "\\n");\n'
+    // 长跑场景：先打一行、停一会儿再打结果 —— 用来验证 stdout 是"边跑边落盘"
+    : mode === 'streaming'
+      ? 'process.stdout.write("first-line\\n");\n'
+        + 'setTimeout(() => { process.stdout.write(JSON.stringify({ value: "ok" }) + "\\n"); }, 1200);\n'
     : 'process.stdout.write(JSON.stringify({ value: "ok" }) + "\\n");\n'
       + 'process.stderr.write("warn-line\\n");\n');
 
@@ -184,8 +188,23 @@ async function runWorker(mode) {
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
   process.argv = ['node', RUN_TEMPLATE, templatePath];
-  if (!['logs', 'no-writeback', 'cwd', 'unmapped-output', 'concurrent'].includes(mode)) process.argv.push('--dry-run');
+  if (!['logs', 'no-writeback', 'cwd', 'unmapped-output', 'concurrent', 'streaming'].includes(mode)) process.argv.push('--dry-run');
   if (mode === 'incremental') process.argv.push('--incremental');
+
+  // streaming：跑的过程中盯着 stdout.log，验证"第一行已经落盘时结果行还没出现"
+  const midRun = { sawFirstBeforeResult: false };
+  const poll = mode === 'streaming'
+    ? setInterval(() => {
+      const runsDir = path.join(root, '.data', 'runs');
+      if (!fs.existsSync(runsDir)) return;
+      for (const name of fs.readdirSync(runsDir)) {
+        const file = path.join(runsDir, name, 'rec1', 'logs', 'stdout.log');
+        if (!fs.existsSync(file)) continue;
+        const text = fs.readFileSync(file, 'utf8');
+        if (text.includes('first-line') && !text.includes('"value"')) midRun.sawFirstBeforeResult = true;
+      }
+    }, 50)
+    : null;
 
   let exitCode = null;
   let harnessError = null;
@@ -196,6 +215,7 @@ async function runWorker(mode) {
     if (err instanceof ExitCalled) exitCode = err.code;
     else harnessError = err.stack || String(err);
   }
+  if (poll) clearInterval(poll);
 
   process.exit = realExit;
   console.log = realLog;
@@ -219,7 +239,7 @@ async function runWorker(mode) {
 
   let logs = null;
   let logReadError = null;
-  if (mode === 'logs') {
+  if (mode === 'logs' || mode === 'streaming') {
     try {
       const runDir = path.join(root, '.data', 'runs', fs.readdirSync(path.join(root, '.data', 'runs'))[0]);
       const recordDir = path.join(runDir, 'rec1');
@@ -261,6 +281,7 @@ async function runWorker(mode) {
       : null,
     logs,
     logReadError,
+    midRun,
   }) + '\n');
 }
 
@@ -401,5 +422,17 @@ if (process.argv.includes('--worker')) {
     assert.equal(writes.length, 2, '两行的回写都该走 larkAsync');
     assert.ok(writes[0].started < writes[1].ended && writes[1].started < writes[0].ended,
       `两行的回写窗口应重叠：${JSON.stringify(writes)}`);
+  });
+
+  test('长跑的 Skill：stdout 边跑边落盘，进程还在跑时日志已经可读', () => {
+    const out = scenario('streaming');
+    assert.equal(out.exitCode, null, out.errors.join('\n'));
+    assert.equal(
+      out.midRun.sawFirstBeforeResult,
+      true,
+      '第一行输出应该在脚本结束前就写进了 logs/stdout.log（这样刷新页面/进程被打断都还有日志）',
+    );
+    assert.match(out.logs.stdout, /first-line/);
+    assert.match(out.logs.stdout, /"value":"ok"/);
   });
 }

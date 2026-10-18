@@ -59,7 +59,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 - JSON 状态文件一律**临时文件 + rename** 原子更新。
 - `run.json` 在 Run 启动时创建，状态或 Run Item 变化时更新。
 - `operation.json` 记录异步操作的状态、输入、结果和错误；Run 只在这里留一份索引（mirror），明细仍在 `.data/runs/`。
-- stdout/stderr 以 `.log` 文本原样保存。
+- 日志以 `.log` 文本原样保存：脚本型是 stdout/stderr，prompt 型是整理过的 `live.log`（见 [run.md](run.md#日志与产物)）。
 - 服务启动时扫描活动 Run/Operation，标成 `interrupted`（不自动续跑）。
 - `.data/` 除各自的 `README.md` 外不进 Git。
 

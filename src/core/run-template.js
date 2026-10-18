@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { lark, larkAsync } from './lark.js';
+import { createCodexEvents } from './live-log.js';
 import { skillHash } from './skill-hash.js';
 import { DATA_DIR, RUNS_DIR } from './paths.js';
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
@@ -64,6 +65,16 @@ function writeStreamLog(recordDir, stream, text) {
   const logsDir = path.join(recordDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
   fs.writeFileSync(path.join(logsDir, `${stream}.log`), text || '');
+}
+
+/**
+ * 边跑边落盘：长跑的 Skill（尤其 prompt 型，动辄十几分钟）在进程被打断时也该留下日志，
+ * 刷新页面也能读回已经产出的部分。跑完后仍会整段重写一次，保证文件与服务端缓冲一致。
+ */
+function appendStreamLog(recordDir, stream, text) {
+  const logsDir = path.join(recordDir, 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+  fs.appendFileSync(path.join(logsDir, `${stream}.log`), text || '');
 }
 
 /** 记录列表 → [{ record_id, cells }]，cells 是 field_id → 值 */
@@ -138,22 +149,41 @@ function evalFrom(expr, stdout) {
   return out;
 }
 
-/** 按空白切分命令，但 {} 内部的空白不算——成对参数要写成单个 token。 */
+/**
+ * 按空白切分命令，但 `{}` 内部与引号内部的空白不算：
+ *   - `{--flag key}` 这种成对参数要写成单个 token；
+ *   - 整段自然语言提示词（prompt 型 Skill 的 cmd）用双引号包成单个 token。
+ * 引号本身不进入结果（相当于 shell 的去引号），token 内部的 `{key}` 照常留给后续替换。
+ */
 function tokenize(cmd) {
   const tokens = [];
   let depth = 0;
+  let quote = null;
   let cur = '';
+  let started = false;
   for (const ch of cmd) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else { cur += ch; started = true; }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      started = true;
+      continue;
+    }
     if (ch === '{') depth++;
     else if (ch === '}') depth--;
     if (/\s/.test(ch) && depth === 0) {
-      if (cur) tokens.push(cur);
+      if (started) tokens.push(cur);
       cur = '';
+      started = false;
     } else {
       cur += ch;
+      started = true;
     }
   }
-  return cur ? [...tokens, cur] : tokens;
+  return started ? [...tokens, cur] : tokens;
 }
 
 /**
@@ -191,6 +221,24 @@ function buildArgv(cmd, vars) {
 
 /** cmd 里的内置变量，不是输入列（与 bind-table 的 checkCmd 保持一致）。 */
 const BUILTIN_VARS = new Set(['outdir', 'skill']);
+
+/**
+ * prompt 型 Skill 的 cmd 是 `codex exec …`。默认它会把整段 agent 会话打进 stderr，
+ * 补上 `--json` 后 stdout 变成事件流，才有 live.log 可读（见 live-log.js）。
+ * Template 里自己写了这两个参数的以 Template 为准。
+ */
+function withCodexEvents(argv) {
+  if (argv[0] !== 'codex' || argv[1] !== 'exec') return argv;
+  const rest = argv.slice(2);
+  if (rest.includes('--json') && rest.includes('--color')) return argv;
+  return [
+    'codex',
+    'exec',
+    ...(rest.includes('--json') ? [] : ['--json']),
+    ...(rest.includes('--color') ? [] : ['--color', 'never']),
+    ...rest,
+  ];
+}
 
 /** cmd 里以单独变量出现（`{key}` / `{key...}`）的输入必须有值——未映射就没法满足。 */
 function requiredKeysInCmd(cmd) {
@@ -406,7 +454,10 @@ async function writeBack(ctx, item, stdout) {
 
   for (const o of outputs) {
     if (o.type !== 'attachment') continue;
-    const files = [].concat(evalFrom(o.from, stdout));
+    // 取值表达式和 Skill 实际输出对不上时（例如输出的是路径数组，表达式却按对象数组取 .path），
+    // walk 会摊出一串 undefined；带着它去调 lark-cli 只会换来一句看不懂的参数校验错误。
+    const files = [...new Set([].concat(evalFrom(o.from, stdout)).filter((p) => typeof p === 'string' && p.trim()))];
+    if (!files.length) throw new Error(`Expression resolved to no file paths: ${o.from}`);
     item.stage = 'writeback';
     ctx.emit({ type: 'item-stage', record_id: item.record_id, stage: 'writeback' });
     await updateRow(tpl, item.record_id, { [o.field_id]: null }); // 上传是追加语义，先清空
@@ -486,34 +537,64 @@ async function runRow(ctx, row) {
   ctx.emit({ type: 'item-stage', record_id: recordId, stage: 'exec' });
   vars.outdir = path.join(recordDir, 'artifacts');
   fs.mkdirSync(vars.outdir, { recursive: true });
-  const argv = buildArgv(tpl.mapping.cmd, vars);
+  const argv = withCodexEvents(buildArgv(tpl.mapping.cmd, vars));
   if (dryRun) return { ...item, status: 'dry-run', argv };
 
   // 3) 执行
   const [bin, ...binArgs] = argv; // cmd 是完整命令行，首个 token 即可执行文件
   const t0 = Date.now();
+  // prompt 型（命令带 --json）的进度整理进 live.log；它的 stderr 就那么点诊断信息，
+  // 也并进这一份，不再单开 stderr.log —— 会话原文不再是 SkillApp 的日志。
+  const live = argv.includes('--json') ? createCodexEvents() : null;
+  let liveText = '';
+  const appendLive = (chunk) => {
+    if (!chunk) return;
+    liveText += chunk;
+    appendStreamLog(recordDir, 'live', chunk);
+    ctx.emit({ type: 'item-log', record_id: recordId, stream: 'live', chunk });
+  };
+  // 清空本次要写的文件：本次没输出就应该是空的，别留下上一次（同目录不会复用，仅为稳妥）。
+  writeStreamLog(recordDir, 'stdout', '');
+  writeStreamLog(recordDir, live ? 'live' : 'stderr', '');
   const res = await spawnSkill(bin, binArgs, {
     // cwd 不能用 Skill 目录：lark-cli 只允许把文件写到 cwd / /tmp / ~/files，
     // 而 Skill 的产物目录在 .data/runs/ 之下——cwd 必须是它的祖先，Skill 自己的
     // lark-cli 调用（例如 --output 写 ndjson）才不会被白名单拒绝。
     cwd: DATA_DIR,
     timeoutMs: (tpl.limits?.timeout_s || 60) * 1000,
-    onStdout: (chunk) => ctx.emit({ type: 'item-log', record_id: recordId, stream: 'stdout', chunk }),
-    onStderr: (chunk) => ctx.emit({ type: 'item-log', record_id: recordId, stream: 'stderr', chunk }),
+    onStdout: (chunk) => {
+      appendStreamLog(recordDir, 'stdout', chunk);
+      ctx.emit({ type: 'item-log', record_id: recordId, stream: 'stdout', chunk });
+      if (live) appendLive(live.push(chunk));
+    },
+    onStderr: (chunk) => {
+      if (live) {
+        appendLive(chunk);
+        return;
+      }
+      appendStreamLog(recordDir, 'stderr', chunk);
+      ctx.emit({ type: 'item-log', record_id: recordId, stream: 'stderr', chunk });
+    },
   });
   item.ms = Date.now() - t0;
+  if (live) appendLive(live.flush());
   writeStreamLog(recordDir, 'stdout', res.stdout);
-  writeStreamLog(recordDir, 'stderr', res.stderr);
+  if (live) writeStreamLog(recordDir, 'live', liveText);
+  else writeStreamLog(recordDir, 'stderr', res.stderr);
   if (res.timedOut) return fail(`Skill timed out after ${tpl.limits?.timeout_s || 60}s`);
   if (res.error) return fail(`Skill failed to start: ${res.error.message}`);
-  if (res.status !== 0) return fail(`Skill exited with code ${res.status}: ${(res.stderr || '').trim().split('\n').pop()}`);
+  if (res.status !== 0) {
+    const detail = (res.stderr || '').trim().split('\n').filter(Boolean).pop() || live?.lastError() || '';
+    return fail(`Skill exited with code ${res.status}: ${detail}`);
+  }
 
   // 没有输出列的 Template 不回写：这类 Skill 的结果落在别处（例如输入里给的另一张表），
   // 所以也不必解析 stdout —— 它不需要吐 JSON。
   let stdout = null;
   if (ctx.outputs.length) {
     try {
-      stdout = JSON.parse(res.stdout);
+      // 事件流模式下答案在最后一条 agent 消息里；不是事件流就还是 stdout 原文。
+      stdout = JSON.parse(live?.finalMessage() ?? res.stdout);
     } catch {
       return fail('Skill output is not valid JSON');
     }
@@ -579,6 +660,8 @@ function makeRun(tpl, selected, runId, runDir, startedAt, templateName = null) {
     template_id: tpl.template_id,
     // Template 名字在发起时就定下来，之后不再查表：Run 是记录，不是视图。
     template_name: templateName,
+    // 入口就是 SKILL.md 的是 prompt 型 Skill（cmd 通常交给 codex exec）：日志看"实时"那一套。
+    skill_entry: tpl.skill?.entry || null,
     skill_hash: tpl.skill.hash,
     work_hash: selected.workHash,
     trigger: selected.trigger,
@@ -682,5 +765,7 @@ export {
   previewTemplate,
   runTemplate,
   atomicWriteJson,
+  tokenize,
+  withCodexEvents,
   TERMINAL_STATUSES,
 };

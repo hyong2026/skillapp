@@ -80,12 +80,17 @@
     ├── downloads/               输入附件快照
     ├── artifacts/               该行的产物（{outdir}）
     └── logs/
-        ├── stdout.log           Skill 的 stdout 原文
-        └── stderr.log           Skill 的 stderr 原文
+        ├── stdout.log           进程的 stdout 原文
+        ├── stderr.log           脚本型 Skill 的 stderr 原文
+        └── live.log             prompt 型 Skill 的实时进度（[msg] / [cmd] / [error]）
 ```
 
-- 日志**原样落盘**，不做 JSON 包装——它首先是给人看的；图形界面直接展示这两份文本（带行号）。
-- stdout 只在**有输出列**时解析成 JSON 取字段；`stdout` 不是 JSON 时该行失败并记 `error`。
+- 日志**原样落盘**，不做 JSON 包装——它首先是给人看的；图形界面直接展示这些文本（带行号）。
+- **prompt 型 Skill**（入口是 `SKILL.md`，cmd 走 `codex exec`）由执行器补上 `--json`：stdout 变成
+  "一行一个事件"的 JSONL，`live.log` 再把它整理成只值得看的那几类（模型的进度说明、跑的命令、
+  报错），会话原文与工具输出都不进日志。答案取**最后一条 agent 消息**，所以 Mapping 里
+  `from: stdout.…` 的写法不用变。
+- 回写只在**有输出列**时解析答案；答案不是 JSON 时该行失败并记 `error`。
 - 产物既回写进表格，也在本机留一份；界面上的 Artifacts 卡片按相对路径读取。
 
 `run.json` 里的关键字段：
