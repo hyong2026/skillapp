@@ -6,9 +6,9 @@ import { hashLink, subjectLink } from '../lib/links.js';
 
 // 操作类型按业务对象分组（Skill / Template / Run），组内按业务顺序（装载 → 分析 → 卸载 这种）。
 const TYPE_GROUPS = [
-  { label: 'Skill', values: ['load-skill', 'analyze-skill', 'unload-skill'] },
-  { label: 'Template', values: ['bind-table', 'archive-template', 'unarchive-template'] },
-  { label: 'Run', values: ['execute-template', 'delete-run'] },
+  { label: 'Skills', values: ['load-skill', 'analyze-skill', 'unload-skill'] },
+  { label: 'Templates', values: ['bind-table', 'archive-template', 'unarchive-template'] },
+  { label: 'Runs', values: ['execute-template', 'delete-run'] },
 ];
 
 async function operationsView() {

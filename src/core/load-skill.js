@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { skillHash } from './skill-hash.js';
+import { skillFileHashes, skillHash } from './skill-hash.js';
 import { readSkillDescription } from './skill-meta.js';
 import { SKILLS_DIR } from './paths.js';
 import { AppError } from './errors.js';
@@ -52,6 +52,8 @@ function loadSkill(input = {}) {
     fs.writeFileSync(path.join(tmp, 'source.json'), JSON.stringify({
       source: src,
       hash,
+      // 逐文件清单：指纹对不上时靠它说出是哪个文件变了（见 skill-hash.js 的 diffSkillFiles）。
+      files: skillFileHashes(tmp),
       description: readSkillDescription(tmp),
       loaded_at: new Date().toISOString(),
     }, null, 2) + '\n');

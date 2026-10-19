@@ -65,7 +65,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - 列表：`Run ID / Status / Template Name / Trigger / Succeeded / Total / Started`；右上角 `Show Deleted` 勾选框（逻辑删除的 Run 默认不列，勾上才出现，行内带 `Deleted` 徽标）与 `All Triggers` 下拉（服务端过滤）。
 - 详情：Summary（Status、Template Name、Trigger、Progress、Started/Finished、Succeeded/Failed、Work Hash）；有错误时多一块 `Error` 面板（按日志渲染：带行号、整段是 JSON 才高亮；Run 半路失败时会补一句影响了几行），`Run Items` 表（Duration 同样格式化）。日志一律点进 Run Item 看，这一页不重复展示。
 - Run Item 详情：Summary（Status、Stage、Duration、`Resumed From`（续跑时才有）、Input Hash）+ 独立的 `Error` 面板 + Artifacts 卡片 + 日志面板。`Duration` 走同一个 `formatDuration`（`404 ms` / `1.5 s` / `1m 8s` / `2m`，整分钟不写秒），Runs、Operations、Run Item 共用。
-- Run Item 的日志：`Live Logs` / `Stdout Logs` / `Stderr Logs` **一行一个**，每块**固定高度、内部滚动**（打开时都定位到最后一行；滚到头再滚会把页面接着滚下去），**只显示真的有数据的那些**——prompt 型通常给 `Live Logs`（由 SSE 实时追加，**贴底才跟随**：停在末尾就自动跟到底，往上翻看历史则不动），脚本型给 `Stdout Logs` / `Stderr Logs`。跑到终态整页按最新的 Run Item 重画一次（并重读磁盘上的完整日志）。
+- Run Item 的日志：`Live Logs` / `Stdout Logs` / `Stderr Logs` **一行一个**，每块**固定高度、内部滚动**（打开时都定位到最后一行；滚到头再滚会把页面接着滚下去），**只显示真的有数据的那些**，面板**按需出现**——prompt 型通常给 `Live Logs`，脚本型给 `Stdout Logs` / `Stderr Logs`。只要这一行还活跃，页面就订阅这个 Run 的流：三块日志都**按块追加**（**贴底才跟随**：停在末尾就自动跟到底，往上翻看历史则不动），Summary 的 `Status` / `Stage` / `Duration` 跟着事件走；这一行跑完（或整个 Run 收尾）再按磁盘重画一次，`Error` 与 `Artifacts` 一并出来。
 - 运行中的 Run 可 `Cancel`；终态且有失败行时可 `Retry`（等价于再跑一次增量，产生新 Run；**上次 Skill 已跑完、只是回写失败的行会断点续跑**，复用产物不再重跑，见 [run.md](run.md#断点续跑)）；终态可 `Delete`（确认弹框 → `delete-run` 操作，**逻辑删除**：只打 `deleted_at`，文件/日志/产物都留着，所以 Message 与 Operations 里的链接照样打得开，详情页显示 `Deleted` 徽标且不再给 Delete 按钮；没有反向操作，也不释放磁盘）。跑着的 Run 要先取消。
 - 详情页靠 SSE 实时重画：重画**不重播入场动画**（否则每次事件都闪一下 2px/透明度，看着像抖动），日志按块推到页面时**合并成 120ms 一次重画**。
 
@@ -95,7 +95,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 ## UI 约定
 
-- 静态文案统一英文；表头、字段名与分析面板标题首字母大写（不强制全大写）。
+- 静态文案统一英文；表头、字段名与分析面板标题首字母大写（不强制全大写）；导航、消息区标题、列表页 / Home / Settings 的标题、筛选下拉的分组名统一全大写（导航与分组名用复数，两边文案一致）。
 - 表头、Summary 字段名、弹框字段名共用一套样式与字号（10px / 600 / 等宽，次要色）。
 - 所有弹框都是应用内 `<dialog>`，不用浏览器原生 `confirm`：输入弹框（Load / Bind）、确认弹框（Unload / Archive / Delete / 全量 Execute）、提示弹框（页面级失败，只有一个 `OK`）、Execute 弹框（预览 + 提交）。确认弹框支持 Esc / Cancel 放弃，危险动作的确认按钮为红色。
 - 页面级失败（路由不存在 / 详情读不出来）：**不把错误嵌在页面里**（那样顶部会留着上一页的标题和按钮），而是清空顶部与内容、弹一个只有 `OK` 的提示框，关掉后回到上一级；没有 `Retry` —— 东西真的不在了时重试没有意义。

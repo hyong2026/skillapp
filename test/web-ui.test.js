@@ -867,8 +867,8 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
     const applied = await waitForOperation(ctx, 'demo', 'bind-table');
     assert.equal(applied.status, 'completed', JSON.stringify(applied.error));
     assert.deepEqual(applied.result.template.mapping.outputs, [], '未映射的输出不写进 Template');
-    assert.ok(applied.result.order.includes('＊in: Title'), '必填输入照常建列');
-    assert.ok(!applied.result.order.includes('out: Result'), '未映射的输出不建列');
+    assert.ok(applied.result.order.includes('IN: Title (必填)'), '必填输入照常建列');
+    assert.ok(!applied.result.order.includes('OUT: Result'), '未映射的输出不建列');
   });
 
   test('M3 换一张表会另建 Template，回到原表只更新原来那一份', async () => {

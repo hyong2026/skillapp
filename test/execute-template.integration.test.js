@@ -45,7 +45,13 @@ function makeFixture(mode) {
   fs.mkdirSync(skillDir, { recursive: true });
   fs.mkdirSync(path.join(root, '.data', 'templates'), { recursive: true });
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# stub\n');
-  fs.writeFileSync(path.join(skillDir, 'entry.js'), mode === 'no-writeback'
+  // esm-entry：ESM 语法的入口 + 一份「存在但没声明 type」的边界文件 —— Node 发
+  // MODULE_TYPELESS_PACKAGE_JSON 警告的两个条件（真实内容层就是这个样子）。
+  if (mode === 'esm-entry') {
+    fs.writeFileSync(path.join(root, '.data', 'skills', 'package.json'), '{ "//": "内容层边界" }\n');
+    fs.writeFileSync(path.join(skillDir, 'entry.js'),
+      'export const ok = true;\nprocess.stdout.write(JSON.stringify({ value: "ok" }) + "\\n");\n');
+  } else fs.writeFileSync(path.join(skillDir, 'entry.js'), mode === 'no-writeback'
     // 结果落在别处（例如输入里给的表格）的 Skill：不吐 JSON、也没有输出列
     ? 'process.stdout.write("done — the result is in the linked sheet\\n");\n'
     // 并发场景：把「开始 / 结束」按行记进同一份时间线，用来判断两行是否重叠
@@ -219,7 +225,7 @@ async function runWorker(mode) {
   const realExit = process.exit;
   process.exit = (code) => { const e = new ExitCalled(`process.exit(${code})`); e.code = code; throw e; };
   process.argv = ['node', RUN_TEMPLATE, templatePath];
-  if (!['logs', 'no-writeback', 'cwd', 'unmapped-output', 'concurrent', 'streaming', 'host-env', 'attachment-out', 'bad-expression', 'resume'].includes(mode)) process.argv.push('--dry-run');
+  if (!['logs', 'esm-entry', 'no-writeback', 'cwd', 'unmapped-output', 'concurrent', 'streaming', 'host-env', 'attachment-out', 'bad-expression', 'resume'].includes(mode)) process.argv.push('--dry-run');
   if (mode === 'incremental' || mode === 'resume') process.argv.push('--incremental');
 
   // streaming：跑的过程中盯着 stdout.log，验证"第一行已经落盘时结果行还没出现"
@@ -276,7 +282,7 @@ async function runWorker(mode) {
 
   let logs = null;
   let logReadError = null;
-  if (mode === 'logs' || mode === 'streaming') {
+  if (mode === 'logs' || mode === 'streaming' || mode === 'esm-entry') {
     try {
       const runDir = path.join(root, '.data', 'runs', fs.readdirSync(path.join(root, '.data', 'runs'))[0]);
       const recordDir = path.join(runDir, 'rec1');
@@ -412,10 +418,20 @@ if (process.argv.includes('--worker')) {
     const out = scenario('logs');
     assert.equal(out.exitCode, null, out.errors.join("\n"));
     assert.equal(out.logReadError, null);
-    assert.deepEqual(out.logs.recordFiles, ['artifacts', 'logs', 'stdout.json'], '行目录里还留着解析后的 stdout（续跑与排查用）');
+    assert.deepEqual(out.logs.recordFiles, ['artifacts', 'logs', 'results.json'], '行目录里还留着解析后的 stdout（续跑与排查用）');
     assert.deepEqual(out.logs.logFiles, ['stderr.log', 'stdout.log']);
     assert.equal(out.logs.stdout, '{"value":"ok"}\n', 'stdout 原样落盘');
     assert.equal(out.logs.stderr, 'warn-line\n', 'stderr 原样落盘');
+  });
+
+  test('ESM 的 Skill：边界文件不带 type，也不把 MODULE_TYPELESS 警告写进 stderr.log', () => {
+    const out = scenario('esm-entry');
+    assert.equal(out.exitCode, null, out.errors.join('\n'));
+    assert.deepEqual(out.runItems, [{ status: 'succeeded', stage: null, error: null }]);
+    assert.equal(out.logs.stderr, '', '这条性能警告不该进日志');
+    // 反证：同一份文件、不注入 NODE_OPTIONS 时 Node 确实会打这条警告（否则这个用例是空跑）
+    const bare = spawnSync(process.execPath, ['entry.js'], { cwd: path.join(out.dataDir, 'skills', 'ref'), encoding: 'utf8' });
+    assert.match(bare.stderr, /MODULE_TYPELESS_PACKAGE_JSON/);
   });
 
   test('未映射的输入（模板里没有它）：不读、不传参，运行照常', () => {
@@ -513,7 +529,7 @@ if (process.argv.includes('--worker')) {
     assert.equal(second.item.resumed_from, first.run_id, '新 Run 要记下是从哪一份续的');
     assert.equal(second.item.ms, null, '续跑没跑 Skill，也就没有执行耗时');
     assert.deepEqual(second.artifacts, ['card-1.png'], '产物要搬进新 Run 的行目录');
-    assert.ok(second.recordFiles.includes('stdout.json'), '新 Run 也留下一份 stdout.json，以后还能续');
+    assert.ok(second.recordFiles.includes('results.json'), '新 Run 也留下一份 results.json，以后还能续');
 
     assert.equal(out.uploads.length, 1, '上传只发生在第二次');
     assert.match(out.uploads[0].files[0], new RegExp(`${second.run_id}/rec1/artifacts/card-1\\.png$`), '上传的是新 Run 里的那份产物');

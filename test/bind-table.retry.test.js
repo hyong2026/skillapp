@@ -45,7 +45,7 @@ const FIXTURE = {
 };
 
 /** 契约期望的列序（主字段 → 输入 → 输出） */
-const EXPECTED_ORDER = ['任务名称', '＊in: 待切图片', '＊in: 网格数', 'out: 切片', 'out: 切片数'];
+const EXPECTED_ORDER = ['任务名称', 'IN: 待切图片 (必填)', 'IN: 网格数 (必填)', 'OUT: 切片', 'OUT: 切片数'];
 const EXPECTED_CREATED = FIXTURE.inputs.length + FIXTURE.outputs.length;
 
 /** 同一份契约，但「out: 切片」标为未映射：不建列、不进列序 */
@@ -53,7 +53,7 @@ const UNMAPPED_FIXTURE = {
   ...FIXTURE,
   outputs: [{ ...FIXTURE.outputs[0], mapped: false }, FIXTURE.outputs[1]],
 };
-const UNMAPPED_ORDER = ['任务名称', '＊in: 待切图片', '＊in: 网格数', 'out: 切片数'];
+const UNMAPPED_ORDER = ['任务名称', 'IN: 待切图片 (必填)', 'IN: 网格数 (必填)', 'OUT: 切片数'];
 
 // ─── worker：在临时 ROOT 里真跑一次 bind-table ─────────────────────────────
 
@@ -267,7 +267,7 @@ if (process.argv.includes('--worker')) {
     assert.equal(out.exitCode, 1, '应以退出码 1 结束');
     assert.equal(out.sleeps, 9, '预算内应等待 CREATE_ATTEMPTS - 1 次');
     assert.match(out.errorText, /新建后仍找不到列/, '要点名问题');
-    assert.match(out.errorText, /＊in: 待切图片/, '要列出缺失的列名');
+    assert.match(out.errorText, /IN: 待切图片 \(必填\)/, '要列出缺失的列名');
     assert.match(out.errorText, /重跑本命令即可/, '要给出可操作的下一步');
     assert.equal(out.templateWritten, false, '失败时不应写 Template');
   });

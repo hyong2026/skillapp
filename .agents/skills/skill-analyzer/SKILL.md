@@ -117,21 +117,25 @@ node "$SKILLAPP_IMAGE_CLI" --prompt "…" --out <路径>/01-cover.png [--size 12
 
 指令文本里的可选值留空就是空串（例如 `补充备注={notes}` 直接渲染成 `补充备注=`），不必为"可能没有值"另造写法。
 
+**附件输入一律写 `{key...}`。** 附件格子永远是多值——哪怕只放一张图，执行器传给 Skill 的也是**路径数组**，写 `{key}` 会在每一行报 `{key} is an array; write {key...} to expand it`。（只有 prompt 型那段整引号的指令文本里才用 `{key}`，数组在那里按逗号连接。）
+
 执行器固定提供的变量：`{skill.entry}`、`{outdir}`。
 
 执行时的约定：`{skill.entry}` 会展开成**绝对路径**，`{outdir}` 是该行 `artifacts/` 的绝对路径；**进程 cwd 是内容层根（`.data/`）**，不是 Skill 目录。所以 `cmd` 里的路径一律用这两个变量，不要依赖相对路径；Skill 要写文件就写 `{outdir}` 或 `/tmp`（lark-cli 只允许写 cwd / `/tmp` / `~/files`）。
+
+**探测 Skill 时产物一律写到 `/tmp`。** Skill 目录里除 `node_modules` / `.git` / `.DS_Store` / `source.json` 外的每个文件都算进内容指纹——试跑留下一个 `_probe.png`，已绑定的 Template 就会因指纹不符而拒绝执行。
 
 ## label 命名
 
 `label` 只写标签本身，**不带前缀、不带必填标记**——列名由 `src/cli/bind-table.js` 按规范拼装：
 
 ```
-＊in: 网格数       ← 必填输入
-in: 输出格式       ← 可选输入
-out: 切片数        ← 输出
+IN: 网格数 (必填)  ← 必填输入
+IN: 输出格式       ← 可选输入
+OUT: 切片数        ← 输出
 ```
 
-前缀统一用小写 `in:` / `out:`，必填标记用全角 `＊` 紧贴 `in`。标签里的标点也用半角（如 `out: 每格宽 (px)` 而不是 `out: 每格宽（px）`），否则一行里两种宽度会显得不齐。
+前缀统一用大写 `IN:` / `OUT:`，必填项在末尾追加 ` (必填)`。标签里的标点也用半角（如 `OUT: 每格宽 (px)` 而不是 `OUT: 每格宽（px）`），否则一行里两种宽度会显得不齐。
 
 ## mapping.json
 

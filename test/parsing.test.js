@@ -21,7 +21,7 @@ import { lark, parseOutput } from '../src/core/lark.js';
 import { loadEnv, parseEnv } from '../src/core/load-env.js';
 import { createCodexEvents } from '../src/core/live-log.js';
 import { frontmatterValue } from '../src/core/skill-meta.js';
-import { skillHash } from '../src/core/skill-hash.js';
+import { skillFileHashes, skillHash } from '../src/core/skill-hash.js';
 import { buildArgv, templateProblems, tokenize, withCodexEvents } from '../src/core/execute-template.js';
 
 test('.env：注释、引号、export 都能解析，且不覆盖已有环境变量', () => {
@@ -151,9 +151,49 @@ test('运行前核对：cmd 语法错、变量错都在开跑前说清楚', () =
   assert.match(problemsFor('node {skill.entry} "{--format}"').join('\n'), /malformed placeholder: \{--format\}/);
   assert.match(problemsFor('node {skill.entry} "{typo}"').join('\n'), /unknown variables:\n  - typo/);
   assert.match(problemsFor('node {skill.entry} {missing}').join('\n'), /Input is not mapped but cmd needs it:\n  - missing/);
+  // 附件列永远是多值：拿它当单值位置参数用，开跑前就拦下（换成 ... 就没事）
+  const attachment = {
+    ...base,
+    mapping: { cmd: 'node {skill.entry} {input} -o {outdir}', inputs: [{ key: 'input', field_id: 'fldA', type: 'attachment' }], outputs: [] },
+  };
+  assert.match(templateProblems(attachment, path.join(root, '.data')).join('\n'),
+    /Attachment input used as a single positional: \{input\}\n  Fix: write \{input\.\.\.\}/);
+  assert.deepEqual(
+    templateProblems({ ...attachment, mapping: { ...attachment.mapping, cmd: 'node {skill.entry} {input...} -o {outdir}' } }, path.join(root, '.data')),
+    [], '写成 {input...} 就没问题');
   // 归档 / Skill 指纹不符同样在本地就拦下
   assert.match(templateProblems({ ...base, archived_at: '2026-01-01' }, path.join(root, '.data')).join('\n'), /Template is archived/);
   assert.match(templateProblems({ ...base, skill: { ...base.skill, hash: 'sha256:nope' } }, path.join(root, '.data')).join('\n'), /Skill hash mismatch/);
+});
+
+test('运行前核对：指纹不符要说清是哪个文件变了（探测产物混进 Skill 目录）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-preflight-diff-'));
+  const skillDir = path.join(root, '.data', 'skills', 'ref');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# stub\n');
+  fs.writeFileSync(path.join(skillDir, 'scripts.js'), 'export const a = 1;\n');
+  const pinned = skillHash(skillDir);
+  fs.writeFileSync(path.join(skillDir, 'source.json'), JSON.stringify({ hash: pinned, files: skillFileHashes(skillDir) }));
+
+  const tpl = {
+    skill: { path: 'skills/ref', hash: pinned, entry: 'scripts.js' },
+    target: { primary_field_id: 'fldP' },
+    mapping: { cmd: '', inputs: [], outputs: [] },
+  };
+  const problems = (t) => templateProblems(t, path.join(root, '.data')).join('\n');
+
+  // 探测留下的产物：说出文件名，而不是只给两个 hash
+  fs.writeFileSync(path.join(skillDir, '_probe.png'), 'png');
+  assert.match(problems(tpl), /files changed since it was loaded:\n    \+ _probe\.png/);
+  fs.rmSync(path.join(skillDir, '_probe.png'));
+
+  // 内容被改
+  fs.writeFileSync(path.join(skillDir, 'scripts.js'), 'export const a = 2;\n');
+  assert.match(problems(tpl), /files changed since it was loaded:\n    ~ scripts\.js/);
+
+  // 重新装载过：副本与它自己的装载记录一致，是 Template 钉的旧版本 → 该重新 Bind
+  fs.writeFileSync(path.join(skillDir, 'source.json'), JSON.stringify({ hash: skillHash(skillDir), files: skillFileHashes(skillDir) }));
+  assert.match(problems({ ...tpl, skill: { ...tpl.skill, hash: 'sha256:stale' } }), /bind the Table again/);
 });
 
 test('codex 事件流：只留 msg / cmd / error，答案取最后一条 agent 消息', () => {

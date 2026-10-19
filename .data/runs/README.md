@@ -8,7 +8,7 @@ runs/<run_id>/
 └── <record_id>/
     ├── downloads/           输入附件快照
     ├── artifacts/           该行的产物（{outdir}）
-    ├── stdout.json          Skill 解析后的输出（回写失败时续跑靠它）
+    ├── results.json         Skill 解析后的输出（回写失败时续跑靠它）
     └── logs/
         ├── stdout.log       进程的 stdout 原文
         ├── stderr.log       脚本型 Skill 的 stderr 原文

@@ -24,14 +24,32 @@ function definitionFiles(root, dir = root, out = []) {
   return out.sort();
 }
 
-function skillHash(skillDir) {
-  const outer = crypto.createHash('sha256');
+/** 逐文件内容哈希（相对路径 → `sha256:<hex>`）。装进 source.json，用来把指纹差异说到文件级。 */
+function skillFileHashes(skillDir) {
+  const files = {};
   for (const file of definitionFiles(skillDir)) {
     const rel = path.relative(skillDir, file).split(path.sep).join('/');
-    const inner = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-    outer.update(`${rel}\n${inner}\n`);
+    files[rel] = 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   }
+  return files;
+}
+
+function skillHash(skillDir) {
+  const outer = crypto.createHash('sha256');
+  const files = skillFileHashes(skillDir);
+  for (const rel of Object.keys(files).sort()) outer.update(`${rel}\n${files[rel].slice('sha256:'.length)}\n`);
   return 'sha256:' + outer.digest('hex');
 }
 
-export { skillHash };
+/** 拿装载时的清单对现在的目录：多 / 少 / 改动，各自按路径排序。 */
+function diffSkillFiles(skillDir, manifest) {
+  const live = skillFileHashes(skillDir);
+  const keys = Object.keys(live);
+  return {
+    added: keys.filter((rel) => !(rel in manifest)).sort(),
+    removed: Object.keys(manifest).filter((rel) => !(rel in live)).sort(),
+    changed: keys.filter((rel) => rel in manifest && manifest[rel] !== live[rel]).sort(),
+  };
+}
+
+export { skillHash, skillFileHashes, diffSkillFiles };

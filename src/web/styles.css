@@ -243,6 +243,8 @@ button { cursor: pointer; }
   color: var(--muted);
   font-size: var(--text-xs);
   font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 .nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
@@ -266,7 +268,7 @@ button { cursor: pointer; }
   color: var(--muted-2);
   font: 600 var(--text-2xs)/1.4 var(--font-mono);
   letter-spacing: .08em;
-  text-transform: capitalize;
+  text-transform: uppercase;
 }
 /* 「清空」只在鼠标移入（或键盘焦点进来）时露出，平时不占视觉。 */
 .messages-clear {
@@ -274,16 +276,14 @@ button { cursor: pointer; }
   padding: 0;
   border: 0;
   background: none;
-  color: var(--muted-2);
+  color: var(--accent);
   font: inherit;
   letter-spacing: inherit;
-  text-decoration: underline;
-  text-underline-offset: 3px;
   cursor: pointer;
 }
 .messages:hover .messages-clear,
 .messages:focus-within .messages-clear { visibility: visible; }
-.messages-clear:hover { color: var(--accent); }
+.messages-clear:hover { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 3px; }
 /* 只露出最近三条，其余靠这条滚动条看（高度由 messages.js 按真实行高算）。 */
 .messages-list { display: grid; gap: 6px; overflow-y: auto; }
 .message {
@@ -389,6 +389,8 @@ button { cursor: pointer; }
 }
 h1, h2, h3 { margin: 0; line-height: 1.25; }
 h1 { color: var(--text-strong); font-size: var(--title-size); font-weight: 600; letter-spacing: -.025em; }
+/* 列表页与 Home / Settings 的标题是分区标签，统一全大写；详情页标题是 ID / 名字，保持原样。 */
+.page-title { text-transform: uppercase; letter-spacing: .01em; }
 h2 { color: var(--text-strong); font-size: var(--text-xs); font-weight: 650; letter-spacing: .01em; }
 h3 { color: var(--text-strong); font-size: var(--text-md); font-weight: 600; }
 .view-head p { margin: 7px 0 0; font-size: var(--text-xs); }
@@ -575,6 +577,7 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
   font-size: var(--text-2xs);
   font-weight: 600;
   letter-spacing: .08em;
+  text-transform: uppercase;
 }
 .select-group:not(:first-child) { margin-top: 4px; border-top: 1px solid var(--line); }
 .select-option {
@@ -595,8 +598,8 @@ tr.drag-over-end td { box-shadow: inset 0 -2px 0 var(--accent); }
 .select-option[aria-checked="true"] { background: var(--accent-soft); color: var(--success-text); font-weight: 600; }
 
 /* Operations subject cell: type icon + link */
-.subject { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-width: 0; color: var(--text); }
-.subject:hover { color: var(--accent); text-decoration: none; }
+.subject { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-width: 0; color: var(--accent); }
+.subject:hover { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 3px; }
 .subject-icon { flex: none; width: 15px; height: 15px; color: var(--muted-2); }
 .subject:hover .subject-icon { color: var(--accent); }
 

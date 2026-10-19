@@ -18,9 +18,9 @@ import { assertRef } from './ref.js';
 import { readMapping, validateMapping, analysisStatus, isMapped } from './mapping.js';
 import { findTemplateFor, templatePathFor } from './template.js';
 
-const INPUT_PREFIX = 'in: ';
-const OUTPUT_PREFIX = 'out: ';
-const REQUIRED_MARK = '＊';
+const INPUT_PREFIX = 'IN: ';
+const OUTPUT_PREFIX = 'OUT: ';
+const REQUIRED_SUFFIX = ' (必填)';
 const PRIMARY_NAME = '任务名称';
 const DEFAULT_PRIMARY = '文本';
 const CREATE_ATTEMPTS = 10;
@@ -57,7 +57,7 @@ function fieldJson(spec) {
   }
 }
 
-const columnName = (spec, prefix) => (spec.required ? REQUIRED_MARK : '') + prefix + spec.label;
+const columnName = (spec, prefix) => prefix + spec.label + (spec.required ? REQUIRED_SUFFIX : '');
 
 function checkCmd(cmd, io) {
   if (!cmd) throw new AppError('INVALID_MAPPING', 'Mapping is missing cmd', 'Set the command template');

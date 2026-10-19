@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { lark, larkAsync } from './lark.js';
 import { createCodexEvents } from './live-log.js';
-import { skillHash } from './skill-hash.js';
+import { diffSkillFiles, skillHash } from './skill-hash.js';
 import { DATA_DIR, RUNS_DIR } from './paths.js';
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
 const RECORD_PAGE_SIZE = 200; // JSON 模式 record-list 的上限
@@ -278,6 +278,7 @@ function withCodexEvents(argv) {
 function scanCmd(cmd) {
   const names = new Set();
   const positionals = new Set();
+  const singles = new Set();
   const malformed = [];
   for (const token of tokenize(cmd)) {
     const paired = PAIRED_TOKEN.exec(token);
@@ -292,6 +293,8 @@ function scanCmd(cmd) {
     if (positional) {
       names.add(positional[1]);
       positionals.add(positional[1]);
+      // {key} 是单值位置参数，{key...} 是展开——附件列只受得了后者。
+      if (!SPLAT_TOKEN.test(token)) singles.add(positional[1]);
       continue;
     }
     const single = SINGLE_TOKEN.exec(token);
@@ -306,7 +309,7 @@ function scanCmd(cmd) {
     }
     for (const match of token.matchAll(TEXT_PLACEHOLDER)) names.add(match[1]);
   }
-  return { names, positionals: [...positionals], malformed };
+  return { names, positionals: [...positionals], singles: [...singles], malformed };
 }
 
 
@@ -396,6 +399,39 @@ function upToDate(history, recordId, inputHash, workHash) {
  * 单独拆出来是给服务端用的——它不碰飞书，`start()` / `preview()` 就能在起 worker 之前
  * 拒绝，而不是先建一个 Run 再把它标成 Failed（那会留下一条谁也看不懂的空记录）。
  */
+const MAX_DIFF_FILES = 12;
+
+/**
+ * 指纹不符时尽量说到文件级：装载记录里存着当时的逐文件清单，
+ * 一眼能看出是探测产物混进来了，还是整个副本换了一版（那该重新 Bind）。
+ */
+function skillHashProblem(skillDir, pinned, live, reload) {
+  const lines = ['Skill hash mismatch; run refused:', `  template = ${pinned}`, `  on-disk  = ${live}`];
+  let recorded = null;
+  try {
+    recorded = JSON.parse(fs.readFileSync(path.join(skillDir, 'source.json'), 'utf8'));
+  } catch {
+    recorded = null;
+  }
+  const diff = recorded?.files ? diffSkillFiles(skillDir, recorded.files) : null;
+  const marks = diff ? [
+    ...diff.added.map((rel) => `    + ${rel}`),
+    ...diff.removed.map((rel) => `    - ${rel}`),
+    ...diff.changed.map((rel) => `    ~ ${rel}`),
+  ] : [];
+  if (marks.length) {
+    lines.push('  files changed since it was loaded:', ...marks.slice(0, MAX_DIFF_FILES));
+    if (marks.length > MAX_DIFF_FILES) lines.push(`    … and ${marks.length - MAX_DIFF_FILES} more`);
+    lines.push(`  Fix: restore or remove them, or reload the Skill: ${reload}`);
+  } else if (recorded?.hash === live) {
+    // 副本与它自己的装载记录一致 → 是 Template 钉的老版本，重新 Bind 才会更新。
+    lines.push('  The copy was reloaded after this Template was created; bind the Table again to pin this version.');
+  } else {
+    lines.push(`  Reload: ${reload}`);
+  }
+  return lines.join('\n');
+}
+
 function templateProblems(tpl, dataDir) {
   const reload = `node src/cli/load-skill.js <source-dir>`;
   const skillDir = path.join(dataDir, tpl.skill.path);
@@ -407,9 +443,7 @@ function templateProblems(tpl, dataDir) {
     problems.push(`Skill is not loaded: ${tpl.skill.path}\n  Run first: ${reload}`);
   } else {
     const live = skillHash(skillDir);
-    if (live !== tpl.skill.hash) {
-      problems.push(`Skill hash mismatch; run refused:\n  template = ${tpl.skill.hash}\n  on-disk  = ${live}\n  Reload: ${reload}`);
-    }
+    if (live !== tpl.skill.hash) problems.push(skillHashProblem(skillDir, tpl.skill.hash, live, reload));
   }
 
   // cmd 是纯文本模板，语法错、写错变量名都只会在某一行跑起来时才炸——先扫一遍。
@@ -423,6 +457,13 @@ function templateProblems(tpl, dataDir) {
   const orphans = scan.positionals.filter((key) => !BUILTIN_VARS.has(key) && !mappedKeys.has(key));
   if (orphans.length) {
     problems.push(`Input is not mapped but cmd needs it:\n  - ${orphans.join('\n  - ')}\n  Fix: map the input, or drop its variable from cmd`);
+  }
+
+  // 附件列永远是多值（哪怕只放一张图，执行器给它的也是路径数组）：当单值位置参数用，
+  // 只会在某一行跑起来才炸——在开跑前就说清楚。
+  for (const key of scan.singles) {
+    if (tpl.mapping.inputs.find((f) => f.key === key)?.type !== 'attachment') continue;
+    problems.push(`Attachment input used as a single positional: {${key}}\n  Fix: write {${key}...} - one cell can hold several files`);
   }
 
   const knownKeys = new Set(['skill.entry', ...BUILTIN_VARS, ...mappedKeys]);
@@ -476,9 +517,9 @@ function preflight(tpl) {
 
 // ─── 断点续跑 ─────────────────────────────────────────────────────────────
 
-/** 行目录里的 stdout.json：Skill 解析后的输出，回写失败后靠它续跑（也方便排查"到底吐了什么"）。 */
-function writeStdoutJson(recordDir, stdout) {
-  const file = path.join(recordDir, 'stdout.json');
+/** 行目录里的 results.json：Skill 解析后的输出，回写失败后靠它续跑（也方便排查"到底吐了什么"）。 */
+function writeResults(recordDir, stdout) {
+  const file = path.join(recordDir, 'results.json');
   fs.mkdirSync(recordDir, { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(stdout, null, 2) + '\n');
@@ -509,14 +550,14 @@ function attachmentPaths(outputs, stdout) {
   return [...new Set(files)];
 }
 
-/** 上次失败、输入与 exec 版本没变、stdout.json 在、要回写的产物都还在 → 返回它；否则 null（老实重跑）。 */
+/** 上次失败、输入与 exec 版本没变、results.json 在、要回写的产物都还在 → 返回它；否则 null（老实重跑）。 */
 function resumePoint(ctx, recordId, inputHash, runsDir = RUNS_DIR) {
   if (ctx.dryRun || ctx.trigger !== 'incremental') return null; // 全量 = 无条件重跑
   const last = ctx.history?.get(recordId);
   if (!last || last.status !== 'failed') return null;
   if (last.input_hash !== inputHash || last.exec_hash !== ctx.execHash) return null;
   const prevRecordDir = path.join(runsDir, last.run_id, recordId);
-  const file = path.join(prevRecordDir, 'stdout.json');
+  const file = path.join(prevRecordDir, 'results.json');
   if (!fs.existsSync(file)) return null;
   let stdout;
   try {
@@ -547,7 +588,7 @@ function reuseOutputs(ctx, resume, recordDir) {
     reused += 1;
   }
   const stdout = remapPaths(resume.stdout, resume.prevRecordDir, recordDir);
-  writeStdoutJson(recordDir, stdout);
+  writeResults(recordDir, stdout);
   return { stdout, reused };
 }
 
@@ -668,13 +709,26 @@ async function writeBack(ctx, item, stdout) {
   }
 }
 
+/** 追加一个 Node 参数，保留调用方已有的 NODE_OPTIONS。 */
+function withNodeFlag(existing, flag) {
+  if (!existing) return flag;
+  return existing.includes(flag) ? existing : `${existing} ${flag}`;
+}
+
 function spawnSkill(bin, args, options) {
   return new Promise((resolve) => {
     const child = spawn(bin, args, {
       cwd: options.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      // 除了继承环境（.env 里的 SKILLAPP_IMAGE_* 等），再告诉 Skill 生图入口在哪。
-      env: { ...process.env, SKILLAPP_IMAGE_CLI: IMAGE_CLI },
+      // 除了继承环境（.env 里的 SKILLAPP_IMAGE_* 等），再告诉 Skill 生图入口在哪；
+      // 顺手静音 MODULE_TYPELESS_PACKAGE_JSON：内容层的边界文件故意不声明 `type`（不替第三方
+      // Skill 决定模块系统），Node 碰到 ESM / TS 文件就会"先当 CJS 试、失败再按 ESM 重解析"，
+      // 往 stderr 打一条性能警告。Skill 源码不能改，这条噪音由宿主收拾（见 .data/README.md）。
+      env: {
+        ...process.env,
+        SKILLAPP_IMAGE_CLI: IMAGE_CLI,
+        NODE_OPTIONS: withNodeFlag(process.env.NODE_OPTIONS, '--disable-warning=MODULE_TYPELESS_PACKAGE_JSON'),
+      },
     });
     let stdout = '';
     let stderr = '';
@@ -824,7 +878,7 @@ async function runRowSteps(ctx, row, item) {
       return fail('Skill output is not valid JSON');
     }
     // 落盘"Skill 到底吐了什么"：回写失败时续跑靠它，排查也靠它（见 resumePoint）。
-    if (!dryRun) writeStdoutJson(recordDir, stdout);
+    if (!dryRun) writeResults(recordDir, stdout);
   }
 
   return (await finishRow(ctx, item, stdout, fail)) ?? { ...item, status: 'succeeded', stage: null };

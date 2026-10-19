@@ -17,7 +17,7 @@ import { resumePoint, reuseOutputs } from '../src/core/execute-template.js';
 
 const OUTPUT = { key: 'cards', type: 'attachment', from: 'stdout.files[]' };
 
-/** 造一份"上一次的 Run"：runs/<runId>/<recordId>/{stdout.json,artifacts/card-1.png} */
+/** 造一份"上一次的 Run"：runs/<runId>/<recordId>/{results.json,artifacts/card-1.png} */
 function previousRun({ runId = '20260101-000001-aaaa', recordId = 'rec1', stdout = null, files = ['artifacts/card-1.png'], hasStdout = true } = {}) {
   const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-resume-'));
   const recordDir = path.join(runsDir, runId, recordId);
@@ -25,7 +25,7 @@ function previousRun({ runId = '20260101-000001-aaaa', recordId = 'rec1', stdout
   const paths = files.map((rel) => path.join(recordDir, rel));
   for (const file of paths) fs.writeFileSync(file, 'png-bytes');
   if (hasStdout) {
-    fs.writeFileSync(path.join(recordDir, 'stdout.json'), JSON.stringify(stdout ?? { files: paths, count: 1 }, null, 2));
+    fs.writeFileSync(path.join(recordDir, 'results.json'), JSON.stringify(stdout ?? { files: paths, count: 1 }, null, 2));
   }
   return { runsDir, runId, recordId, recordDir, paths };
 }
@@ -95,8 +95,8 @@ test('reuseOutputs：产物搬到新行目录（硬链接优先），stdout 路�
     assert.ok(true, '同一卷上直接硬链接，不占额外空间');
   }
   assert.deepEqual(stdout.files, [moved], 'stdout 里的路径要指向这次 Run 的位置');
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(recordDir, 'stdout.json'), 'utf8')).files, [moved],
-    '新 Run 也留一份 stdout.json，以后还能继续续跑');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(recordDir, 'results.json'), 'utf8')).files, [moved],
+    '新 Run 也留一份 results.json，以后还能继续续跑');
   assert.equal(fs.existsSync(prev.paths[0]), true, '上一次的产物不能动');
 });
 

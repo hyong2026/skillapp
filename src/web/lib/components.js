@@ -56,7 +56,7 @@ function dataPanel(body) {
 function head(title, description = '', actions = null) {
   return h('div', { className: 'view-head' }, [
     h('div', {}, [
-      h('h1', { textContent: title }),
+      h('h1', { className: 'page-title', textContent: title }),
       description ? h('p', { className: 'muted', textContent: description }) : null,
     ]),
     actions,
@@ -76,7 +76,8 @@ function viewTitle(title, crumbs = null) {
   return h('div', { className: 'view-title' }, [
     crumbs ? breadcrumb(crumbs) : null,
     crumbs ? h('span', { className: 'breadcrumb-sep', 'aria-hidden': 'true', textContent: '/' }) : null,
-    h('h1', { textContent: title }),
+    // 有面包屑 = 详情页，标题是 ID / 名字，不套大写。
+    h('h1', { className: crumbs ? null : 'page-title', textContent: title }),
   ]);
 }
 

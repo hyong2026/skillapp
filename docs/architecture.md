@@ -52,7 +52,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 ├── mappings/<Skill Name>.mapping.json
 ├── templates/<Skill Name>-<目标指纹>.template.json
 ├── operations/<operation_id>/operation.json
-└── runs/<run_id>/{run.json,<record_id>/{downloads,artifacts,stdout.json,logs}}
+└── runs/<run_id>/{run.json,<record_id>/{downloads,artifacts,results.json,logs}}
 ```
 
 - **文件系统是唯一真相**，当前不引入数据库。
