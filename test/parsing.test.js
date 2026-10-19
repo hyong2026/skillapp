@@ -22,7 +22,7 @@ import { loadEnv, parseEnv } from '../src/core/load-env.js';
 import { createCodexEvents } from '../src/core/live-log.js';
 import { frontmatterValue } from '../src/core/skill-meta.js';
 import { skillHash } from '../src/core/skill-hash.js';
-import { buildArgv, templateProblems, tokenize, withCodexEvents } from '../src/core/run-template.js';
+import { buildArgv, templateProblems, tokenize, withCodexEvents } from '../src/core/execute-template.js';
 
 test('.env：注释、引号、export 都能解析，且不覆盖已有环境变量', () => {
   const parsed = parseEnv([

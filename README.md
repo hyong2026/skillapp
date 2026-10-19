@@ -1,19 +1,19 @@
 # SkillApp
 
-**一个容器**：装载 Skill，把 Skill 的 IO 绑定到飞书多维表格，并具备执行能力。
+**一个容器**：装载 Skill，把 Skill 的 IO 绑定到「飞书多维表格」，并具备执行能力。
 
-四步。用户只需要给两样东西：**一个 Skill 路径**，**一个表格链接**。
+四步，用户只需要给两样东西：**一个 Skill 路径**，**一个表格链接**。
 
 | # | 步骤 | 用户给什么 | 得到什么 |
 |---|---|---|---|
-| 1 | **装载 Load** | Skill 路径 | 复制进 SkillApp |
-| 2 | **分析 Analyze** | —— | 一份 **Mapping**（IO 契约） |
-| 3 | **绑定 Bind** | 表格链接 | 表格列 + 一个 Template |
-| 4 | **执行 Run** | —— | 回写进表格的结果 |
+| 1 | **装载（Load）** | Skill 路径 | 复制进 SkillApp |
+| 2 | **分析（Analyze）** | —— | 一份 **Mapping**（IO 契约） |
+| 3 | **绑定（Bind）** | 表格链接 | 表格列 + 模板（Template） |
+| 4 | **执行（Execute）** | —— | 回写进表格的结果 |
 
 前三步合称「**初始化**」——把一个 Skill 变成可运行的 Template；第四步可以反复跑。
 
-**闸门在绑定**：装载与分析都不碰表格；只有绑定会改表格结构（建列、排序），按 Mapping 里的建议执行。
+**闸门在绑定**：装载与分析都不碰表格；只有绑定会改表格结构（建列、排序），按映射（Mapping）里的建议执行。
 
 ## 快速开始
 
@@ -27,21 +27,22 @@ node src/server/index.js --port 4173         # 本机访问可省略 --token
 # 浏览器打开 http://127.0.0.1:4173
 ```
 
-首页（`Home`）就是这条流程：`Load Skill` → `Analyze IO` → `Bind Table` → `Run Template`，每步做完自动进入下一步。
+首页（`Home`）就是这条流程：`Load Skill` → `Analyze IO` → `Bind Table` → `Execute Template`，每步做完自动进入下一步。
 全量执行、dry-run 预览、归档、卸载等操作在各自的详情页里；细节见 [docs/gui.md](docs/gui.md)。
 
 **2. 命令行**
 
 ```bash
-# 装载 = 复制（目录名就是 Skill Name）
+# 装载：即复制（目录名就是 Skill Name）
 node src/cli/load-skill.js /path/to/skill
+
 # 分析：由 Agent 用 skill-analyzer 完成 → .data/mappings/<Skill Name>.mapping.json
 
 # 绑定：对齐列、设列顺序、写 Template，并自动自检
 node src/cli/bind-table.js --ref <ref> --url '<表格链接>'
 
 # 执行：读行 → 跑 Skill → 回写
-node src/cli/run-template.js .data/templates/<Skill Name>-<目标指纹>.template.json --incremental
+node src/cli/execute-template.js .data/templates/<Skill Name>-<目标指纹>.template.json --incremental
 ```
 
 `--incremental` 只跑**工作版本或当前输入与最近一次成功运行不一致**的行（没跑过、上次失败、Skill/Mapping/目标变过、或输入变了），可安全重复执行。
@@ -56,33 +57,32 @@ node src/cli/run-template.js .data/templates/<Skill Name>-<目标指纹>.templat
 | 「装载：/path/to/skill」 | 复制进 SkillApp |
 | 「分析它的 IO」 | 用 `skill-analyzer` 产出一份 Mapping |
 | 「绑定到这张表：<链接>」（也会认「映射到这张表」） | 建列、设列顺序、出 Template |
-| 「执行 / 跑一批」 | 跑 `run-template.js --incremental` |
-| 「生图」 | 用 `image-generator` 出图（所有 Skill 共用的生图通路，后端在 `.env` 里配） |
+| 「执行 / 跑一批」 | 跑 `execute-template.js --incremental` |
 
 ## 术语
 
 | 词 | 含义 | 落在哪 |
 |---|---|---|
-| **Skill** | 带 `SKILL.md` 和可执行入口的目录，可能是 Node、也可能是 Python | `.data/skills/<Skill Name>/` |
-| **Skill Name** | 装载后的 Skill 名，取源目录最后一段；CLI 参数与 API 路径里写作 `ref` | 到处 |
-| **装载 Load** | 复制进内容层 + 固定内容指纹，**不碰表格** | `.data/skills/<Skill Name>/` |
-| **分析 Analyze** | 读实现产出 Mapping 草案，由 `skill-analyzer` 完成 | `.data/mappings/<Skill Name>.mapping.json` |
-| **Mapping** | Skill 的 IO 契约：输入 / 输出 / 命令模板（名词；动作是「绑定 Bind」） | `.data/mappings/<Skill Name>.mapping.json`（草案；生效的那份在 Template 内） |
-| **绑定 Bind** | 把 Mapping 对到某张表的列上：建列、排序、写 Template | `.data/templates/<Skill Name>-<目标指纹>.template.json` |
-| **Template** | 可运行的定义：Skill + 内容 hash + 目标表 + 生效 Mapping + limits；可归档（冻结，解冻前不能跑） | 同上 |
-| **执行 Run** | 动作：跑一次 Template——读行 → 跑 Skill → 回写（界面按钮 `Run`） | 结果记成一次 Run |
-| **Run** | 一次执行的结果记录：`run.json` 里有状态、计数与逐行 Run Item | `.data/runs/<run_id>/` |
-| **Run Item** | Run 里的一行（一条记录）的一次执行 | `.data/runs/<run_id>/<record_id>/` |
-| **Artifact** | Skill 产出的文件：`attachment` 类型的输出列会回写进表格，本机也留一份 | `runs/<run_id>/<record_id>/artifacts/` |
-| **目标指纹** | 目标表（base + table + view）的 sha256 前 8 位，用来区分同名 Skill 的不同目标表 | Template 文件名末尾 |
-| **Operation** | 异步操作的记录（Run 也在其中留一份索引） | `.data/operations/<operation_id>/operation.json` |
+| **技能（Skill）** | 带 `SKILL.md` 和可执行入口的目录，可能是 Node、也可能是 Python | `.data/skills/<Skill Name>/` |
+| **技能名（Skill Name）** | 装载后的 Skill 名，取源目录最后一段；CLI 参数与 API 路径里写作 `ref` | 多处 |
+| **装载（Load）** | 复制进内容层 + 固定内容指纹，**不碰表格** | `.data/skills/<Skill Name>/` |
+| **分析（Analyze）** | 读实现产出 Mapping 草案，由 `skill-analyzer` 完成 | `.data/mappings/<Skill Name>.mapping.json` |
+| **映射（Mapping）** | Skill 的 IO 契约：输入 / 输出 / 命令模板（名词；动作是「绑定 Bind」） | `.data/mappings/<Skill Name>.mapping.json`（草案；生效的那份在 Template 内） |
+| **绑定（Bind）** | 把 Mapping 对到某张表的列上：建列、排序、写 Template | `.data/templates/<Skill Name>-<目标指纹>.template.json` |
+| **模板（Template）** | 可运行的定义：Skill + 内容 hash + 目标表 + 生效 Mapping + limits；可归档（冻结，解冻前不能跑） | 同上 |
+| **执行（Execute）** | 动作：跑一次 Template——读行 → 跑 Skill → 回写（界面按钮 `Execute`） | 结果记成一次 Run |
+| **运行记录（Run）** | 一次执行的结果记录：`run.json` 里有状态、计数与逐行 Run Item | `.data/runs/<run_id>/` |
+| **执行结果项（Run Item）** | Run 里的一行（一条记录）的一次执行 | `.data/runs/<run_id>/<record_id>/` |
+| **产物（Artifact）** | Skill 产出的文件：`attachment` 类型的输出列会回写进表格，本机也留一份 | `runs/<run_id>/<record_id>/artifacts/` |
+| **目标指纹（Hash）** | 目标表（base + table + view）的 sha256 前 8 位，用来区分同名 Skill 的不同目标表 | Template 文件名末尾 |
+| **操作（Operation）** | 异步操作的记录（Run 也在其中留一份索引） | `.data/operations/<operation_id>/operation.json` |
 
 ## 状态
 
 ```text
 Operation: queued → running → completed | failed | canceled | interrupted
 Run:       queued → running → completed | partial | failed | canceled | interrupted
-Run Item:  queued → running | succeeded | failed          （dry-run 用 dry-run）
+Run Item:  queued → running | succeeded | failed
 ```
 
 服务启动时扫描活动记录，把遗留的 `running` 标成 `interrupted`——不自动续跑。
@@ -102,7 +102,7 @@ Run Item:  queued → running | succeeded | failed          （dry-run 用 dry-r
 |---|---|
 | 某张表格 + 视图 | 用户的输入与输出 |
 | `.data/templates/` | Template（内含 Mapping） |
-| `.data/runs/` | Run + Run Item + 产物（状态） |
+| `.data/runs/` | Run + Run Item + Artifact（状态） |
 
 三个词的含义：**Template** 是可运行的定义，它内含一个 **Mapping**——即 Skill 的 IO 与表格列的绑定；`.data/mappings/<Skill Name>.mapping.json` 是 Mapping 的草案，初始化阶段（分析 → 绑定）的中间物。
 
@@ -133,17 +133,17 @@ skillapp/
 │   ├── server/                HTTP API、SSE、任务执行器与 worker
 │   └── web/                   零依赖静态控制台（app.js + index.html/styles.css，lib/ + views/）
 ├── .data/                     内容层 —— 除各目录 README 外不进 Git（见 .data/README.md）
-│   ├── skills/<Skill Name>/                      装载进来的 Skill
-│   │   └── package.json       模块系统边界：第三方 Skill 按 Node 默认模块系统解析
-│   ├── templates/<Skill Name>-<目标指纹>.template.json   Template（内含 Mapping）
-│   ├── mappings/<Skill Name>.mapping.json       Mapping 草案（分析产物）
-│   ├── operations/<operation_id>/operation.json   异步任务状态
-│   └── runs/<run_id>/         Run、Run Item、日志与产物
+│   ├── skills/<Skill Name>/                               装载进来的 Skill
+│   │   └── package.json                                   模块系统边界：第三方 Skill 按 Node 默认模块系统解析
+│   ├── templates/<Skill Name>-<目标指纹>.template.json     Template（内含 Mapping）
+│   ├── mappings/<Skill Name>.mapping.json                 Mapping 草案（分析产物）
+│   ├── operations/<operation_id>/operation.json           异步任务状态
+│   └── runs/<run_id>/                                     Run、Run Item、日志与产物
 ├── test/                      引擎回归测试（node --test，零依赖）
 ├── .agents/skills/            项目级 Skill：SkillApp 自己的操作手册
 │   ├── skillapp/              操作入口：装载 / 分析 / 绑定 / 执行
 │   ├── skill-analyzer/        读 Skill → Mapping（IO 契约）
-│   └── image-generator/       通用生图：官方 openai CLI 的薄封装（prompt / 脚本型 Skill 共用）
+│   └── image-generator/       通用生图：官方 OpenAI CLI 的薄封装（Prompt / Script 型 Skill 共用）
 ├── docs/                      文档（见下）
 └── README.md
 ```

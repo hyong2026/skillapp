@@ -12,7 +12,7 @@ function operationSummary(operation) {
   const finished = operation?.finished_at ? Date.parse(operation.finished_at) : NaN;
   const templateId = input.template_id || result.template?.template_id || null;
   let subject = null;
-  if (operation?.type === 'run-template') {
+  if (operation?.type === 'execute-template') {
     // 名字优先：消息区里显示 Template Name，比 Run ID 有意义。
     subject = input.run_id
       ? { type: 'run', id: input.run_id, label: input.template_name || input.run_id }
@@ -37,10 +37,10 @@ function operationSummary(operation) {
     duration_ms: Number.isFinite(started) && Number.isFinite(finished) ? finished - started : null,
     progress: operation?.progress || null,
     subject,
-    counts: operation?.type === 'run-template'
+    counts: operation?.type === 'execute-template'
       ? { total: result.total ?? null, succeeded: result.succeeded ?? null, failed: result.failed ?? null }
       : null,
-    trigger: operation?.type === 'run-template' ? input.trigger || null : null,
+    trigger: operation?.type === 'execute-template' ? input.trigger || null : null,
     error: operation?.error || null,
   };
 }

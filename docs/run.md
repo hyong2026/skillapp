@@ -1,4 +1,4 @@
-# 执行语义（Run）
+# 执行语义（Execute）
 
 一次 Run = 读表 → 逐行跑 Skill → 回写结果。状态只落在 `.data/runs/`，**飞书表里只有 IO 数据**。
 
@@ -37,7 +37,7 @@
 
 prompt 型 Skill 的整段指令带引号，是**一个** token：那里没有 argv 的位置概念，占位符就地替换成文本——`{key}` 取标量（数组用逗号连接），`{key...}` 展开成**空格分隔**的列表，取不到值渲染成空串（默认留空是它的常态，如 `参考图=` / `补充备注=`）。必填输入缺失仍会在校验阶段报 `… is required`。
 
-`cmd` 是纯文本模板，写错只会在某一行跑起来时才炸。所以 **Run 与 Preview 之前都会先扫一遍 `cmd`**：整块却不成形的占位符（如 `{--format}`）、引用了不存在的变量、位置参数用的是未映射的列，都在开跑前就拒绝，不会留下一个 Failed 的 Run。
+`cmd` 是纯文本模板，写错只会在某一行跑起来时才炸。所以 **Execute 与 Preview 之前都会先扫一遍 `cmd`**：整块却不成形的占位符（如 `{--format}`）、引用了不存在的变量、位置参数用的是未映射的列，都在开跑前就拒绝，不会留下一个 Failed 的 Run。
 
 ## 并发
 
@@ -159,4 +159,4 @@ Retry / 再跑一次增量时，**已经成功的行本来就不会被选中**�
 
 `POST /api/templates/:id/preview` 与 `--dry-run` 只核对：会处理哪些行、共几行、哪些绑定列在表里已经找不到（`dropped`）、目标表是谁。不执行、不回写、不产生 Run。
 
-图形控制台的 **Run** 走的就是这条路：点 Run 先预览一次，弹框固定列出 `Lark Base URL / Trigger / Rows in table / Rows to process`（未加载出来时是 `—`，高度一开始就固定），`All Rows` 勾选也在弹框里、切换即重新预览（只刷新 Trigger 与行数），确认后再提交真正的 Run。
+图形控制台的 **Execute** 走的就是这条路：点 `Execute` 先预览一次，弹框固定列出 `Lark Base URL / Trigger / Rows in table / Rows to process`（未加载出来时是 `—`，高度一开始就固定），`All Rows` 勾选也在弹框里、切换即重新预览（只刷新 Trigger 与行数），确认后再提交真正的 Run。

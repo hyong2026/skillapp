@@ -54,10 +54,10 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - 右上角 `Show Archived`（默认不勾）：勾上后连归档的一起列出，归档行带 `Archived` 徽标。
 - 详情：面包屑 `Templates`，标题就是 Template Name；Summary 展示 Template ID、Skill Name、Skill Hash、Lark Base URL、Created，归档后多一行 `Archived` 徽标。
 - `Template Definition` 展示已映射的 Inputs / Outputs（与表里的列一一对应，列宽与 IO Schema 同一套规则，同样把 Required / Default 合成一列、不显示 Precision），`JSON` 开关看完整 Template JSON。
-- 右上角动作：`Run`、`Archive` / `Unarchive`。
-  - `Run` 先做一次 dry-run 预览。弹框固定列出 `Lark Base URL / Trigger / Rows in table / Rows to process`（未加载出来的值是 `—`；`Lark Base URL` 打开时就按 Target 填好，不依赖预览、勾选 All Rows 也不会刷新，长链接整段换行）；**`All Rows` 勾选框在弹框左下角**，切换即重新预览、弹框高度不变，再点弹框里的 `Run` 才真正提交。失败（如飞书未授权）也在弹框里给出可操作提示。没有 Preview 按钮——预览已经成为 Run 的第一步。
-  - 没有要跑的行时，`Rows to process` 会是 `0`，弹框里的 `Run` 也会被禁用。
-  - Template 不可跑时（已归档、Skill 指纹不符、`cmd` 模板写错、位置参数用了未映射的列），**预览阶段就在弹框里说清楚**，点 `Run` 也不会产生记录——不会先建一条 Failed 的 Run 让人对着空白明细猜。
+- 右上角动作：`Execute`、`Archive` / `Unarchive`。
+  - `Execute` 先做一次 dry-run 预览。弹框固定列出 `Lark Base URL / Trigger / Rows in table / Rows to process`（未加载出来的值是 `—`；`Lark Base URL` 打开时就按 Target 填好，不依赖预览、勾选 All Rows 也不会刷新，长链接整段换行）；**`All Rows` 勾选框在弹框左下角**，切换即重新预览、弹框高度不变，再点弹框里的 `Execute` 才真正提交。失败（如飞书未授权）也在弹框里给出可操作提示。没有 Preview 按钮——预览已经成为 `Execute` 的第一步。
+  - 没有要跑的行时，`Rows to process` 会是 `0`，弹框里的 `Execute` 也会被禁用。
+  - Template 不可跑时（已归档、Skill 指纹不符、`cmd` 模板写错、位置参数用了未映射的列），**预览阶段就在弹框里说清楚**，点 `Execute` 也不会产生记录——不会先建一条 Failed 的 Run 让人对着空白明细猜。
   - 归档 = 冻结：文件保留、从列表消失、不能跑；解冻即恢复。两者都写进 Operations。
 
 ### Runs
@@ -71,7 +71,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 ### Operations
 
-- 统一列出所有异步操作：`load-skill / analyze-skill / bind-table / unload-skill / archive-template / unarchive-template / run-template / delete-run`（**操作类型名沿用 `analyze-skill`**——它是 API 与历史记录的一部分；对应的 Skill 叫 `skill-analyzer`）。
+- 统一列出所有异步操作：`load-skill / analyze-skill / bind-table / unload-skill / archive-template / unarchive-template / execute-template / delete-run`（**操作类型名沿用 `analyze-skill`**——它是 API 与历史记录的一部分；对应的 Skill 叫 `skill-analyzer`）。
 - 列表：`Operation ID / Status / Type / Subject / Started / Duration`；Subject 带类型前缀图标，可跳到对应 Skill / Template / Run。
 - 详情：Summary 加该操作的原始记录 JSON。
 
@@ -80,7 +80,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 - `Appearance`：`Theme` 分段控件 `Dark | Light`，默认 Dark。切换即时生效，只存本浏览器（`localStorage`），不进服务端配置；首屏由独立的 `theme-boot.js` 先落主题（CSP 只允许 `script-src 'self'`，所以不用内联脚本），不闪。浅色主题在 `styles.css` 的 `:root[data-theme="light"]` 里只覆盖同名变量，logo 也随之切到 `logo-light.svg`。
 - `Pagination`：`Page Size` 数字输入（1–200，默认 10），**移开焦点（或回车）自动保存**到 `.env`，列表下次取页即时生效；值没变不发请求，保存成功不弹提示，失败或填入非法值就退回原值。
 - `Runtime`：App URL、Repo Root、Node Version（只读）。
-- 白名单（`SKILLAPP_ANALYZE_COMMAND / _MODEL / _REASONING_EFFORT / _TIMEOUT_MS`、`SKILLAPP_RUN_CONCURRENCY`、`SKILLAPP_PAGE_SIZE`、`SKILLAPP_IMAGE_BASE_URL / _MODEL / _SIZE / _TIMEOUT_MS`）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），除 `Page Size` 外暂无对应界面。`SKILLAPP_IMAGE_API_KEY` 与 `SKILLAPP_WEB_TOKEN` 一样只显示"已设置"，密钥本身不回显。生图配置见 [cli.md](cli.md#通用生图agentsskillsimage-generator)。
+- `.env` 白名单（清单见 [cli.md](cli.md#环境变量)）的读写接口已经就绪（`GET/PUT /api/settings`，见 [api.md](api.md#put-apisettings)），界面上目前只有 `Page Size`。`SKILLAPP_IMAGE_API_KEY` 与 `SKILLAPP_WEB_TOKEN` 一样只显示"已设置"，密钥本身不回显。
 - 应用重启与飞书授权初始化**尚未实现**：授权走 `lark-cli auth login`。
 
 ## 消息区（Messages）
@@ -97,7 +97,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 - 静态文案统一英文；表头、字段名与分析面板标题首字母大写（不强制全大写）。
 - 表头、Summary 字段名、弹框字段名共用一套样式与字号（10px / 600 / 等宽，次要色）。
-- 所有弹框都是应用内 `<dialog>`，不用浏览器原生 `confirm`：输入弹框（Load / Bind）、确认弹框（Unload / Archive / Delete / 全量 Run）、提示弹框（页面级失败，只有一个 `OK`）、Run 弹框（预览 + 提交）。确认弹框支持 Esc / Cancel 放弃，危险动作的确认按钮为红色。
+- 所有弹框都是应用内 `<dialog>`，不用浏览器原生 `confirm`：输入弹框（Load / Bind）、确认弹框（Unload / Archive / Delete / 全量 Execute）、提示弹框（页面级失败，只有一个 `OK`）、Execute 弹框（预览 + 提交）。确认弹框支持 Esc / Cancel 放弃，危险动作的确认按钮为红色。
 - 页面级失败（路由不存在 / 详情读不出来）：**不把错误嵌在页面里**（那样顶部会留着上一页的标题和按钮），而是清空顶部与内容、弹一个只有 `OK` 的提示框，关掉后回到上一级；没有 `Retry` —— 东西真的不在了时重试没有意义。
 - 列表页（Skills / Templates / Runs / Operations）**服务端分页、最新在前**：每次只取当前页，底部固定一条翻页栏 —— 左侧 `Total X | Size Y`（竖线分隔），右侧 `Page x / y` + 带箭头的 `Prev / Next`（只有一页时箭头禁用，页码仍是 `1 / 1`），翻页时保留旧数据、箭头禁用，表格不重排。每页条数由 `SKILLAPP_PAGE_SIZE` 决定（默认 10，Settings 里可改）。页号只在当前模块内记忆，切到别的模块或刷新都回到第 1 页；Operations 的 Type、Runs 的 Trigger 过滤也在服务端（`?type=` / `?trigger=`），Runs 的 `Show Deleted` 走 `?include_deleted=1`。表头 `sticky` 锁在列表顶部。
 - 只有列表页的表格容器自己纵向滚动，滚动时表头不动；其余表格跟随页面滚动。列表页的面板按**页面剩余高度**自适应（高度跟着窗口走，不再写死 `70vh`），翻页条钉在面板底部。
@@ -119,6 +119,6 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 | `lib/messages.js` | 侧边栏消息区（全局操作流） |
 | `lib/theme.js`、`theme-boot.js` | 主题 Dark / Light：运行时切换与首屏防闪（`logo-light.svg` 是浅色 logo） |
 | `lib/shell.js` | 页面骨架（视图头固定在滚动区之外）、窄屏 ☰ 菜单 |
-| `lib/dialogs.js` | 输入 / 确认 / 提示三类弹框 + Run 弹框（预览与提交） |
+| `lib/dialogs.js` | 输入 / 确认 / 提示三类弹框 + Execute 弹框（预览与提交） |
 | `lib/format.js`、`lib/highlight.js`、`lib/links.js`、`lib/dom.js` | 格式化、JSON 高亮、链接与 DOM 小工具 |
 | `views/*.js` | 一页一个文件（home / skills / templates / runs / run-item / operations / settings） |

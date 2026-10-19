@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { resumePoint, reuseOutputs } from '../src/core/run-template.js';
+import { resumePoint, reuseOutputs } from '../src/core/execute-template.js';
 
 const OUTPUT = { key: 'cards', type: 'attachment', from: 'stdout.files[]' };
 

@@ -8,7 +8,7 @@ import { hashLink, subjectLink } from '../lib/links.js';
 const TYPE_GROUPS = [
   { label: 'Skill', values: ['load-skill', 'analyze-skill', 'unload-skill'] },
   { label: 'Template', values: ['bind-table', 'archive-template', 'unarchive-template'] },
-  { label: 'Run', values: ['run-template', 'delete-run'] },
+  { label: 'Run', values: ['execute-template', 'delete-run'] },
 ];
 
 async function operationsView() {

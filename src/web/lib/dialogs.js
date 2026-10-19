@@ -179,7 +179,7 @@ function openRunDialog({ templateId, target = null }) {
     ]);
     const error = h('p', { className: 'modal-error' });
     const cancel = textButton('Cancel');
-    const submit = textButton('Run', 'button primary');
+    const submit = textButton('Execute', 'button primary');
     const trigger = () => (allRows.checked ? 'all' : 'incremental');
     let answered = false;
     let busy = false;
@@ -239,7 +239,7 @@ function openRunDialog({ templateId, target = null }) {
         error.textContent = err.message;
         busy = false;
         cancel.disabled = false;
-        submit.replaceChildren(h('span', { textContent: 'Run' }));
+        submit.replaceChildren(h('span', { textContent: 'Execute' }));
         submit.disabled = false;
       }
     });
@@ -249,7 +249,7 @@ function openRunDialog({ templateId, target = null }) {
 
     dialog.append(
       h('div', { className: 'modal-head' }, [
-        h('h2', { textContent: 'Run Template' }),
+        h('h2', { textContent: 'Execute Template' }),
         h('button', { className: 'icon-button', type: 'button', 'aria-label': 'Close', onClick: () => finish(undefined) }, icon('close')),
       ]),
       h('div', { className: 'modal-form' }, [

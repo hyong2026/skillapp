@@ -142,7 +142,7 @@ dry-run：只核对不执行。返回
 }
 ```
 
-需要飞书授权时返回 `424 LARK_AUTH_REQUIRED`，`action` 给出 `lark-cli auth login` 这类处置。图形控制台的 **Run** 在提交前会先调它一次（弹框里显示会影响多少行，`All Rows` 切换时重调）。
+需要飞书授权时返回 `424 LARK_AUTH_REQUIRED`，`action` 给出 `lark-cli auth login` 这类处置。图形控制台的 **Execute** 在提交前会先调它一次（弹框里显示会影响多少行，`All Rows` 切换时重调）。
 
 ### `POST /api/runs`
 

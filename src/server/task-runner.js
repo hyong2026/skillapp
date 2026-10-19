@@ -7,7 +7,7 @@ import {
   normalizeOptions,
   templateProblems,
   TERMINAL_STATUSES,
-} from '../core/run-template.js';
+} from '../core/execute-template.js';
 import { HttpError, ReadModel } from './read-model.js';
 import { operationSummary } from './operation-summary.js';
 
@@ -178,7 +178,7 @@ class TaskRunner {
     const items = Array.isArray(run.items) ? run.items : [];
     const record = {
       operation_id: id,
-      type: 'run-template',
+      type: 'execute-template',
       status: run.status || 'unknown',
       created_at: job.operationCreatedAt || run.started_at || null,
       started_at: run.started_at || null,

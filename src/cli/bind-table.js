@@ -68,7 +68,7 @@ function main() {
   console.log(`Template  ${path.relative(ROOT, templatePath)}`
     + `${result.plan.prior_hash ? `（沿用 template_id ${result.template.template_id.slice(0, 8)}）` : `（新 template_id ${result.template.template_id.slice(0, 8)}）`}`);
 
-  const check = spawnSync('node', [path.join(import.meta.dirname, 'run-template.js'), templatePath, '--dry-run'], {
+  const check = spawnSync('node', [path.join(import.meta.dirname, 'execute-template.js'), templatePath, '--dry-run'], {
     encoding: 'utf8',
     cwd: ROOT,
   });

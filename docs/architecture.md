@@ -4,7 +4,7 @@
 
 ```text
 Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
-                                             ├── run-worker 子进程  → core/run-template
+                                             ├── run-worker 子进程  → core/execute-template
                                              ├── task-worker 子进程 → core/load-skill / bind-table / unload-skill / delete-run / template
                                              ├── lark-cli（argv 数组，不经过 shell）
                                              └── .data/ 文件系统
@@ -33,7 +33,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 | `src/core/template.js` | Template 身份（Skill + 目标表）与文件名、按目标定位、归档状态 |
 | `src/core/unload-skill.js` | 卸载影响清单、plan hash 和受控删除 |
 | `src/core/delete-run.js` | 逻辑删除单次 Run（写 `deleted_at`，文件保留） |
-| `src/core/run-template.js` | Run 预检、选行、执行、回写、进度与状态；失败行的断点续跑（复用产物、只补回写） |
+| `src/core/execute-template.js` | Run 预检、选行、执行、回写、进度与状态；失败行的断点续跑（复用产物、只补回写） |
 | `src/core/lark.js` | `lark-cli` 封装：同步 `lark`（一次性调用）与异步 `larkAsync`（按行调用，不阻塞事件循环）；可注入替身，测试用 |
 | `src/core/settings.js` | 设置白名单，读写仓库根 `.env` |
 | `src/server/app.js` | HTTP API、SSE、鉴权、同源写保护和静态资源 |
@@ -52,7 +52,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 ├── mappings/<Skill Name>.mapping.json
 ├── templates/<Skill Name>-<目标指纹>.template.json
 ├── operations/<operation_id>/operation.json
-└── runs/<run_id>/{run.json,<record_id>/{downloads,artifacts,logs}}
+└── runs/<run_id>/{run.json,<record_id>/{downloads,artifacts,stdout.json,logs}}
 ```
 
 - **文件系统是唯一真相**，当前不引入数据库。
@@ -101,7 +101,7 @@ queued → running → completed | failed | canceled | interrupted
 出现以下任一情况再动结构：
 
 - 需要对外提供调用（HTTP / SDK）→ 把逻辑从 CLI 抽出来，CLI 变成薄壳。
-- `run-template.js` 里出现第二个 Skill 的特例分支 → 该往 Template 加字段，而不是加 `if`。
+- `execute-template.js` 里出现第二个 Skill 的特例分支 → 该往 Template 加字段，而不是加 `if`。
 
 ## 后续加固
 
@@ -116,7 +116,7 @@ queued → running → completed | failed | canceled | interrupted
 - **输出保护**：限制 stdout/stderr 单行/单流/单 Run 大小，日志轮转与磁盘水位检查。
 - **保留与清理**：Run/Operation 保留策略，清理前预览目录与容量。
 - **可观测性**：`/api/health`、队列深度、活跃 worker、失败率、磁盘占用。
-- **扩展准备**：列表已做前端分页（每页 10 条）；服务端分页与只读索引等出现可测瓶颈再做。
+- **扩展准备**：列表已做服务端分页（`?page=` + `total` / `page_size`，页长由 `SKILLAPP_PAGE_SIZE` 决定）；只读索引等出现可测瓶颈再做。
 
 ## 暂不纳入
 

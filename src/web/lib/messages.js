@@ -22,7 +22,7 @@ const TYPE_LABELS = {
   'unload-skill': 'Unload',
   'archive-template': 'Archive',
   'unarchive-template': 'Unarchive',
-  'run-template': 'Run',
+  'execute-template': 'Execute',
   'delete-run': 'Delete',
 };
 
@@ -57,7 +57,7 @@ function detailHash(operation) {
 
 /** Run 的 operation 只是镜像，取消要走 Run 自己的接口。 */
 function cancelPath(operation) {
-  if (operation.type === 'run-template') {
+  if (operation.type === 'execute-template') {
     const runId = operation.input?.run_id;
     return runId ? `/api/runs/${encoded(runId)}/cancel` : null;
   }

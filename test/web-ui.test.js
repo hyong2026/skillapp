@@ -474,9 +474,9 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
     assert.ok(events.some((frame) => frame.includes('event: snapshot')));
 
     // Run 同时落一份 operation 镜像，Operations 页才能统一列出所有长期任务
-    const operations = await requestJson(ctx, '/api/operations?type=run-template');
+    const operations = await requestJson(ctx, '/api/operations?type=execute-template');
     assert.equal(operations.response.status, 200);
-    assert.ok(operations.body.data.items.every((item) => item.type === 'run-template'), 'type 过滤在服务端做');
+    assert.ok(operations.body.data.items.every((item) => item.type === 'execute-template'), 'type 过滤在服务端做');
     const runOperation = operations.body.data.items.find((item) => item.subject?.id === runId);
     assert.ok(runOperation, 'Run 应该有对应的 operation 记录');
     assert.equal(runOperation.status, 'completed');
@@ -484,7 +484,7 @@ describe('执行面：Preview、Run、加锁取消、重试、授权提示、Set
 
     const operation = await requestJson(ctx, `/api/operations/${runOperation.operation_id}`);
     assert.equal(operation.response.status, 200);
-    assert.equal(operation.body.data.operation.type, 'run-template');
+    assert.equal(operation.body.data.operation.type, 'execute-template');
     assert.equal(operation.body.data.operation.input.run_id, runId);
     assert.equal(operation.body.data.operation.result.total, 1);
 

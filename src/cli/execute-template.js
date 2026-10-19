@@ -2,9 +2,9 @@
 'use strict';
 
 /**
- * run-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
+ * execute-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
  *
- *   node src/cli/run-template.js <template.json> [--all | --incremental] [--dry-run]
+ *   node src/cli/execute-template.js <template.json> [--all | --incremental] [--dry-run]
  */
 
 import fs from 'node:fs';
@@ -14,10 +14,10 @@ import { loadEnv } from '../core/load-env.js';
 loadEnv();
 
 // .env 必须先于路径配置生效，所以业务模块用动态 import 加载。
-const { runTemplate } = await import('../core/run-template.js');
+const { runTemplate } = await import('../core/execute-template.js');
 const { ROOT } = await import('../core/paths.js');
 
-const USAGE = `用法: node src/cli/run-template.js <template.json> [选项]
+const USAGE = `用法: node src/cli/execute-template.js <template.json> [选项]
 
 选项:
   --all               处理表内所有行（默认）

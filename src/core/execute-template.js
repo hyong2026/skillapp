@@ -1,5 +1,5 @@
 /**
- * run-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
+ * execute-template.js — 按 Template 执行：逐行读多维表格 → 跑 Skill → 回写结果
  *
  * 边界：多维表格只承担 IO（读输入 / 写输出），不写任何状态。
  *       Run 与其中的 RunItem 都记在 .data/runs/<run_id>/run.json。

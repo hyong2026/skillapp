@@ -1,7 +1,7 @@
 /**
  * home.js — Home：SkillApp 的全流程入口
  *
- * 四步：Load Skill → Analyze IO（含 IO Schema 配置）→ Bind Table → Run Template。
+ * 四步：Load Skill → Analyze IO（含 IO Schema 配置）→ Bind Table → Execute Template。
  * Run 一发起就跳去 Run 详情页（那里有实时结果与日志），所以本页没有"结果"这一步。
  * 状态只活在这一次访问里：刷新或切走就从头开始，不持久化"当前 Skill"。
  * 每一步都调现有接口（装载 / 分析 / 保存 Schema / 绑定 / 执行），
@@ -17,7 +17,7 @@ const STEPS = [
   ['load', '1', 'Load Skill'],
   ['analyze', '2', 'Analyze IO'],
   ['bind', '3', 'Bind Table'],
-  ['run', '4', 'Run Template'],
+  ['run', '4', 'Execute Template'],
 ];
 
 function stepSection(key, index, title, body, note) {
@@ -170,8 +170,8 @@ async function homeView() {
   // ---------- 4. Run ----------
   // 第一次使用只给一个 Run：不加 All Rows（全量）与 Preview（dry-run），
   // 默认就是增量——只跑没成功过、或输入/版本变过的行，可安全重复点。
-  const runButton = actionButton('Run', 'run', 'button primary');
-  const runStep = stepSection('run', '4', 'Run Template', h('div', { className: 'flow-row' }, runButton), 'Fill the input columns in the table, then Run - you land on the Run page for live results. Only rows that never succeeded (or changed) are processed.');
+  const runButton = actionButton('Execute', 'run', 'button primary');
+  const runStep = stepSection('run', '4', 'Execute Template', h('div', { className: 'flow-row' }, runButton), 'Fill the input columns in the table, then Execute - you land on the Run page for live results.');
 
   runButton.addEventListener('click', async () => {
     if (!state.template) return;

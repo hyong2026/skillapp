@@ -11,7 +11,7 @@ operations/<operation_id>/operation.json
 {
   "operation_id": "20261012-190323-0b54",
   "type": "bind-table",  // load-skill | analyze-skill | bind-table | unload-skill
-                         // archive-template | unarchive-template | run-template
+                         // archive-template | unarchive-template | execute-template
   "status": "completed", // queued | running | canceling | completed | failed | canceled | interrupted
   "created_at": "…",
   "started_at": "…",
@@ -25,7 +25,7 @@ operations/<operation_id>/operation.json
 
 约定：
 
-- `run-template` 在这里只是**索引镜像**（摘要），明细仍只在 `runs/`——Operations 页与 Messages 区靠它统一列出所有长期任务。
+- `execute-template` 在这里只是**索引镜像**（摘要），明细仍只在 `runs/`——Operations 页与 Messages 区靠它统一列出所有长期任务。
 - 状态变化会通过全局 SSE（`GET /api/operations/events`）推给界面，不需要轮询。
 - 服务启动时会把遗留的 `running` 标成 `interrupted`——不自动续跑。
 - 删除这些记录只影响历史展示，不影响 `runs/` 里的运行数据。

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * run-template.js 的回归测试：真跑 CLI，只把 src/core/lark 换成内存表。
+ * execute-template.js 的回归测试：真跑 CLI，只把 src/core/lark 换成内存表。
  *
  * 覆盖：
  *   - record-list 必须翻完所有页，而不是只拿默认的前 100 行
@@ -21,7 +21,7 @@ import { pathToFileURL } from 'node:url';
 import { skillHash } from '../src/core/skill-hash.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const RUN_TEMPLATE = path.join(ROOT, 'src', 'cli', 'run-template.js');
+const RUN_TEMPLATE = path.join(ROOT, 'src', 'cli', 'execute-template.js');
 const MARKER = '__RESULT__ ';
 
 const FIELDS = [
@@ -40,7 +40,7 @@ function flag(args, name) {
 }
 
 function makeFixture(mode) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-run-template-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skillapp-execute-template-'));
   const skillDir = path.join(root, '.data', 'skills', 'ref');
   fs.mkdirSync(skillDir, { recursive: true });
   fs.mkdirSync(path.join(root, '.data', 'templates'), { recursive: true });

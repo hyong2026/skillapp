@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { previewTemplate, runTemplate } from '../core/run-template.js';
+import { previewTemplate, runTemplate } from '../core/execute-template.js';
 
 function send(message) {
   if (!process.send) return Promise.resolve();

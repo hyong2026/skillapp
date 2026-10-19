@@ -5,7 +5,7 @@
 ```bash
 node src/cli/load-skill.js   <Skill 根目录>
 node src/cli/bind-table.js    --ref <ref> --url '<表格链接>'
-node src/cli/run-template.js <template.json> [--incremental]
+node src/cli/execute-template.js <template.json> [--incremental]
 node src/cli/unload-skill.js <ref> [--with-runs]
 ```
 
@@ -48,11 +48,11 @@ node src/cli/bind-table.js --ref <ref> --url '<链接>' --dry-run
 计划带 `plan_hash + diff`，写入前重新校验——表格结构在执行期间变了会拒绝写出。
 同一个 Skill 绑定到不同表（base + table + **view**）会各生成一份 Template；三元组完全一致才原地更新。
 
-## run-template.js
+## execute-template.js
 
 ```bash
-node src/cli/run-template.js .data/templates/<Skill Name>-<目标指纹>.template.json --incremental
-node src/cli/run-template.js <template.json> --dry-run
+node src/cli/execute-template.js .data/templates/<Skill Name>-<目标指纹>.template.json --incremental
+node src/cli/execute-template.js <template.json> --dry-run
 ```
 
 | 参数 | 说明 |
@@ -94,7 +94,7 @@ SKILLAPP_ANALYZE_REASONING_EFFORT=low   # low / medium / high
 SKILLAPP_ANALYZE_TIMEOUT_MS=900000      # 默认 15 分钟
 SKILLAPP_ANALYZE_ARGS='[]'              # 高级：完全自定义分析器参数（JSON 数组）；一旦设置，默认参数（含 -o 收结果、project_doc_max_bytes=0）全部失效，分析器需自己写出 mapping 文件
 
-# 执行（Run）
+# 执行（Execute）
 SKILLAPP_RUN_CONCURRENCY=4              # 同一 Run 内同时跑几行，默认 4、上限 8；改完即时生效
 
 # 通用生图（所有 Skill 共用，见下节）
@@ -125,7 +125,7 @@ SKILLAPP_LARK_MODULE=<path>             # 替换 lark 实现（测试用）
 | 装载 | `load-skill.js` | `POST /api/skills` | Skills → `Load` |
 | 分析 | Agent + `skill-analyzer` | `POST /api/skills/:ref/analyze` | Skill 详情 → `Analyze` |
 | 绑定 | `bind-table.js` | `POST /api/skills/:ref/bind` | Skill 详情 → `Bind Table` |
-| 执行 | `run-template.js` | `POST /api/runs` | Template 详情 → `Run` |
+| 执行 | `execute-template.js` | `POST /api/runs` | Template 详情 → `Execute` |
 | 卸载 | `unload-skill.js` | `DELETE /api/skills/:ref` | Skill 详情 → `Unload` |
 
 接口细节见 [api.md](api.md)。

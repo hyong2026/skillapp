@@ -77,7 +77,7 @@ async function templatesView() {
 }
 
 function runControl(template) {
-  const button = actionButton('Run', 'run', 'button primary');
+  const button = actionButton('Execute', 'run', 'button primary');
   // 归档即冻结：必须先解冻才跑。
   if (template.archived_at) {
     button.disabled = true;
