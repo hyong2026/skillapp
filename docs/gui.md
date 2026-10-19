@@ -27,9 +27,13 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 本机访问时令牌可省略；监听非本机地址时必须设置 `--token`（或 `SKILLAPP_WEB_TOKEN`），或显式 `--insecure`。鉴权支持 Basic Auth 与 Bearer token。
 
+整页刷新时有一层 **Loading 遮罩**：它是静态写在 `index.html` 里的（样式一到位就盖住，不会先闪白），等第一屏内容或失败提示就位就淡出移除；另有 10 秒兜底，避免出问题时把人挡在外面。
+
 ## 导航与页面
 
 左侧固定导航：**Home / Skills / Templates / Runs / Operations / Settings**，默认落在 `#home`。窄屏（≤720px）时导航折叠成右上角 ☰ 的浮层菜单。
+
+侧栏可以**折叠**：折叠按钮常驻在 brand 行右侧（面板字形 + 方向箭头，带 `Collapse` 提示）；快捷键 `←` 折叠、`→` 展开（输入框里、弹框里、窄屏下都不抢键）。折叠后侧栏只剩一列等大等距的图标（悬停出提示），logo 居中、鼠标移上来**原地换成展开按钮**（提示 `Expand`），底部是**常驻的 Messages 图标**（有新操作推送时点一个红点 —— 连上那次快照不算，点开即清；点开把消息区当浮层贴在侧栏右侧，只露最近 3 条，没消息时图标置灰；再点、点别处、`Esc` 都能收起），主区内容也随之撑满整个宽度。状态只存本浏览器（`localStorage`），刷新与切页都保持；窄屏是另一套（☰），不掺和。
 
 ### Home
 
@@ -95,7 +99,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 ## UI 约定
 
-- 静态文案统一英文；表头、字段名与分析面板标题首字母大写（不强制全大写）；导航、消息区标题、列表页 / Home / Settings 的标题、筛选下拉的分组名统一全大写（导航与分组名用复数，两边文案一致）。
+- 静态文案统一英文；表头、字段名与分析面板标题首字母大写（不强制全大写）；导航、消息区标题、列表页 / Home / Settings 的标题、详情页面包屑的首项（分区标签，ID / 名字那一段不套）、筛选下拉的分组名统一全大写（导航与分组名用复数，两边文案一致）。
 - 表头、Summary 字段名、弹框字段名共用一套样式与字号（10px / 600 / 等宽，次要色）。
 - 所有弹框都是应用内 `<dialog>`，不用浏览器原生 `confirm`：输入弹框（Load / Bind）、确认弹框（Unload / Archive / Delete / 全量 Execute）、提示弹框（页面级失败，只有一个 `OK`）、Execute 弹框（预览 + 提交）。确认弹框支持 Esc / Cancel 放弃，危险动作的确认按钮为红色。
 - 页面级失败（路由不存在 / 详情读不出来）：**不把错误嵌在页面里**（那样顶部会留着上一页的标题和按钮），而是清空顶部与内容、弹一个只有 `OK` 的提示框，关掉后回到上一级；没有 `Retry` —— 东西真的不在了时重试没有意义。
@@ -111,14 +115,15 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 | 位置 | 内容 |
 |---|---|
-| `app.js` | 入口：装导航图标、菜单、消息区，然后交给路由 |
+| `app.js` | 入口：装导航图标、菜单、侧栏、消息区与首屏遮罩，然后交给路由 |
 | `index.html` / `styles.css` | 静态骨架与全部样式（含字体与字号规范） |
 | `lib/router.js` | Hash 路由（`#list` / `#list/:id` / `#runs/:run/:record`） |
 | `lib/components.js` | 面板、表格、分页表、可编辑 IO Schema 表等共用件 |
 | `lib/api.js` | 请求封装、SSE 读取、操作订阅 |
 | `lib/messages.js` | 侧边栏消息区（全局操作流） |
-| `lib/theme.js`、`theme-boot.js` | 主题 Dark / Light：运行时切换与首屏防闪（`logo-light.svg` 是浅色 logo） |
+| `lib/theme.js`、`theme-boot.js` | 主题 Dark / Light 与侧栏折叠状态：运行时切换在 `lib/theme.js` / `lib/sidebar.js`，首屏防闪（含 `<html data-theme>` / `data-sidebar`）在 `theme-boot.js` |
 | `lib/shell.js` | 页面骨架（视图头固定在滚动区之外）、窄屏 ☰ 菜单 |
+| `lib/sidebar.js` | 侧栏折叠：状态（`localStorage`）、折叠/展开按钮、图标提示、`←` / `→` 快捷键 |
 | `lib/dialogs.js` | 输入 / 确认 / 提示三类弹框 + Execute 弹框（预览与提交） |
 | `lib/format.js`、`lib/highlight.js`、`lib/links.js`、`lib/dom.js` | 格式化、JSON 高亮、链接与 DOM 小工具 |
 | `views/*.js` | 一页一个文件（home / skills / templates / runs / run-item / operations / settings） |

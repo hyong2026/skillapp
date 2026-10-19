@@ -198,6 +198,20 @@ button { cursor: pointer; }
 }
 .skip-link:focus { transform: translateY(0); }
 
+/* 整页刷新时的首屏遮罩：静态写在 HTML 里（样式一到位就盖住，不会先闪白），
+   等第一屏内容或失败提示就位，由 app.js 加 is-done 淡出后移除。 */
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  transition: opacity 160ms ease-out;
+}
+.boot.is-done { opacity: 0; pointer-events: none; }
+.boot .spinner { width: 22px; height: 22px; color: var(--accent); }
+
 .topbar {
   z-index: 10;
   flex: 0 0 auto;
@@ -209,7 +223,9 @@ button { cursor: pointer; }
   height: 100%;
   min-height: 0;
   padding: 20px 16px;
-  overflow-y: auto;
+  /* 不在这里滚：一轴 non-visible 会把另一轴也变成 auto，横向就裁掉了 —— 折叠按钮的
+     tooltip 要往侧栏右侧伸出去。纵向滚动交给 .nav。 */
+  overflow: visible;
   border-right: 1px solid var(--line);
   background: var(--bg-elevated);
 }
@@ -232,7 +248,7 @@ button { cursor: pointer; }
 .brand-logo-light { display: none; }
 :root[data-theme="light"] .brand-logo-dark { display: none; }
 :root[data-theme="light"] .brand-logo-light { display: block; }
-.nav { display: flex; flex-direction: column; align-items: stretch; gap: 4px; flex: 1 1 auto; }
+.nav { display: flex; flex-direction: column; align-items: stretch; gap: 4px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .nav a {
   display: flex;
   align-items: center;
@@ -250,6 +266,135 @@ button { cursor: pointer; }
 .nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .nav a.active { background: var(--accent-soft); color: var(--text-strong); }
 .nav-icon { width: 16px; height: 16px; }
+
+/* ===== 侧栏折叠 =====
+   状态在 <html data-sidebar>（首屏由 theme-boot.js 落好）。折叠只改尺寸与显隐；
+   tooltip 与 Messages 浮层都要溢出到主区之上，所以侧栏自己不设 overflow（滚动在 .nav）。 */
+.topbar { position: relative; transition: width 160ms ease-out, padding 160ms ease-out; }
+.brand { position: relative; }
+/* 折叠按钮常驻在 brand 行右侧；折叠后它转到 logo 的位置，鼠标移上来才现身。 */
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  position: relative;        /* tooltip 的定位基准（折叠态会被下面的 absolute 覆盖） */
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-2);
+  cursor: pointer;
+}
+.sidebar-toggle:hover { background: var(--surface-3); color: var(--text); }
+.sidebar-toggle .icon { width: 16px; height: 16px; }
+
+/* 折叠态只在宽屏存在：窄屏是顶栏 + ☰ 那一套。 */
+@media (min-width: 721px) {
+  :root[data-sidebar="collapsed"] .topbar {
+    width: 64px;
+    padding: 20px 0;
+    align-items: center;
+    overflow: visible;
+  }
+  :root[data-sidebar="collapsed"] .brand { width: 100%; height: 40px; justify-content: center; gap: 0; }
+  :root[data-sidebar="collapsed"] .brand strong { display: none; }
+  :root[data-sidebar="collapsed"] .nav { align-items: center; overflow: visible; }
+  :root[data-sidebar="collapsed"] .nav a { justify-content: center; width: 40px; padding: 0; }
+  :root[data-sidebar="collapsed"] .nav-label { display: none; }
+  /* 折叠后主区跟着变宽：内容不再按 1240px 居中留白，直接撑满。 */
+  :root[data-sidebar="collapsed"] .view-head,
+  :root[data-sidebar="collapsed"] .view-body-inner { width: 100%; }
+  /* 顶部：鼠标移上来时 logo 让位给展开按钮（同一个位置，原地换）。 */
+  .brand-logo { transition: opacity 120ms ease-out; }
+  :root[data-sidebar="collapsed"] .brand:hover .brand-logo { opacity: 0; }
+  :root[data-sidebar="collapsed"] .sidebar-toggle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    transform: translate(-50%, -50%);
+    visibility: hidden;
+  }
+  :root[data-sidebar="collapsed"] .brand:hover .sidebar-toggle { visibility: visible; }
+  /* 折叠态的 tooltip：贴着元素右侧出现（文案来自 data-tip）。定位基准由各自元素给：
+     导航项与 Messages 图标是 static，要显式 relative；展开按钮本来就是 absolute。 */
+  :root[data-sidebar="collapsed"] .nav a[data-tip],
+  :root[data-sidebar="collapsed"] .messages-toggle[data-tip] { position: relative; }
+  :root[data-sidebar="collapsed"] [data-tip]::after,
+  .sidebar-toggle[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: calc(100% + 10px);
+    right: auto;             /* 显式解掉：不给 right，气泡才能按文字撑开 */
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 30;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface-3);
+    color: var(--text);
+    font: 600 var(--text-2xs)/1.4 var(--font-sans);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+  }
+  :root[data-sidebar="collapsed"] [data-tip]:hover::after,
+  .sidebar-toggle[data-tip]:hover::after { opacity: 1; }
+  /* 底部：Messages 图标常驻；点开的面板贴侧栏右侧浮出。 */
+  :root[data-sidebar="collapsed"] .messages-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    min-height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  :root[data-sidebar="collapsed"] .messages-toggle:hover { background: var(--surface-2); color: var(--text); }
+  :root[data-sidebar="collapsed"] .messages-toggle:disabled { color: var(--muted-2); opacity: .5; cursor: default; }
+  :root[data-sidebar="collapsed"] .messages-toggle .icon { width: 17px; height: 17px; }
+  /* 新消息的红点：用 ::before（::after 留给 tooltip），外圈跟侧栏底色咬边。 */
+  :root[data-sidebar="collapsed"] .messages-toggle.has-new::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--danger);
+    box-shadow: 0 0 0 2px var(--bg-elevated);
+  }
+  :root[data-sidebar="collapsed"] .messages {
+    position: absolute;
+    left: calc(100% + 10px);
+    bottom: 12px;
+    z-index: 20;
+    display: none;
+    width: 300px;
+    padding: 10px;
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  :root[data-sidebar="collapsed"] .messages.is-open:not([hidden]) { display: grid; }
+  /* 浮层关着时量不出行高：临时显形（不可见、绝对定位不占位）量完再收起，见 messages.js。 */
+  :root[data-sidebar="collapsed"] .messages.is-measuring { display: grid; visibility: hidden; }
+}
+
 
 /* 侧边栏底部的消息区：所有异步操作都在这儿，能看状态、取消、跑完点进去、关掉。 */
 .messages {
@@ -284,6 +429,8 @@ button { cursor: pointer; }
 .messages:hover .messages-clear,
 .messages:focus-within .messages-clear { visibility: visible; }
 .messages-clear:hover { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 3px; }
+/* 折叠态的 Messages 图标：宽屏折叠时才出现，其余情况（含窄屏顶栏）都不画。 */
+.messages-toggle { display: none; }
 /* 只露出最近三条，其余靠这条滚动条看（高度由 messages.js 按真实行高算）。 */
 .messages-list { display: grid; gap: 6px; overflow-y: auto; }
 .message {
@@ -408,6 +555,8 @@ h3 { color: var(--text-strong); font-size: var(--text-md); font-weight: 600; }
   color: var(--muted-2);
   white-space: nowrap;
 }
+/* 面包屑首项是分区标签（Skills / Templates / …），与标题一样大写；后面那些是 ID / 名字，保持原样。 */
+.breadcrumb a:first-child { text-transform: uppercase; letter-spacing: .01em; }
 .breadcrumb a { color: var(--muted); }
 .breadcrumb a:hover { color: var(--accent); }
 .breadcrumb-sep { color: var(--muted-2); }
@@ -1026,6 +1175,7 @@ label.modal-field { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .nav-toggle[aria-expanded="true"] .nav-toggle-open { display: none; }
   .nav-toggle .nav-toggle-close { display: none; }
   .nav-toggle[aria-expanded="true"] .nav-toggle-close { display: block; }
+  .nav-toggle .icon { width: 18px; height: 18px; }
   /* The menu floats above the page: opening it never moves the header or content. */
   .nav {
     position: absolute;
@@ -1042,8 +1192,9 @@ label.modal-field { grid-template-columns: minmax(0, 1fr); gap: 5px; }
     box-shadow: var(--shadow);
   }
   .nav.open { display: flex; animation: enter 160ms ease-out both; }
-  /* 窄屏顶栏只有一行位置，消息区先不挤进来。 */
+  /* 窄屏顶栏只有一行位置：消息区与折叠按钮都先不挤进来（折叠是宽屏的事）。 */
   .messages { display: none; }
+  .sidebar-toggle { display: none; }
   .view-head { flex-wrap: wrap; row-gap: 10px; }
 }
 

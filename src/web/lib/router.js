@@ -42,7 +42,13 @@ function parentHash(parts) {
  * 页面级失败（未知路由 / 详情读不出来）：先把顶部清空（别留着上一页的标题和按钮），
  * 再用弹框说清楚，关掉后回到上一级。不再给 Retry —— 东西真没了的时候重试没有意义。
  */
+/** 首屏遮罩收尾的信号：这一屏（或失败提示）已经摆好了，可以把它收掉。 */
+function viewReady() {
+  document.dispatchEvent(new CustomEvent('viewready'));
+}
+
 async function failRoute({ title, message, parent = 'home' }) {
+  viewReady();
   viewHeadSlot().replaceChildren();
   app.replaceChildren(h('div', { className: 'view-body-inner' }));
   const openedAt = location.hash;
@@ -102,6 +108,7 @@ async function render() {
     app.removeAttribute('aria-busy');
     // The run view renders itself (it repaints on stream events) and returns null.
     if (content) renderViewContent(content);
+    viewReady();
   } catch (error) {
     if (sequence !== renderSequence) return;
     app.removeAttribute('aria-busy');

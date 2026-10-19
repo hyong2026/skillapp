@@ -349,7 +349,7 @@ describe('只读面：鉴权、状态、列表与详情、产物、静态资源'
 
     for (const asset of [
       '/lib/router.js', '/lib/components.js', '/lib/dialogs.js', '/lib/dom.js', '/lib/format.js',
-      '/lib/links.js', '/lib/api.js', '/lib/shell.js', '/lib/highlight.js',
+      '/lib/links.js', '/lib/api.js', '/lib/shell.js', '/lib/sidebar.js', '/lib/highlight.js',
       '/views/skills.js', '/views/templates.js', '/views/runs.js',
       '/views/run-item.js', '/views/operations.js', '/views/settings.js',
     ]) {

@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <!-- 整页刷新时的首屏遮罩：由 CSS 立刻盖住，第一屏画完由 app.js 淡出移除。 -->
+  <div class="boot" id="boot" role="status" aria-label="Loading"><span class="spinner" aria-hidden="true"></span></div>
   <a class="skip-link" href="#app">Skip to content</a>
   <header class="topbar">
     <div class="brand">

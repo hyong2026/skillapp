@@ -158,10 +158,14 @@ function renderMessages(container, operations, handlers) {
     list,
   );
   // 可见高度 = 最近 MAX_ROWS 条的真实行高（字号/主题变了照样对），多出来的靠滚动条看。
+  // 折叠态的浮层关着时整块是 display:none，量出来全是 0 —— 先临时显形（不可见、不占位）再量。
+  const hidden = container.offsetParent === null;
+  if (hidden) container.classList.add('is-measuring');
   const gap = 6;
   const shown = rows.slice(0, MAX_ROWS);
   list.style.maxHeight = `${shown.reduce((sum, row) => sum + row.offsetHeight, 0)
     + gap * Math.max(0, shown.length - 1)}px`;
+  if (hidden) container.classList.remove('is-measuring');
   if (previousScroll) list.scrollTop = previousScroll;
 }
 
@@ -175,9 +179,46 @@ function initMessages() {
   const container = document.getElementById('messages');
   if (!container) return;
 
+  // 折叠态：侧栏底部一个常驻图标，点开的就是这块面板（浮层）。展开态用不着它 ——
+  // 面板本来就在侧栏底部，图标由 CSS 藏起来。
+  const toggle = h('button', {
+    className: 'messages-toggle',
+    type: 'button',
+    'data-tip': 'Messages',
+    'aria-label': 'Messages',
+  }, icon('messages'));
+  const setOpen = (open) => container.classList.toggle('is-open', Boolean(open) && !container.hidden);
+  // 折叠态：新消息来了在图标上点一个红点（只认"流的推送"，连上那次全量快照不算）；
+  // 点开浮层、或切回展开态（消息区就在侧栏底部）就算看过了，红点消失。
+  let hasNew = false;
+  const markSeen = () => { hasNew = false; toggle.classList.remove('has-new'); };
+  toggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const open = !container.classList.contains('is-open');
+    setOpen(open);
+    if (open) markSeen();
+  });
+  document.addEventListener('click', (event) => {
+    if (!container.contains(event.target) && !toggle.contains(event.target)) setOpen(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setOpen(false);
+  });
+  // 展开态没有浮层这回事，切回去就收起来（消息区在侧栏底部，等于看过）。
+  document.addEventListener('sidebarchange', (event) => {
+    setOpen(false);
+    if (!event.detail?.collapsed) markSeen();
+  });
+  container.parentElement.append(toggle);
+
   // 列表完全靠 SSE：连上时的一次全量快照 + 之后逐条推送，平时不发任何 GET。
   let operations = [];
-  const paint = () => renderMessages(container, operations, handlers);
+  const paint = () => {
+    renderMessages(container, operations, handlers);
+    // 没消息时（面板 hidden）图标置灰：位置还在，点了也没东西可看。
+    toggle.disabled = container.hidden;
+    if (container.hidden) setOpen(false);
+  };
   const handlers = {
     async onCancel(operation, button) {
       button.disabled = true;
@@ -228,9 +269,17 @@ function initMessages() {
       });
       if (!response.ok || !response.body) throw new Error(`Operation stream failed (${response.status})`);
       await readEventStream(response, (event) => {
-        if (event.type === 'snapshot') operations = event.operations || [];
-        else if (event.type === 'operation' && event.operation) operations = mergeOperation(operations, event.operation);
-        else return;
+        if (event.type === 'snapshot') {
+          operations = event.operations || [];
+        } else if (event.type === 'operation' && event.operation) {
+          operations = mergeOperation(operations, event.operation);
+          // 折叠着、浮层也没开：这条谁都没看见，点个红点提醒。
+          const collapsed = document.documentElement.dataset.sidebar === 'collapsed';
+          if (collapsed && !container.classList.contains('is-open')) {
+            hasNew = true;
+            toggle.classList.add('has-new');
+          }
+        } else return;
         paint();
       });
     } catch {
