@@ -28,7 +28,8 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 | `src/core/skill-meta.js` | 读 `SKILL.md` frontmatter（目前取 `description`） |
 | `src/core/ref.js` | Skill ref 白名单与校验 |
 | `src/core/mapping.js` | Mapping 校验、`mapped` 规则与原子保存 |
-| `src/core/analyze-skill.js` | 调用本地分析器，校验结果并持久化 Mapping |
+| `src/core/install-deps.js` | 依赖安装（Node `npm`／Python `venv+pip`），装进 Skill 自己的目录；判定与快路径 |
+| `src/core/analyze-skill.js` | 调用本地分析器（先确保依赖就位），校验结果并持久化 Mapping |
 | `src/core/bind-table.js` | Mapping 计划、diff、plan hash、建列与 Template 生成 |
 | `src/core/template.js` | Template 身份（Skill + 目标表）与文件名、按目标定位、归档状态 |
 | `src/core/unload-skill.js` | 卸载影响清单、plan hash 和受控删除 |
@@ -60,6 +61,7 @@ Browser ──HTTP/JSON + SSE──▶ API Server ──▶ Task Runner
 - `run.json` 在 Run 启动时创建，状态或 Run Item 变化时更新。
 - `operation.json` 记录异步操作的状态、输入、结果和错误；Run 只在这里留一份索引（mirror），明细仍在 `.data/runs/`。
 - 日志以 `.log` 文本原样保存：脚本型是 stdout/stderr，prompt 型是整理过的 `live.log`（见 [run.md](run.md#日志与产物)）。
+- **依赖装在 Skill 自己目录里**（`skills/<ref>/node_modules`／`.venv`），不进指纹、不进 Git；装载只搬源码，首次 Analyze 时按声明文件安装（见 [.data/README.md](../.data/README.md)）。
 - 服务启动时扫描活动 Run/Operation，标成 `interrupted`（不自动续跑）。
 - `.data/` 除各自的 `README.md` 外不进 Git。
 

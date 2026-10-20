@@ -12,6 +12,7 @@ import { editableSchemaTable, kv, loadingPanel, section, viewTitle } from '../li
 import { actionButton, fragment, h, icon, setNotice } from '../lib/dom.js';
 import { encoded, formatDate } from '../lib/format.js';
 import { larkBaseLink, hashLink } from '../lib/links.js';
+import { openLoadDialog } from '../lib/dialogs.js';
 
 const STEPS = [
   ['load', '1', 'Load Skill'],
@@ -44,31 +45,21 @@ async function homeView() {
   const state = { ref: null, skill: null, mapping: null, template: null, run: null, busy: null };
 
   // ---------- 1. Load ----------
-  const pathInput = h('input', {
-    className: 'flow-input',
-    type: 'text',
-    placeholder: '/Users/me/skills/my-skill',
-    'aria-label': 'Skill root path',
-  });
-  const loadButton = actionButton('Load', 'load', 'button primary');
+  const LOAD_LABEL = 'Load';
+  const loadButton = actionButton(LOAD_LABEL, 'load', 'button primary');
   const loadResult = h('div', { className: 'step-result' });
-  const loadStep = stepSection('load', '1', 'Load Skill', h('div', { className: 'flow-row' }, [pathInput, loadButton]), 'Copies the Skill into SkillApp and pins it by content fingerprint.');
+  const loadStep = stepSection('load', '1', 'Load Skill', h('div', { className: 'flow-row' }, [loadButton]), 'Upload the Skill folder - source only; dependencies are installed on first Analyze.');
   loadStep.section.querySelector('.step-card').append(loadResult);
 
   const runLoad = async () => {
-    const source = pathInput.value.trim();
-    if (!source) {
-      setNotice('Enter a Skill root path', true);
-      pathInput.focus();
-      return;
-    }
+    const ref = await openLoadDialog();
+    if (!ref) return;
     loadButton.disabled = true;
     state.busy = 'load';
     paint();
     try {
-      const result = await startOperation('/api/skills', { source_path: source }, 'POST');
-      state.ref = result.ref;
-      state.skill = await api(`/api/skills/${encoded(result.ref)}`);
+      state.ref = ref;
+      state.skill = await api(`/api/skills/${encoded(ref)}`);
       state.mapping = state.skill.analysis?.mapping || null;
       setNotice('');
     } catch (error) {
@@ -76,17 +67,16 @@ async function homeView() {
     } finally {
       state.busy = null;
       loadButton.disabled = false;
-      loadButton.replaceChildren(icon('load'), h('span', { textContent: 'Load' }));
+      loadButton.replaceChildren(icon('load'), h('span', { textContent: LOAD_LABEL }));
       paint();
     }
   };
   loadButton.addEventListener('click', runLoad);
-  pathInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') runLoad(); });
 
   // ---------- 2. Analyze + IO Schema ----------
   const analyzeButton = actionButton('Analyze', 'analyze', 'button primary');
   const analyzeSlot = h('div');
-  const analyzeStep = stepSection('analyze', '2', 'Analyze IO', analyzeSlot, 'Reads the Skill and writes the IO Schema below. Rename, reorder or uncheck fields - saved as you go.');
+  const analyzeStep = stepSection('analyze', '2', 'Analyze IO', analyzeSlot, 'Reads the Skill and fills in the IO Schema below; edits are saved as you go.');
 
   const saveMapping = async () => {
     await api(`/api/skills/${encoded(state.ref)}/schema`, { method: 'PUT', body: { mapping: state.mapping } });
@@ -94,7 +84,7 @@ async function homeView() {
 
   const paintAnalyze = () => {
     if (!state.ref) {
-      analyzeSlot.replaceChildren(h('p', { className: 'step-hint', textContent: 'Load a Skill first.' }));
+      analyzeSlot.replaceChildren();
       analyzeButton.disabled = true;
       return;
     }
@@ -139,7 +129,7 @@ async function homeView() {
   });
   const bindButton = actionButton('Bind', 'mapping', 'button primary');
   const bindResult = h('div', { className: 'step-result' });
-  const bindStep = stepSection('bind', '3', 'Bind Table', h('div', { className: 'flow-row' }, [urlInput, bindButton]), 'Creates the missing columns in that table, orders them, and produces a Template. One table (with its view) has one Template.');
+  const bindStep = stepSection('bind', '3', 'Bind Table', h('div', { className: 'flow-row' }, [urlInput, bindButton]), 'Creates the missing columns, orders them, and writes a Template for that table.');
   bindStep.section.querySelector('.step-card').append(bindResult);
 
   const runBind = async () => {
@@ -171,7 +161,7 @@ async function homeView() {
   // 第一次使用只给一个 Run：不加 All Rows（全量）与 Preview（dry-run），
   // 默认就是增量——只跑没成功过、或输入/版本变过的行，可安全重复点。
   const runButton = actionButton('Execute', 'run', 'button primary');
-  const runStep = stepSection('run', '4', 'Execute Template', h('div', { className: 'flow-row' }, runButton), 'Fill the input columns in the table, then Execute - you land on the Run page for live results.');
+  const runStep = stepSection('run', '4', 'Execute Template', h('div', { className: 'flow-row' }, runButton), 'Fill the input columns, then Execute - you land on the Run page for live results.');
 
   runButton.addEventListener('click', async () => {
     if (!state.template) return;
@@ -212,14 +202,12 @@ async function homeView() {
       step.state.textContent = done[key] ? 'Done' : pending[key] ? 'Waiting' : 'Current';
     }
 
-    loadResult.replaceChildren(state.ref
-      ? kv([
+    loadResult.replaceChildren(...(state.ref
+      ? [kv([
         ['Skill Name', hashLink(state.ref, `#skills/${encoded(state.ref)}`)],
-        ['Fingerprint', h('span', { className: 'mono truncate', textContent: state.skill?.hash || '—' })],
-        ['Source', h('span', { className: 'truncate', textContent: state.skill?.source || '—' })],
-      ])
-      : h('span', { className: 'step-hint', textContent: 'No Skill loaded yet.' }));
-    pathInput.disabled = Boolean(state.ref) || state.busy === 'load';
+        ['Hash', h('span', { className: 'mono truncate', textContent: state.skill?.hash || '—' })],
+      ])]
+      : []));
     loadButton.disabled = Boolean(state.ref) || state.busy === 'load';
 
     paintAnalyze();

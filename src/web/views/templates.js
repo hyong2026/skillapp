@@ -38,7 +38,7 @@ async function templatesView() {
     const table = await pagedTable({
       label: 'Templates',
       page,
-      headers: ['Template Name', 'Template ID', 'IO', 'Last Run', 'Created'],
+      headers: ['Template Name', 'Template ID', 'IO', 'Last Execute', 'Created'],
       load: async (target) => {
         const data = await api(`/api/templates?page=${target}${includeArchived}`);
         return {

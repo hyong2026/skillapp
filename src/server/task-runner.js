@@ -650,6 +650,16 @@ class TaskRunner {
   }
 
   persistTerminal(job, status, error) {
+    // 极早取消（worker 的第一帧快照还没回来）时 job.run 里可能一条 items 都没有，
+    // 直接落盘会写成一条空 Run —— 那就以盘上那份为底，把行补回来。
+    const runFile = path.join(this.model.runsDir, job.run.run_id, 'run.json');
+    if (!job.run.items?.length && fs.existsSync(runFile)) {
+      const onDisk = readJson(runFile);
+      if (onDisk.items?.length) {
+        job.run.items = onDisk.items;
+        job.run.total = onDisk.total ?? onDisk.items.length;
+      }
+    }
     job.run.status = status;
     job.run.finished_at = new Date().toISOString();
     if (error) job.run.error = error;

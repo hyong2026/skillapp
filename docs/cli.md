@@ -25,8 +25,8 @@ node src/cli/load-skill.js /path/to/skill
 ```
 
 - **目录名就是 Skill Name**（CLI 与落盘路径里叫 `ref`），装载后落在 `.data/skills/<Skill Name>/`。
-- 目录必须包含 `SKILL.md`；默认完整导入（含 `node_modules`），跳过 `.git` / `.DS_Store`。
-- 装载时：计算内容指纹写入 `source.json`（含来源路径、指纹、逐文件清单、`SKILL.md` frontmatter 里的 `description`、装载时间），原子替换旧副本。
+- 目录必须包含 `SKILL.md`；**只搬源码**：跳过 `node_modules` / `__pycache__` / `.venv` / `venv` / `.git` / `.DS_Store`（依赖由首次 Analyze 按声明文件装进 Skill 自己的目录，见 [.data/README.md](../.data/README.md)）。
+- 装载时：计算内容指纹写入 `source.json`（含来源类型、指纹、逐文件清单、`SKILL.md` frontmatter 里的 `description`、装载时间），原子替换旧副本；**不记来源路径**（对上传与云端都没意义）。
 - 源目录与目标目录相同或互相包含时拒绝执行。
 
 ## bind-table.js

@@ -265,9 +265,8 @@ async function pagedTable({ label = 'Data Table', headers, load, page = remember
       );
       rememberPage(label, current);
       const nextList = dataTable(headers, data.rows, label);
-      // 只有列表自带滚动条与锁定表头；键盘要能滚，所以这里才需要可聚焦。
+      // 只有列表自带滚动条与锁定表头。
       nextList.classList.add('is-scrolling');
-      nextList.tabIndex = 0;
       list?.remove();
       list = nextList;
       slot.replaceChildren(list, pager);

@@ -9,6 +9,7 @@ import { readSettings, saveSettings } from '../core/settings.js';
 import { ReadModel, HttpError, isWithin } from './read-model.js';
 import { TaskRunner } from './task-runner.js';
 import { operationSummary } from './operation-summary.js';
+import { LIMITS as UPLOAD_LIMITS, cleanupStaleUploads, commitUpload, createUpload, discardUpload, writeUploadFile } from '../core/skill-upload.js';
 const MAX_BODY_BYTES = 1024 * 1024;
 const OPERATION_TERMINAL = new Set(['completed', 'failed', 'canceled', 'interrupted']);
 const PAGE_SIZE_DEFAULT = 10;
@@ -119,6 +120,25 @@ function readJsonBody(req, maxBytes = MAX_BODY_BYTES) {
         reject(new HttpError(400, 'INVALID_JSON', 'Request body is not valid JSON', 'Send a valid JSON body'));
       }
     });
+    req.on('error', reject);
+  });
+}
+
+/** 原始字节的 body（上传用）：只做大小上限，不解析。 */
+function readRawBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new HttpError(413, 'BODY_TOO_LARGE', 'File is too large', 'Trim the file and retry'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -386,6 +406,41 @@ async function routeApi(req, res, model, runner, segments, runtime = {}) {
   }
 
   if (segments[1] === 'skills') {
+    // 上传通道：会话 → 逐文件 PUT → commit（见 core/skill-upload.js；不走任务队列，
+    // 因为 commit 只是一次本地复制 + 算指纹，同步做完更快，进度在客户端那侧显示）。
+    if (segments[2] === 'uploads') {
+      // 暂存根取服务端自己的 root（进程环境里的路径跟它不一定一致）。
+      const uploadsDir = path.join(model.root, 'uploads');
+      if (readOnly) {
+        throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Uploads are disabled in read-only mode', 'Open the Web UI from its own machine');
+      }
+      assertSameOrigin(req);
+      if (segments.length === 3 && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        return sendJson(req, res, 201, { ok: true, data: createUpload({ ref: body.ref, uploadsDir }), error: null });
+      }
+      if (segments.length === 5 && segments[4] === 'files' && req.method === 'PUT') {
+        const body = await readRawBody(req, UPLOAD_LIMITS.fileBytes);
+        const data = writeUploadFile({ uploadId: segments[3], relPath: url.searchParams.get('path'), body, uploadsDir });
+        return sendJson(req, res, 200, { ok: true, data, error: null });
+      }
+      if (segments.length === 5 && segments[4] === 'commit' && req.method === 'POST') {
+        const { ref, source, skipped } = commitUpload({ uploadId: segments[3], uploadsDir });
+        // 装载本身交给任务队列：worker 进程里的内容根才是对的，顺带进 Messages 与 Operations，
+        // 好了之后由 worker 删掉暂存。
+        const operation = runner.startTask(
+          'load-skill',
+          { ref, source_path: source, origin: 'upload', cleanup_path: path.dirname(source), skipped },
+          { lockKeys: [`skill:${ref}`] },
+        );
+        return sendJson(req, res, 202, { ok: true, data: operationData(operation), error: null });
+      }
+      if (segments.length === 4 && req.method === 'DELETE') {
+        return sendJson(req, res, 200, { ok: true, data: discardUpload({ uploadId: segments[3], uploadsDir }), error: null });
+      }
+      throw new HttpError(404, 'NOT_FOUND', 'Upload endpoint not found', 'Check the request path');
+    }
+
     // 装载 = 在集合上创建一份 Skill 副本（body: source_path）。
     if (req.method === 'POST' && segments.length === 2) {
       assertSameOrigin(req);
@@ -640,6 +695,7 @@ function createRequestHandler(options = {}) {
 }
 
 function createServer(options = {}) {
+  cleanupStaleUploads({ uploadsDir: path.join(options.root || DATA_DIR, 'uploads') });
   const handler = createRequestHandler(options);
   const server = http.createServer(handler);
   server.taskRunner = handler.taskRunner;

@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { loadSkill } from '../core/load-skill.js';
 import { analyzeSkill } from '../core/analyze-skill.js';
 import { planMapping, applyMapping } from '../core/bind-table.js';
@@ -30,7 +31,12 @@ function readInput() {
 async function execute(input) {
   const payload = input.input || {};
   if (input.type === 'load-skill') {
-    return loadSkill({ sourcePath: payload.source_path });
+    const result = loadSkill({ sourcePath: payload.source_path, origin: payload.origin });
+    // 上传通道：装载成功才清暂存（失败留着，重试安装/重装都不用重传），失败也不影响这次装载。
+    if (payload.cleanup_path) {
+      try { rmSync(payload.cleanup_path, { recursive: true, force: true }); } catch { /* 清理是尽力而为 */ }
+    }
+    return result;
   }
   if (input.type === 'analyze-skill') {
     return analyzeSkill({

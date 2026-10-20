@@ -7,6 +7,7 @@ import { AppError } from './errors.js';
 import { readJson } from './json-file.js';
 import { assertRef } from './ref.js';
 import { readMapping, saveMapping, validateMapping } from './mapping.js';
+import { ensureDependencies } from './install-deps.js';
 
 function analyzerArgs(skillDir, outputPath = null) {
   if (process.env.SKILLAPP_ANALYZE_ARGS) {
@@ -141,12 +142,19 @@ function priorMappingOrNull(ref) {
   }
 }
 
-function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
+async function analyzeSkill({ ref: rawRef, onProgress = null } = {}) {
   const ref = assertRef(rawRef);
   const skillDir = path.join(SKILLS_DIR, ref);
   if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) {
     throw new AppError('SKILL_NOT_FOUND', `Loaded Skill not found: ${ref}`, 'Load the Skill first', 404);
   }
+
+  // 首次使用时把依赖装到位（Node：`node_modules`／Python：`.venv`）——Analyze 是第一个真正
+  // 用到 Skill 的地方，分析器要能跑它的脚本。装过就是快路径；没有声明就不装（prompt 型 Skill 常态）。
+  if (onProgress) {
+    try { await onProgress({ stage: 'deps', message: 'Installing dependencies' }); } catch { /* best effort */ }
+  }
+  await ensureDependencies(skillDir);
 
   fs.mkdirSync(MAPPINGS_DIR, { recursive: true });
   const mappingPath = path.join(MAPPINGS_DIR, `${ref}.mapping.json`);

@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { lark, larkAsync } from './lark.js';
 import { createCodexEvents } from './live-log.js';
 import { diffSkillFiles, skillHash } from './skill-hash.js';
+import { dependencyPlan, hasInstalled, venvEnv } from './install-deps.js';
 import { DATA_DIR, RUNS_DIR } from './paths.js';
 const UPLOAD_CHUNK = 50; // 单次上传文件的个数上限
 const RECORD_PAGE_SIZE = 200; // JSON 模式 record-list 的上限
@@ -444,6 +445,11 @@ function templateProblems(tpl, dataDir) {
   } else {
     const live = skillHash(skillDir);
     if (live !== tpl.skill.hash) problems.push(skillHashProblem(skillDir, tpl.skill.hash, live, reload));
+    // 依赖没装：有声明却没装到 Skill 目录里 —— 在开跑前说清楚，别等某一行报"找不到模块"。
+    const deps = dependencyPlan(skillDir);
+    if (deps && !hasInstalled(skillDir, deps.manager)) {
+      problems.push(`Dependencies are not installed yet (${deps.manager})\n  Fix: run Analyze on this Skill (it installs them), or install them in ${tpl.skill.path}`);
+    }
   }
 
   // cmd 是纯文本模板，语法错、写错变量名都只会在某一行跑起来时才炸——先扫一遍。
@@ -728,6 +734,8 @@ function spawnSkill(bin, args, options) {
         ...process.env,
         SKILLAPP_IMAGE_CLI: IMAGE_CLI,
         NODE_OPTIONS: withNodeFlag(process.env.NODE_OPTIONS, '--disable-warning=MODULE_TYPELESS_PACKAGE_JSON'),
+        // Python Skill：把它的 venv 前置到 PATH，`python3 …` 就落在自己的解释器上（依赖各 Skill 一份）。
+        ...venvEnv(options.venvDir),
       },
     });
     let stdout = '';
@@ -841,6 +849,7 @@ async function runRowSteps(ctx, row, item) {
     // 而 Skill 的产物目录在 .data/runs/ 之下——cwd 必须是它的祖先，Skill 自己的
     // lark-cli 调用（例如 --output 写 ndjson）才不会被白名单拒绝。
     cwd: DATA_DIR,
+    venvDir: path.join(skillDir, '.venv'),
     timeoutMs: (tpl.limits?.timeout_s || 60) * 1000,
     onStdout: (chunk) => {
       appendStreamLog(recordDir, 'stdout', chunk);

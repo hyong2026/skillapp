@@ -14,6 +14,8 @@ const TEMPLATES_DIR = path.join(DATA_DIR, 'templates');
 const RUNS_DIR = path.join(DATA_DIR, 'runs');
 const OPERATIONS_DIR = path.join(DATA_DIR, 'operations');
 const MAPPINGS_DIR = path.join(DATA_DIR, 'mappings');
+/** 上传暂存：会话期间文件落在这里，commit 时走 loadSkill 复制进 skills/。 */
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const WEB_DIR = path.join(SRC_DIR, 'web');
 
 /** 内容层两个 JSON 产物的后缀：Template 与 Mapping。 */
@@ -28,6 +30,7 @@ export {
   RUNS_DIR,
   OPERATIONS_DIR,
   MAPPINGS_DIR,
+  UPLOADS_DIR,
   WEB_DIR,
   TEMPLATE_SUFFIX,
   MAPPING_SUFFIX,

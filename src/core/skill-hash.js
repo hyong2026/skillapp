@@ -1,7 +1,7 @@
 /**
  * skill-hash.js — Skill 内容指纹
  *
- * 算法：取目录内全部定义文件（排除 node_modules / .git / .DS_Store / source.json），
+ * 算法：取目录内全部定义文件（只算源码 —— 依赖、字节码、装载记录都不进指纹），
  *      按相对路径排序，逐个算内容 sha256，拼成「相对路径\n内容哈希\n」后再取 sha256。
  *
  * 与绝对路径无关，可跨机器复现；skill 内容改动任一字节，指纹即变。
@@ -11,7 +11,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const IGNORE = new Set(['node_modules', '.git', '.DS_Store', 'source.json']);
+const IGNORE = new Set([
+  'node_modules',    // 装出来的依赖（各 Skill 一份）
+  '__pycache__',     // Python 字节码：跑一次就变，绝不能进指纹
+  '.venv', 'venv',   // Python 依赖
+  '.git', '.DS_Store', 'source.json',
+]);
 
 /** 递归收集定义文件，按路径排序返回绝对路径 */
 function definitionFiles(root, dir = root, out = []) {

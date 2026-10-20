@@ -11,7 +11,7 @@ import { render } from '../lib/router.js';
 async function skillsView() {
   const table = await pagedTable({
     label: 'Skills',
-    headers: ['Skill Name', 'Status', 'Loaded', 'Source'],
+    headers: ['Skill Name', 'Status', 'Hash', 'Loaded'],
     load: async (page) => {
       const data = await api(`/api/skills?page=${page}`);
       return {
@@ -19,14 +19,18 @@ async function skillsView() {
         rows: data.items.map((skill) => [
           hashLink(skill.ref, `#skills/${encoded(skill.ref)}`),
           statusBadge(skill.status || 'invalid'),
+          // 表格宽度够，Hash 直接给完整值。
+          h('span', { className: 'mono', textContent: skill.hash || '—' }),
           h('span', { textContent: formatDate(skill.loaded_at) }),
-          h('span', { className: 'truncate', textContent: skill.source || '—' }),
         ]),
       };
     },
   });
   const loadButton = actionButton('Load', 'load', 'button primary');
-  loadButton.addEventListener('click', openLoadDialog);
+  loadButton.addEventListener('click', async () => {
+    const ref = await openLoadDialog();
+    if (ref) location.hash = `skills/${encoded(ref)}`;   // 装载完直接进详情页
+  });
   return fragment(
     head('Skills', '', h('div', { className: 'run-actions' }, loadButton)),
     dataPanel(h('div', { className: 'panel-body flush' }, table)),
@@ -144,9 +148,8 @@ async function skillView(ref) {
   if (activeOperations.bind) bindSlot.replaceChildren(loadingPanel(SCHEMA_PANEL_TITLE, 'Creating Template...'));
   const summary = panel('Summary', h('div', { className: 'panel-body' }, kv([
     ['Status', statusBadge(skill.status || 'invalid')],
-    ['Fingerprint', h('span', { className: 'mono', textContent: skill.hash || '—' })],
+    ['Hash', h('span', { className: 'mono', textContent: skill.hash || '—' })],
     ['Loaded', formatDate(skill.loaded_at)],
-    ['Source', skill.source || '—'],
     ['Description', skill.description || '—'],
   ])));
   if (activeOperations.analyze) {

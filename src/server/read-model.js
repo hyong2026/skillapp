@@ -151,7 +151,6 @@ class ReadModel {
       valid: Boolean(stat),
       hash: source.hash || null,
       description: source.description || null,
-      source: source.source || null,
       loaded_at: source.loaded_at || null,
       updated_at: stat ? stat.mtime.toISOString() : null,
     };

@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { skillHash } from '../src/core/skill-hash.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -67,4 +68,38 @@ test('普通装载仍然可用', () => {
   const dest = path.join(root, '.data', 'skills', 'safe');
   assert.match(fs.readFileSync(path.join(dest, 'SKILL.md'), 'utf8'), /# source/);
   assert.match(fs.readFileSync(path.join(dest, 'source.json'), 'utf8'), /"description": "一句话说明"/);
+});
+
+test('装载只搬源码：依赖、字节码、venv 都不进副本，也不进指纹', () => {
+  const root = makeRepo();
+  const source = path.join(root, 'skimmed');
+  fs.mkdirSync(path.join(source, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(source, 'node_modules', 'sharp'), { recursive: true });
+  fs.mkdirSync(path.join(source, '__pycache__'), { recursive: true });
+  fs.mkdirSync(path.join(source, '.venv', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'SKILL.md'), '# source\n');
+  fs.writeFileSync(path.join(source, 'package.json'), '{ "dependencies": { "sharp": "^0.33.0" } }\n');
+  fs.writeFileSync(path.join(source, 'scripts', 'main.js'), 'export const ok = true;\n');
+  fs.writeFileSync(path.join(source, 'node_modules', 'sharp', 'index.js'), 'module.exports = {};\n');
+  fs.writeFileSync(path.join(source, '__pycache__', 'main.cpython-311.pyc'), 'x');
+  fs.writeFileSync(path.join(source, '.venv', 'bin', 'python'), '');
+
+  const r = runLoad(root, source);
+  assert.equal(r.status, 0, r.stderr);
+
+  const dest = path.join(root, '.data', 'skills', 'skimmed');
+  assert.equal(fs.existsSync(path.join(dest, 'node_modules')), false, '依赖不跟源码走（首次使用时按声明装）');
+  assert.equal(fs.existsSync(path.join(dest, '__pycache__')), false);
+  assert.equal(fs.existsSync(path.join(dest, '.venv')), false);
+  assert.ok(fs.existsSync(path.join(dest, 'package.json')), '声明文件属于源码，要留着');
+  assert.ok(fs.existsSync(path.join(dest, 'scripts', 'main.js')));
+  assert.match(fs.readFileSync(path.join(dest, 'source.json'), 'utf8'), /"origin": "path"/);
+
+  // 指纹只看源码：事后补回依赖 / 字节码，指纹不该变
+  const before = JSON.parse(fs.readFileSync(path.join(dest, 'source.json'), 'utf8')).hash;
+  fs.mkdirSync(path.join(dest, '__pycache__'), { recursive: true });
+  fs.writeFileSync(path.join(dest, '__pycache__', 'later.cpython-311.pyc'), 'y');
+  fs.mkdirSync(path.join(dest, 'node_modules', 'sharp'), { recursive: true });
+  fs.writeFileSync(path.join(dest, 'node_modules', 'sharp', 'index.js'), 'module.exports = {};\n');
+  assert.equal(skillHash(dest), before, '依赖与字节码都不进指纹');
 });

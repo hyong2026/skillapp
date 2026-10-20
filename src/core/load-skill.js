@@ -6,7 +6,9 @@ import { SKILLS_DIR } from './paths.js';
 import { AppError } from './errors.js';
 import { assertRef } from './ref.js';
 
-const SKIP = new Set(['.DS_Store', '.git']);
+// 只搬源码：依赖由 install-deps.js 在首次使用时装到 Skill 自己目录里（Node 的 ESM import
+// 不吃 NODE_PATH，想"每个 Skill 互不干扰"就只能装在本地）。
+const SKIP = new Set(['.DS_Store', '.git', 'node_modules', '__pycache__', '.venv', 'venv']);
 
 function isWithin(parent, child) {
   const rel = path.relative(parent, child);
@@ -50,7 +52,10 @@ function loadSkill(input = {}) {
     const hash = skillHash(tmp);
     const files = fs.readdirSync(tmp).length;
     fs.writeFileSync(path.join(tmp, 'source.json'), JSON.stringify({
-      source: src,
+      // 只记来源类型：`path` = 服务端按主机路径复制（CLI 与运维入口），`upload` = 浏览器上传。
+      // 不记来源路径 —— 上传来的路径在用户机器上，对云端毫无意义；按路径装载的那条，
+      // 调用方本来就知道自己给的路径。
+      origin: input.origin === 'upload' ? 'upload' : 'path',
       hash,
       // 逐文件清单：指纹对不上时靠它说出是哪个文件变了（见 skill-hash.js 的 diffSkillFiles）。
       files: skillFileHashes(tmp),

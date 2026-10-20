@@ -84,6 +84,10 @@ GET    /api/settings
 
 ```text
 POST   /api/skills                      { source_path }
+POST   /api/skills/uploads              { ref }              # 建上传会话（ref = 目录名）
+PUT    /api/skills/uploads/:id/files?path=<相对路径>          # 一个文件一个请求，body 是原始字节
+POST   /api/skills/uploads/:id/commit                         # 收尾：走一次装载（任务队列）
+DELETE /api/skills/uploads/:id                                # 放弃会话（丢掉暂存）
 POST   /api/skills/:ref/analyze         {}
 PUT    /api/skills/:ref/schema          { mapping }
 POST   /api/skills/:ref/bind            { url }  或  { base, table, view }
@@ -104,6 +108,17 @@ PUT    /api/settings                    { values: { KEY: "value" } }
 ```
 
 ## 主要端点说明
+
+### `POST /api/skills/uploads` 一族
+
+浏览器上传 Skill 的三步：建会话 → 逐文件 `PUT` → `commit`。**不走 multipart**（仓库零依赖，手写解析器不值当）：每个文件一个请求，相对路径走 query，进度天然可显示。
+
+- `ref` 取目录名（与按路径装载同一套规则），服务端校验白名单。
+- 路径校验：不收绝对路径、`..`、空段；命中 `node_modules` / `__pycache__` / `.venv` / `venv` / `.git` / `.DS_Store` 的文件**直接丢弃并计数**（客户端没滤干净也不怕）。
+- 上限：单文件 20MB / 文件数 2000 / 总量 100MB（见 `core/skill-upload.js` 的 `LIMITS`）。
+- `commit` 成功返回 `202 + operation`（装载在 worker 里跑，跑完由它清掉暂存）；没有 `SKILL.md` 时返回 `400`，**暂存留着**——补上文件再 commit，不用重传。
+- 只读模式（远端未授权访问）下整族不可用；写入口一律要同源。
+- **只搬源码**：依赖不进 Skill 目录，首次 Analyze 时按声明文件装（见 [.data/README.md](../.data/README.md)）。
 
 ### `POST /api/skills`
 

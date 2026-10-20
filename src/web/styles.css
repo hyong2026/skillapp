@@ -265,6 +265,9 @@ button { cursor: pointer; }
 }
 .nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .nav a.active { background: var(--accent-soft); color: var(--text-strong); }
+/* 当前页那一项本来就有底色标记；点过它之后按 ← / →（会把浏览器切到键盘模态）不必再套一圈焦点描边。
+   其它导航项保持默认焦点圈 —— 键盘 Tab 过来时仍然看得见焦点。 */
+.nav a.active:focus-visible { outline: none; }
 .nav-icon { width: 16px; height: 16px; }
 
 /* ===== 侧栏折叠 =====
@@ -806,6 +809,10 @@ pre { overscroll-behavior: none; }
   padding: 8px 16px;
   border-top: 1px solid var(--line);
 }
+/* 分页表格：表体滚到最底时，最后一行的下边线正好压在 pager 的 border-top 上，两条 1px
+   会并排成 2px。把 pager 往上提 1px，让两条落在同一像素 —— 同为实色 --line，看着仍是 1px；
+   没滚到底时这 1px 只是盖住表体最底一行像素，看不出来。 */
+.table-wrap.is-scrolling + .table-pager { margin-top: -1px; }
 /* 左下角元信息：「Total」是标签，数字比它亮一档，扫一眼能先读到数量；
    每页条数跟在后面，用一条竖线分隔。 */
 .pager-meta { color: var(--muted-2); font: 600 var(--text-2xs)/1 var(--font-mono); }
@@ -851,7 +858,10 @@ th,
   letter-spacing: .08em;
 }
 td { color: var(--text); font-size: var(--text-xs); }
+/* 最后一行的分隔线：默认不收口（下面就是面板或表格的边界，收了口反而像多一条线）；
+   只有分页表格例外 —— 表体未必占满高度，最后一条记录下面会空一段，没有线就像被截断。 */
 tbody tr:last-child td { border-bottom: 0; }
+.table-wrap:has(+ .table-pager) tbody tr:last-child td { border-bottom: 1px solid var(--line); }
 tbody tr { transition: background 150ms ease; }
 tbody tr:hover { background: var(--row-hover); }
 td.actions { text-align: right; white-space: nowrap; }
@@ -1021,6 +1031,10 @@ label.modal-field { grid-template-columns: minmax(0, 1fr); gap: 5px; }
 }
 .modal-field input:focus { border-color: var(--accent); outline: none; }
 .modal-error { min-height: 18px; margin: 8px 0 0; color: var(--danger-text); font-size: var(--text-xs); }
+/* 上传确认弹框的字段列表（.modal-summary 本身没有布局，这里单独给一档间距）。 */
+.modal-fields { display: grid; gap: 8px; }
+/* 上传进度：单行省略，长路径不把弹框撑高。 */
+.modal-note { min-height: 18px; margin: 8px 0 0; overflow: hidden; color: var(--muted); font: 500 var(--text-2xs)/1.5 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .modal-value { color: var(--text); overflow-wrap: anywhere; }
 .modal-text { margin: 0; color: var(--text); font-size: var(--text-xs); line-height: 1.6; }
 .modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }

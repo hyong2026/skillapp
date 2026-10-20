@@ -33,18 +33,20 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 左侧固定导航：**Home / Skills / Templates / Runs / Operations / Settings**，默认落在 `#home`。窄屏（≤720px）时导航折叠成右上角 ☰ 的浮层菜单。
 
+**装载 = 上传**：`Load` 弹框里选一个 Skill 根目录（浏览器为 `input[webkitdirectory]`），客户端先滤掉 `node_modules` / `__pycache__` / `.venv` 等依赖，然后逐个文件上传并显示 `Uploading i / n`；服务端落进暂存、`commit` 后在 worker 里走一遍装载（进 Messages 与 Operations），装载完直接进 Skill 详情页。路径导入不在这里 —— 那是 CLI 与运维的事。
+
 侧栏可以**折叠**：折叠按钮常驻在 brand 行右侧（面板字形 + 方向箭头，带 `Collapse` 提示）；快捷键 `←` 折叠、`→` 展开（输入框里、弹框里、窄屏下都不抢键）。折叠后侧栏只剩一列等大等距的图标（悬停出提示），logo 居中、鼠标移上来**原地换成展开按钮**（提示 `Expand`），底部是**常驻的 Messages 图标**（有新操作推送时点一个红点 —— 连上那次快照不算，点开即清；点开把消息区当浮层贴在侧栏右侧，只露最近 3 条，没消息时图标置灰；再点、点别处、`Esc` 都能收起），主区内容也随之撑满整个宽度。状态只存本浏览器（`localStorage`），刷新与切页都保持；窄屏是另一套（☰），不掺和。
 
 ### Home
 
 四步流程走完一次「装载 → 分析 → 绑定 → 执行」，每步做完自动进入下一步；Run 一发起就跳去 Run 详情页（那里有实时结果与日志）。
-**状态只活在这次访问里**：刷新或切走就从第一步重来，不保留"当前 Skill"。第一步只能填路径（不支持拖拽文件夹）。
+**状态只活在这次访问里**：刷新或切走就从第一步重来，不保留"当前 Skill"。第一步是**选文件夹上传**（与 Skills 页的 `Load` 同一个弹框）。
 
 ### Skills
 
-- 列表：`Skill Name / Status / Loaded / Source`。
+- 列表：`Skill Name / Status / Hash / Loaded`（Hash 给完整值：`sha256:` + 64 位）。
 - `Load` 打开弹框，填 Skill Source 绝对路径；目录名自动作为 ref，默认完整导入，完成后直接进入详情页（不自动分析）。
-- 详情面包屑 `Skills / <Skill Name>`；Summary 展示 Status、Fingerprint、Loaded、Source、Description（装载时从 `SKILL.md` frontmatter 读取），下面是 `IO Schema` 面板。
+- 详情面包屑 `Skills / <Skill Name>`；Summary 展示 Status、Hash、Loaded、Description（装载时从 `SKILL.md` frontmatter 读取），下面是 `IO Schema` 面板。
 - Skill 状态：`Unanalyzed / Analyzing / Ready / Stale / Unverified / Invalid`。
 - `IO Schema` 默认展示结构化 Inputs / Outputs（分析产出的 IO 契约，还没绑定到表），`JSON` 开关看原文。
   - 行首勾选框决定该列是否参与映射：取消勾选 = 不建列、不读取、不回写，整行退成次要色；必填输入的勾选框默认勾上且不可改。
@@ -54,7 +56,7 @@ node src/server/index.js --port 4173       # 本机访问可省略 --token
 
 ### Templates
 
-- 列表：`Template Name / Template ID / IO / Last Run / Created`；`Template Name` 是文件名 `<Skill Name>-<目标指纹>` 且带链接（链接锚点用 `template_id`）。
+- 列表：`Template Name / Template ID / IO / Last Execute / Created`；`Template Name` 是文件名 `<Skill Name>-<目标指纹>` 且带链接（链接锚点用 `template_id`）。
 - 右上角 `Show Archived`（默认不勾）：勾上后连归档的一起列出，归档行带 `Archived` 徽标。
 - 详情：面包屑 `Templates`，标题就是 Template Name；Summary 展示 Template ID、Skill Name、Skill Hash、Lark Base URL、Created，归档后多一行 `Archived` 徽标。
 - `Template Definition` 展示已映射的 Inputs / Outputs（与表里的列一一对应，列宽与 IO Schema 同一套规则，同样把 Required / Default 合成一列、不显示 Precision），`JSON` 开关看完整 Template JSON。

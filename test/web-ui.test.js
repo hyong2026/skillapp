@@ -1017,4 +1017,65 @@ describe('生命周期：装载 → 分析 → 保存 Schema → 绑定 → 归�
     const beyond = await requestJson(ctx, '/api/operations?page=999');
     assert.equal(beyond.body.data.page, Math.ceil(first.body.data.total / 10), '越界页夹回最后一页');
   });
+
+  test('M3 上传通道：建会话 → 逐文件 PUT → commit；依赖与字节码挡在门外', async () => {
+    const created = await requestJson(ctx, '/api/skills/uploads', { method: 'POST', body: { ref: 'uploaded-demo' } });
+    assert.equal(created.response.status, 201, JSON.stringify(created.body));
+    const id = created.body.data.upload_id;
+
+    const put = async (rel, text) => {
+      const response = await fetch(`${ctx.baseUrl}/api/skills/uploads/${id}/files?path=${encodeURIComponent(rel)}`, {
+        method: 'PUT',
+        headers: { authorization: AUTH, 'content-type': 'text/plain' },
+        body: text,
+      });
+      return { status: response.status, body: await response.json() };
+    };
+
+    const skillMd = ['---', 'name: uploaded-demo', 'description: "上传来的"', '---', '', '# uploaded', ''].join('\n');
+    assert.equal((await put('SKILL.md', skillMd)).status, 200);
+    assert.equal((await put('scripts/main.js', 'export const ok = true;\n')).status, 200);
+    assert.equal((await put('node_modules/left-pad/index.js', 'module.exports = {};\n')).body.data.skipped, true,
+      '依赖文件不进 Skill 目录（客户端没滤掉，服务端也要挡）');
+    assert.equal((await put('__pycache__/main.cpython-311.pyc', 'x')).body.data.skipped, true);
+    assert.equal((await put('../escape.js', 'x')).status, 400, '路径穿越必须拒绝');
+
+    const committed = await requestJson(ctx, `/api/skills/uploads/${id}/commit`, { method: 'POST', body: {} });
+    assert.equal(committed.response.status, 202, JSON.stringify(committed.body));
+    const loaded = await waitForOperation(ctx, 'uploaded-demo', 'load');
+    assert.equal(loaded.status, 'completed', JSON.stringify(loaded.error));
+    assert.equal(loaded.result.ref, 'uploaded-demo');
+    assert.match(loaded.result.hash, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(loaded.input.skipped, 2, '跳过几个依赖文件要记在操作里');
+
+    const skillDir = path.join(ctx.root, 'skills', 'uploaded-demo');
+    assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'main.js')), '源码应落盘');
+    assert.equal(fs.existsSync(path.join(skillDir, 'node_modules')), false);
+    assert.equal(fs.existsSync(path.join(skillDir, '__pycache__')), false);
+    const record = JSON.parse(fs.readFileSync(path.join(skillDir, 'source.json'), 'utf8'));
+    assert.equal(record.origin, 'upload');
+    assert.equal(record.source, null, '上传来的 Skill 没有源路径可记');
+    assert.equal(fs.existsSync(path.join(ctx.root, 'uploads', id)), false, 'commit 后清掉暂存');
+
+    const detail = await requestJson(ctx, '/api/skills/uploaded-demo');
+    assert.equal(detail.body.data.source, null);
+  });
+
+  test('M3 上传通道：没有 SKILL.md 时 commit 被拒，暂存留着（可重试），DELETE 才清掉', async () => {
+    const created = await requestJson(ctx, '/api/skills/uploads', { method: 'POST', body: { ref: 'not-a-skill' } });
+    const id = created.body.data.upload_id;
+    await fetch(`${ctx.baseUrl}/api/skills/uploads/${id}/files?path=${encodeURIComponent('readme.txt')}`, {
+      method: 'PUT',
+      headers: { authorization: AUTH, 'content-type': 'text/plain' },
+      body: 'x',
+    });
+    const committed = await requestJson(ctx, `/api/skills/uploads/${id}/commit`, { method: 'POST', body: {} });
+    assert.equal(committed.response.status, 400);
+    assert.match(JSON.stringify(committed.body), /SKILL\.md/);
+    assert.equal(fs.existsSync(path.join(ctx.root, 'uploads', id)), true, '装载失败不丢暂存：补上文件再 commit 不用重传');
+
+    const discarded = await requestJson(ctx, `/api/skills/uploads/${id}`, { method: 'DELETE' });
+    assert.equal(discarded.response.status, 200);
+    assert.equal(fs.existsSync(path.join(ctx.root, 'uploads', id)), false);
+  });
 });
